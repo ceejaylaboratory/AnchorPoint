@@ -1,0 +1,17 @@
+{
+  "name": "anchor-point",
+  "private": true,
+  "workspaces": [
+    "dashboard",
+    "demo"
+  ],
+  "scripts": {
+    "dev:dashboard": "npm run dev -w dashboard",
+    "dev:demo": "npm run dev -w demo",
+    "dev": "concurrently \"npm run dev:dashboard\" \"npm run dev:demo\"",
+    "install:all": "npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
