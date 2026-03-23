@@ -1,0 +1,58 @@
+# AnchorPoint Backend
+
+The backend service for AnchorPoint, providing API endpoints for Stellar Anchor operations as per SEPs 1, 10, 12, and 24.
+
+## Tech Stack
+- **Node.js**: Runtime environment.
+- **TypeScript**: Typed JavaScript for robustness.
+- **Express**: Fast, unopinionated, minimalist web framework.
+- **Jest & Supertest**: Testing framework and HTTP assertion library.
+- **ESLint**: Linter for identifying and reporting on patterns in JavaScript/TypeScript.
+
+## Getting Started
+
+### Prerequisites
+- Node.js (v18 or higher)
+- npm
+
+### Installation
+From the monorepo root:
+```bash
+npm run install:all
+```
+
+Or from the `/backend` directory:
+```bash
+npm install
+```
+
+### Development
+To start the development server with auto-reload:
+```bash
+npm run dev
+```
+
+### Building
+To compile TypeScript to JavaScript:
+```bash
+npm run build
+```
+
+### Testing
+To run tests:
+```bash
+npm test
+```
+
+To run tests with coverage report:
+```bash
+npm run test:coverage
+```
+
+Current coverage threshold is set to **95%** for branches, functions, lines, and statements.
+
+### Quality Control
+To run the linter:
+```bash
+npm run lint
+```

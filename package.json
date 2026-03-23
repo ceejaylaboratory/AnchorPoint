@@ -3,12 +3,16 @@
   "private": true,
   "workspaces": [
     "dashboard",
-    "demo"
+    "demo",
+    "backend"
   ],
   "scripts": {
     "dev:dashboard": "npm run dev -w dashboard",
     "dev:demo": "npm run dev -w demo",
-    "dev": "concurrently \"npm run dev:dashboard\" \"npm run dev:demo\"",
+    "dev:backend": "npm run dev -w backend",
+    "dev": "concurrently \"npm run dev:dashboard\" \"npm run dev:demo\" \"npm run dev:backend\"",
+    "test:backend": "npm test -w backend",
+    "lint:backend": "npm run lint -w backend",
     "install:all": "npm install"
   },
   "devDependencies": {
