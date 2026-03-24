@@ -1,0 +1,9 @@
+[workspace]
+members = ["yield"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+
+[workspace.dependencies]
+soroban-sdk = { version = "21.0.0", features = ["alloc"] }
