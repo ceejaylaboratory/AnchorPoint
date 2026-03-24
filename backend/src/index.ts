@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import sep24Router from './api/routes/sep24.route';
+import transactionsRouter from './api/routes/transactions.route';
 
 dotenv.config();
 
@@ -10,6 +10,8 @@ const PORT = process.env.PORT || 3002;
 
 app.use(cors());
 app.use(express.json());
+
+app.use('/api/transactions', transactionsRouter);
 
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'UP', timestamp: new Date().toISOString() });
