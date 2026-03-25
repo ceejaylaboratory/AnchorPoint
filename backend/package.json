@@ -20,6 +20,7 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.3",
     "vite": "6.4.1",
+    "winston": "^3.19.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -29,6 +30,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.11.30",
     "@types/supertest": "^6.0.2",
+    "@types/winston": "^2.4.4",
     "@typescript-eslint/eslint-plugin": "^7.3.1",
     "@typescript-eslint/parser": "^7.3.1",
     "eslint": "^8.57.0",

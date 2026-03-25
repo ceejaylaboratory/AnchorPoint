@@ -65,3 +65,55 @@ Standardized way to collect user information.
 
 3. **Explore the Demo**:
    The dashboard is pre-configured to point to the local mock anchor server running on port 3001.
+
+## Docker Setup
+
+Quickly deploy the backend with all dependencies using Docker Compose.
+
+### Prerequisites
+- Docker (v20+)
+- Docker Compose (v2.0+)
+
+### Quick Start
+
+```bash
+# Start all services (backend, Redis, SQLite)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+### Services
+
+| Service   | Port | Description                    |
+|-----------|------|--------------------------------|
+| Backend   | 3002 | Node.js/TypeScript API server  |
+| Redis     | 6379 | Cache and session store        |
+
+### Health Check
+
+Verify the backend is running:
+
+```bash
+curl http://localhost:3002/health
+```
+
+### Data Persistence
+
+Data is stored in Docker volumes:
+- `backend-data`: SQLite database
+- `redis-data`: Redis data
+
+To remove volumes along with containers:
+
+```bash
+docker-compose down -v
+```
+
+### Development
+
+For local development without Docker, see the [Backend README](./backend/README.md).

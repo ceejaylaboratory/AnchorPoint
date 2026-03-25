@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { errorHandler } from './api/middleware/error.middleware';
+import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
 
 dotenv.config();
@@ -24,11 +25,13 @@ app.get('/', (req: Request, res: Response) => {
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);
+// SEP-24 routes
+app.use('/sep24', sep24Router);
 
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
-    console.log(`Backend service listening at http://localhost:${PORT}`);
+    logger.info(`Backend service listening at http://localhost:${PORT}`);
   });
 }
 
