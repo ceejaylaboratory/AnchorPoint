@@ -1,5 +1,14 @@
 import request from 'supertest';
-import app from './index';
+
+jest.mock('./lib/prisma', () => ({
+  transaction: {
+    findMany: jest.fn(),
+    count: jest.fn()
+  }
+}));
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const app = require('./index').default;
 
 describe('Backend API', () => {
   it('should return UP on health check', async () => {
