@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/upgradeable", "src/token"]
+members = ["src/upgradeable", "src/token", "src/governance"]
 resolver = "2"
 
 [profile.release]

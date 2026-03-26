@@ -1,0 +1,12 @@
+[package]
+name = "governance"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = { version = "21.0.0", features = ["alloc", "testutils"] }
+
+[lib]
+name = "governance"
+path = "lib.rs"
+crate-type = ["cdylib", "rlib"]
