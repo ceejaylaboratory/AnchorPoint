@@ -1,0 +1,17 @@
+[package]
+name = "anchorpoint-oracle-consumer"
+version = "0.1.0"
+edition = "2021"
+description = "Soroban Price Oracle Consumer module"
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[lib]
+name = "anchorpoint_oracle_consumer"
+path = "lib.rs"
+crate-type = ["cdylib"]
+doctest = false
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
