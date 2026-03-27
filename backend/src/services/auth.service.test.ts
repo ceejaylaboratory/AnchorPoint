@@ -1,8 +1,13 @@
 import jwt from 'jsonwebtoken';
+import { RedisService } from './redis.service';
 
 jest.mock('jsonwebtoken', () => ({
   sign: jest.fn(),
   verify: jest.fn()
+}));
+
+jest.mock('crypto', () => ({
+  randomBytes: jest.fn()
 }));
 
 const loadAuthService = () => {
@@ -10,8 +15,10 @@ const loadAuthService = () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const jwtMock = require('jsonwebtoken') as typeof jwt;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const cryptoMock = require('crypto');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require('./auth.service') as typeof import('./auth.service');
-  return { ...mod, jwtMock };
+  return { ...mod, jwtMock, cryptoMock };
 };
 
 describe('Auth Service', () => {
@@ -65,6 +72,92 @@ describe('Auth Service', () => {
     const { verifyToken, jwtMock } = loadAuthService();
     (jwtMock.verify as jest.Mock).mockReturnValue({});
     expect(() => verifyToken('tok_123')).toThrow('Invalid token payload');
+  });
+
+  describe('Challenge Management', () => {
+    let mockRedisService: Partial<RedisService>;
+
+    beforeEach(() => {
+      mockRedisService = {
+        getJSON: jest.fn(),
+        setJSON: jest.fn(),
+        del: jest.fn()
+      };
+    });
+
+    it('generateChallenge returns base64 encoded random bytes', () => {
+      const { generateChallenge, cryptoMock } = loadAuthService();
+      const mockBuffer = Buffer.from('random-bytes');
+      cryptoMock.randomBytes.mockReturnValue(mockBuffer);
+
+      const challenge = generateChallenge();
+
+      expect(challenge).toBe(mockBuffer.toString('base64'));
+      expect(cryptoMock.randomBytes).toHaveBeenCalledWith(32);
+    });
+
+    it('storeChallenge stores challenge data in Redis with TTL', async () => {
+      const { storeChallenge } = loadAuthService();
+      const publicKey = 'GBAD_PUBLIC_KEY';
+      const challenge = 'test-challenge';
+      const mockTimestamp = 1640995200000;
+      
+      jest.spyOn(Date, 'now').mockReturnValue(mockTimestamp);
+
+      await storeChallenge(mockRedisService as RedisService, publicKey, challenge);
+
+      expect(mockRedisService.setJSON).toHaveBeenCalledWith(
+        'sep10:challenge:GBAD_PUBLIC_KEY',
+        {
+          challenge: 'test-challenge',
+          publicKey: 'GBAD_PUBLIC_KEY',
+          createdAt: mockTimestamp
+        },
+        300 // 5 minutes TTL
+      );
+
+      jest.restoreAllMocks();
+    });
+
+    it('getChallenge retrieves challenge data from Redis', async () => {
+      const { getChallenge } = loadAuthService();
+      const publicKey = 'GBAD_PUBLIC_KEY';
+      const expectedChallenge = {
+        challenge: 'test-challenge',
+        publicKey: 'GBAD_PUBLIC_KEY',
+        createdAt: 1640995200000
+      };
+
+      (mockRedisService.getJSON as jest.Mock).mockResolvedValue(expectedChallenge);
+
+      const result = await getChallenge(mockRedisService as RedisService, publicKey);
+
+      expect(result).toEqual(expectedChallenge);
+      expect(mockRedisService.getJSON).toHaveBeenCalledWith('sep10:challenge:GBAD_PUBLIC_KEY');
+    });
+
+    it('getChallenge returns null when challenge not found', async () => {
+      const { getChallenge } = loadAuthService();
+      const publicKey = 'GBAD_PUBLIC_KEY';
+
+      (mockRedisService.getJSON as jest.Mock).mockResolvedValue(null);
+
+      const result = await getChallenge(mockRedisService as RedisService, publicKey);
+
+      expect(result).toBeNull();
+      expect(mockRedisService.getJSON).toHaveBeenCalledWith('sep10:challenge:GBAD_PUBLIC_KEY');
+    });
+
+    it('removeChallenge deletes challenge from Redis', async () => {
+      const { removeChallenge } = loadAuthService();
+      const publicKey = 'GBAD_PUBLIC_KEY';
+
+      (mockRedisService.del as jest.Mock).mockResolvedValue(1);
+
+      await removeChallenge(mockRedisService as RedisService, publicKey);
+
+      expect(mockRedisService.del).toHaveBeenCalledWith('sep10:challenge:GBAD_PUBLIC_KEY');
+    });
   });
 });
 
