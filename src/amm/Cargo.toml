@@ -1,16 +1,16 @@
 [package]
-name = "anchorpoint-auth"
+name = "anchorpoint-amm"
 version = "0.1.0"
 edition = "2021"
-description = "Universal modular RBAC for Soroban contracts"
+description = "Simple X*Y=K constant product pool implementation"
 
 [dependencies]
 soroban-sdk = "22.0.0"
 
 [lib]
-name = "anchorpoint_auth"
-path = "rbac.rs"
-crate-type = ["cdylib", "rlib"]
+name = "anchorpoint_amm"
+path = "lib.rs"
+crate-type = ["cdylib"]
 doctest = false
 
 [dev-dependencies]
