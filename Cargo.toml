@@ -1,26 +1,18 @@
 [workspace]
-members = ["src/upgradeable", "src/token", "src/escrow_multisig", "src/governance", "src/auth", "src/amm", "src/oracle_consumer", "src/batch", "src/utils", "src/staking"]
 members = [
   "src/upgradeable",
   "src/token",
   "src/escrow_multisig",
   "src/governance",
-  "src/flash_loan"
+  "src/auth",
+  "src/amm",
+  "src/oracle_consumer",
+  "src/batch",
+  "src/utils",
+  "src/flash_loan",
+  "src/staking",
 ]
-members = ["src/upgradeable", "src/token", "src/escrow_multisig", "src/governance", "src/auth", "src/amm", "src/oracle_consumer", "src/batch"]
 resolver = "2"
-
-[package]
-name = "anchorpoint"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-path = "src/vesting/lib.rs"
-
-[[test]]
-name = "vesting"
-path = "src/vesting/lib.rs"
 
 [profile.release]
 opt-level = "z"

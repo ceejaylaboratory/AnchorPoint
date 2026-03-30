@@ -8,30 +8,35 @@
 //!
 //! ## Storage layout (gas-efficient)
 //!
-//! - `SnapshotEpoch`                  → current epoch counter (instance)
-//! - `TotalStaked`                    → total staked at current epoch (instance)
-//! - `EpochTotal(epoch)`              → total staked at a past epoch (persistent)
-//! - `UserCheckpoint(user, epoch)`    → user balance at a specific epoch (persistent)
-//! - `UserLastEpoch(user)`            → last epoch a user wrote a checkpoint (persistent)
+//! - `SnapshotEpoch`               → current epoch counter (instance)
+//! - `TotalStaked`                 → live total staked (instance)
+//! - `EpochTotal(epoch)`           → total staked frozen at a past epoch (persistent)
+//! - `UserCheckpoint(user, epoch)` → user balance written at a specific epoch (persistent)
+//! - `UserLastEpoch(user)`         → last epoch a user wrote a checkpoint (persistent)
 //!
-//! Only a new checkpoint entry is written when a user's balance actually changes,
-//! keeping per-user storage O(number of interactions), not O(epochs).
+//! Only a new checkpoint is written when a user's balance actually changes,
+//! keeping per-user storage O(interactions), not O(epochs).
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env};
+
+// Persistent entries live for ~30 days by default on Soroban; bump on every
+// write so active data never expires unexpectedly.
+const LEDGERS_PER_DAY: u32 = 17_280; // ~5 s per ledger
+const TTL_BUMP: u32 = 60 * LEDGERS_PER_DAY; // 60 days
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
 pub enum DataKey {
-    /// Monotonically increasing epoch counter
+    /// Monotonically increasing epoch counter.
     SnapshotEpoch,
-    /// Live total staked (updated on every stake/unstake)
+    /// Live total staked (updated on every stake/unstake).
     TotalStaked,
-    /// Snapshot of total staked at a closed epoch
+    /// Snapshot of total staked frozen at a closed epoch.
     EpochTotal(u32),
-    /// User balance checkpoint: (user, epoch) → balance
+    /// User balance checkpoint: written when balance changes at `epoch`.
     UserCheckpoint(Address, u32),
-    /// Most recent epoch at which a user wrote a checkpoint
+    /// Most recent epoch at which a user wrote a checkpoint.
     UserLastEpoch(Address),
 }
 
@@ -60,23 +65,24 @@ impl SnapshotStaking {
     pub fn advance_epoch(env: Env) -> u32 {
         let epoch = Self::current_epoch(env.clone());
 
-        // Freeze the current total into persistent storage for this epoch
         let total: i128 = env
             .storage()
             .instance()
             .get(&DataKey::TotalStaked)
             .unwrap_or(0);
+
+        let key = DataKey::EpochTotal(epoch);
+        env.storage().persistent().set(&key, &total);
         env.storage()
             .persistent()
-            .set(&DataKey::EpochTotal(epoch), &total);
+            .extend_ttl(&key, TTL_BUMP, TTL_BUMP);
 
         let next = epoch + 1;
         env.storage()
             .instance()
             .set(&DataKey::SnapshotEpoch, &next);
 
-        env.events()
-            .publish((symbol_short!("new_epoch"),), next);
+        env.events().publish((symbol_short!("new_epoch"),), next);
 
         next
     }
@@ -84,9 +90,6 @@ impl SnapshotStaking {
     // ── Staking ───────────────────────────────────────────────────────────
 
     /// Record a stake of `amount` for `user` at the current epoch.
-    ///
-    /// In a full implementation this would also transfer tokens; here we focus
-    /// on the snapshot bookkeeping that enables fair reward distribution.
     pub fn stake(env: Env, user: Address, amount: i128) {
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
@@ -142,7 +145,7 @@ impl SnapshotStaking {
             .unwrap_or(0)
     }
 
-    /// Total staked that was frozen at `epoch` (after `advance_epoch` was called).
+    /// Total staked frozen at `epoch` (after `advance_epoch` was called for it).
     pub fn epoch_total(env: Env, epoch: u32) -> i128 {
         env.storage()
             .persistent()
@@ -150,17 +153,16 @@ impl SnapshotStaking {
             .unwrap_or(0)
     }
 
-    /// User's balance as recorded at a specific past `epoch`.
+    /// User's balance as it was recorded at `epoch`.
     ///
-    /// Returns the checkpoint written at or before `epoch` — i.e. the balance
-    /// the user held when that epoch was active. O(1) per lookup.
+    /// Returns the most recent checkpoint written at or before `epoch`.
     pub fn balance_at(env: Env, user: Address, epoch: u32) -> i128 {
         Self::_balance_at_epoch(&env, &user, epoch)
     }
 
-    /// Reward share (in basis points, 0–10_000) for `user` at `epoch`.
+    /// Reward share in basis points (0–10_000) for `user` at `epoch`.
     ///
-    /// share_bps = user_balance_at_epoch * 10_000 / epoch_total
+    /// `share_bps = user_balance * 10_000 / epoch_total`
     ///
     /// Returns 0 if total staked was 0 at that epoch.
     pub fn reward_share_bps(env: Env, user: Address, epoch: u32) -> u32 {
@@ -174,26 +176,29 @@ impl SnapshotStaking {
 
     // ── Internal helpers ──────────────────────────────────────────────────
 
-    /// Write a checkpoint for `user` at `epoch`. Overwrites any existing entry
-    /// for the same epoch (idempotent within an epoch).
+    /// Write a checkpoint for `user` at `epoch` and bump its TTL.
     fn _write_checkpoint(env: &Env, user: &Address, epoch: u32, balance: i128) {
+        let ck_key = DataKey::UserCheckpoint(user.clone(), epoch);
+        env.storage().persistent().set(&ck_key, &balance);
         env.storage()
             .persistent()
-            .set(&DataKey::UserCheckpoint(user.clone(), epoch), &balance);
+            .extend_ttl(&ck_key, TTL_BUMP, TTL_BUMP);
+
+        let le_key = DataKey::UserLastEpoch(user.clone());
+        env.storage().persistent().set(&le_key, &epoch);
         env.storage()
             .persistent()
-            .set(&DataKey::UserLastEpoch(user.clone()), &epoch);
+            .extend_ttl(&le_key, TTL_BUMP, TTL_BUMP);
     }
 
     /// Resolve a user's balance at `epoch`.
     ///
-    /// Strategy: look up the checkpoint written at exactly `epoch`; if absent,
-    /// fall back to the checkpoint at `last_epoch` (the most recent write ≤
-    /// epoch). This works because balances only change when the user interacts,
-    /// so the last written checkpoint is always valid for all subsequent epochs
-    /// until the next interaction.
+    /// 1. Exact match: checkpoint written at exactly `epoch`.
+    /// 2. Carry-forward: use the checkpoint from `UserLastEpoch` when that
+    ///    epoch ≤ `epoch` (balance unchanged since last interaction).
+    /// 3. No prior stake: return 0.
     fn _balance_at_epoch(env: &Env, user: &Address, epoch: u32) -> i128 {
-        // Fast path: exact match
+        // Fast path: exact checkpoint for this epoch
         if let Some(bal) = env
             .storage()
             .persistent()
@@ -202,21 +207,27 @@ impl SnapshotStaking {
             return bal;
         }
 
-        // Fallback: use the most recent checkpoint (valid for all later epochs)
-        let last_epoch: u32 = env
+        // Carry-forward: find the last epoch the user interacted
+        let last_epoch: Option<u32> = env
             .storage()
             .persistent()
-            .get(&DataKey::UserLastEpoch(user.clone()))
-            .unwrap_or(0);
+            .get(&DataKey::UserLastEpoch(user.clone()));
 
-        if last_epoch <= epoch {
-            env.storage()
-                .persistent()
-                .get(&DataKey::UserCheckpoint(user.clone(), last_epoch))
-                .unwrap_or(0)
-        } else {
-            // User's last interaction was after `epoch` — they had no stake then
-            0
+        match last_epoch {
+            // User has never staked
+            None => 0,
+            Some(le) if le > epoch => {
+                // User's most recent interaction is after `epoch` — they had
+                // no stake at `epoch` (or we can't know; conservatively 0).
+                0
+            }
+            Some(le) => {
+                // le <= epoch: carry the balance from that checkpoint forward
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::UserCheckpoint(user.clone(), le))
+                    .unwrap_or(0)
+            }
         }
     }
 }
@@ -246,12 +257,9 @@ mod tests {
         client.stake(&alice, &1_000);
         assert_eq!(client.balance_at(&alice, &0), 1_000);
 
-        // Advance epoch: freezes epoch 0 total, moves to epoch 1
         let next = client.advance_epoch();
         assert_eq!(next, 1);
         assert_eq!(client.epoch_total(&0), 1_000);
-
-        // Alice's balance at epoch 0 is still readable
         assert_eq!(client.balance_at(&alice, &0), 1_000);
     }
 
@@ -263,7 +271,6 @@ mod tests {
         client.stake(&bob, &700);
         client.advance_epoch(); // closes epoch 0
 
-        // Alice 30%, Bob 70% (in basis points)
         assert_eq!(client.reward_share_bps(&alice, &0), 3_000);
         assert_eq!(client.reward_share_bps(&bob, &0), 7_000);
     }
@@ -275,7 +282,7 @@ mod tests {
         client.stake(&alice, &1_000);
         client.advance_epoch(); // closes epoch 0
 
-        // Bob stakes in epoch 1 — should have 0 share in epoch 0
+        // Bob stakes in epoch 1 — must have 0 share in epoch 0
         client.stake(&bob, &1_000);
         assert_eq!(client.reward_share_bps(&bob, &0), 0);
         assert_eq!(client.reward_share_bps(&alice, &0), 10_000);
@@ -303,19 +310,38 @@ mod tests {
         let (_env, client, alice, _bob) = setup();
 
         client.stake(&alice, &500);
-        client.advance_epoch(); // epoch 0 → 1
-        client.advance_epoch(); // epoch 1 → 2
+        client.advance_epoch(); // 0 → 1
+        client.advance_epoch(); // 1 → 2
 
-        // Alice never interacted in epochs 1 or 2, balance should carry forward
+        // Alice never interacted in epochs 1 or 2; balance carries forward
         assert_eq!(client.balance_at(&alice, &1), 500);
         assert_eq!(client.balance_at(&alice, &2), 500);
     }
 
     #[test]
     fn test_epoch_total_zero_when_no_stakers() {
-        let (_env, client, _alice, _bob) = setup();
+        let (_env, client, alice, _bob) = setup();
         client.advance_epoch();
         assert_eq!(client.epoch_total(&0), 0);
-        assert_eq!(client.reward_share_bps(&_alice, &0), 0);
+        assert_eq!(client.reward_share_bps(&alice, &0), 0);
+    }
+
+    #[test]
+    fn test_never_staked_user_returns_zero() {
+        let (env, client, _alice, _bob) = setup();
+        let carol = Address::generate(&env);
+        client.advance_epoch();
+        assert_eq!(client.balance_at(&carol, &0), 0);
+        assert_eq!(client.reward_share_bps(&carol, &0), 0);
+    }
+
+    #[test]
+    fn test_double_initialize_panics() {
+        let (_env, client, _alice, _bob) = setup();
+        // setup() already called initialize(); calling again must panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.initialize();
+        }));
+        assert!(result.is_err());
     }
 }
