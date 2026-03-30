@@ -1,4 +1,5 @@
 [workspace]
+members = ["src/upgradeable", "src/token", "src/escrow_multisig", "src/governance", "src/auth", "src/amm", "src/oracle_consumer", "src/batch", "src/utils"]
 members = [
   "src/upgradeable",
   "src/token",

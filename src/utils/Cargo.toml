@@ -1,0 +1,17 @@
+[package]
+name = "anchorpoint-utils"
+version = "0.1.0"
+edition = "2021"
+description = "Shared utilities: standardized event emitter for Soroban contracts"
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[lib]
+name = "anchorpoint_utils"
+path = "events.rs"
+crate-type = ["rlib"]
+doctest = false
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
