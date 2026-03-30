@@ -1,7 +1,8 @@
 import { rateLimit } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import { redis } from '../../lib/redis';
-import { logger } from '../../utils/logger';
+import logger from '../../utils/logger';
+import { Request, Response, NextFunction } from 'express';
 
 /**
  * Interface for rate limit options
@@ -38,7 +39,7 @@ export const createRateLimiter = (options: RateLimitOptions = {}) => {
       sendCommand: (...args: string[]) => redis.call(...args),
       prefix: keyPrefix,
     }),
-    handler: (req, res, _next, options) => {
+    handler: (req: Request, res: Response, _next: NextFunction, options: any) => {
       logger.warn(`Rate limit exceeded for IP: ${req.ip}`);
       res.status(options.statusCode).send(options.message);
     },
