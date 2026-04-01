@@ -13,8 +13,67 @@ const querySchema = z.object({
 });
 
 /**
- * GET /api/transactions
- * Fetches transaction history for the authenticated user.
+ * @swagger
+ * /api/transactions:
+ *   get:
+ *     summary: Get transaction history
+ *     description: Fetches transaction history for the authenticated user with pagination support
+ *     tags: [Transactions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 50
+ *           default: 10
+ *         description: Number of items per page
+ *       - in: query
+ *         name: assetCode
+ *         schema:
+ *           type: string
+ *         description: Filter transactions by asset code (e.g., USD, EUR)
+ *     responses:
+ *       200:
+ *         description: Transaction history retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     transactions:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Transaction'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/Pagination'
+ *       401:
+ *         description: Unauthorized - Missing or invalid authentication token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/', authMiddleware, validate({ query: querySchema }), async (req: AuthRequest, res: Response) => {
   const { page, limit, assetCode } = req.query as any;

@@ -6,8 +6,7 @@ import {
   createDepositInteractiveUrl,
   createWithdrawInteractiveUrl,
   isSupportedAsset,
-  normalizeAssetCode,
-  SUPPORTED_ASSETS
+  normalizeAssetCode
 } from '../../services/kyc.service';
 
 const router = Router();
@@ -29,9 +28,58 @@ interface DepositResponse {
 }
 
 /**
- * POST /transactions/deposit/interactive
- * SEP-24 Interactive Deposit Endpoint
- * Returns a URL for the user to complete KYC/Deposit
+ * @swagger
+ * /sep24/transactions/deposit/interactive:
+ *   post:
+ *     summary: SEP-24 Interactive Deposit
+ *     description: Returns a URL for the user to complete KYC and deposit flow
+ *     tags: [SEP-24]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - asset_code
+ *             properties:
+ *               asset_code:
+ *                 type: string
+ *                 description: Asset code to deposit (e.g., USDC, USD, BTC, ETH)
+ *                 example: USDC
+ *               account:
+ *                 type: string
+ *                 description: Stellar account address
+ *               amount:
+ *                 type: string
+ *                 description: Amount to deposit
+ *               lang:
+ *                 type: string
+ *                 description: Language preference for the UI
+ *                 default: en
+ *     responses:
+ *       200:
+ *         description: Interactive deposit URL generated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 type:
+ *                   type: string
+ *                   example: interactive_customer_info_needed
+ *                 url:
+ *                   type: string
+ *                   description: URL for user to complete deposit
+ *                 id:
+ *                   type: string
+ *                   description: Unique transaction identifier
+ *       400:
+ *         description: Invalid request - missing or unsupported asset_code
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/transactions/deposit/interactive', (req: Request, res: Response) => {
   const { asset_code, account, amount, lang = 'en' }: DepositRequest = req.body;
@@ -73,9 +121,58 @@ router.post('/transactions/deposit/interactive', (req: Request, res: Response) =
 });
 
 /**
- * POST /transactions/withdraw/interactive
- * SEP-24 Interactive Withdraw Endpoint
- * Returns a URL for the user to complete KYC/Withdraw
+ * @swagger
+ * /sep24/transactions/withdraw/interactive:
+ *   post:
+ *     summary: SEP-24 Interactive Withdraw
+ *     description: Returns a URL for the user to complete KYC and withdrawal flow
+ *     tags: [SEP-24]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - asset_code
+ *             properties:
+ *               asset_code:
+ *                 type: string
+ *                 description: Asset code to withdraw (e.g., USDC, USD, BTC, ETH)
+ *                 example: USDC
+ *               account:
+ *                 type: string
+ *                 description: Destination Stellar account address
+ *               amount:
+ *                 type: string
+ *                 description: Amount to withdraw
+ *               lang:
+ *                 type: string
+ *                 description: Language preference for the UI
+ *                 default: en
+ *     responses:
+ *       200:
+ *         description: Interactive withdraw URL generated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 type:
+ *                   type: string
+ *                   example: interactive_customer_info_needed
+ *                 url:
+ *                   type: string
+ *                   description: URL for user to complete withdrawal
+ *                 id:
+ *                   type: string
+ *                   description: Unique transaction identifier
+ *       400:
+ *         description: Invalid request - missing or unsupported asset_code
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/transactions/withdraw/interactive', (req: Request, res: Response) => {
   const { asset_code, account, amount, lang = 'en' }: DepositRequest = req.body;
