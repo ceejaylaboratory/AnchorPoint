@@ -40,3 +40,8 @@ From https://github.com/ceejaylaboratory/AnchorPoint
  * [new ref]         refs/pull/78/head -> pr-78
 Conflict merging PR #78, resolving by accepting both...
 Resolving conflict in Cargo.toml
+Successfully resolved and merged PR #78
+Merging PR #77: feat: add prometheus metrics and monitoring
+Conflict merging PR #77, resolving by accepting both...
+Resolving conflict in backend/package.json
+Resolving conflict in backend/src/index.ts
