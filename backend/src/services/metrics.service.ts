@@ -1,4 +1,5 @@
 import promClient, { Counter, Histogram, Registry, Gauge } from 'prom-client';
+import { monitorEventLoopDelay } from 'perf_hooks';
 
 export class MetricsService {
   private registry: Registry;
@@ -9,6 +10,7 @@ export class MetricsService {
   private errorCounter: Counter<string>;
   private dbQueryDuration: Histogram<string>;
   private apiVersionGauge: Gauge<string>;
+  private eventLoopLagGauge: Gauge<string>;
 
   constructor() {
     this.registry = new promClient.Registry();
@@ -71,6 +73,12 @@ export class MetricsService {
       registers: [this.registry],
     });
 
+    this.eventLoopLagGauge = new promClient.Gauge({
+      name: 'nodejs_event_loop_lag_seconds',
+      help: 'Node.js event loop lag (p99) in seconds',
+      registers: [this.registry],
+    });
+
     // API version info
     this.apiVersionGauge = new promClient.Gauge({
       name: 'anchorpoint_api_version_info',
@@ -81,6 +89,18 @@ export class MetricsService {
 
     // Set API version (assuming from package.json)
     this.apiVersionGauge.set({ version: '1.0.0' }, 1);
+
+    const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+    loopDelay.enable();
+
+    const interval: NodeJS.Timeout = setInterval(() => {
+      // monitorEventLoopDelay returns nanoseconds
+      const p99Seconds = loopDelay.percentile(99) / 1e9;
+      this.eventLoopLagGauge.set(p99Seconds);
+      loopDelay.reset();
+    }, 5000);
+
+    interval.unref();
   }
 
   /**
@@ -147,7 +167,7 @@ export class MetricsService {
    * Reset all metrics (useful for testing)
    */
   reset(): void {
-    this.registry.clear();
+    this.registry.resetMetrics();
   }
 }
 

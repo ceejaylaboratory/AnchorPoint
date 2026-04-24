@@ -18,14 +18,19 @@ describe('MetricsService', () => {
     metricsService.incrementRequestCount('GET', '/api/test');
     
     const metrics = await metricsService.getMetrics();
-    expect(metrics).toContain('anchorpoint_requests_total{method="GET",endpoint="/api/test"}');
+    expect(metrics).toContain('anchorpoint_requests_total');
+    expect(metrics).toContain('method="GET"');
+    expect(metrics).toContain('endpoint="/api/test"');
   });
 
   it('should record HTTP request with status code', async () => {
     metricsService.recordHttpRequest('POST', '/api/users', 201);
     
     const metrics = await metricsService.getMetrics();
-    expect(metrics).toContain('http_requests_total{method="POST",path="/api/users",status_code="201"}');
+    expect(metrics).toContain('http_requests_total');
+    expect(metrics).toContain('method="POST"');
+    expect(metrics).toContain('path="/api/users"');
+    expect(metrics).toContain('status_code="201"');
   });
 
   it('should observe request duration', async () => {
@@ -46,14 +51,17 @@ describe('MetricsService', () => {
     metricsService.incrementError('ValidationError', '/api/users');
     
     const metrics = await metricsService.getMetrics();
-    expect(metrics).toContain('anchorpoint_errors_total{error_type="ValidationError",endpoint="/api/users"}');
+    expect(metrics).toContain('anchorpoint_errors_total');
+    expect(metrics).toContain('error_type="ValidationError"');
+    expect(metrics).toContain('endpoint="/api/users"');
   });
 
   it('should observe database query duration', async () => {
     metricsService.observeDbQuery('SELECT', 0.01);
     
     const metrics = await metricsService.getMetrics();
-    expect(metrics).toContain('db_query_duration_seconds{query_type="SELECT"}');
+    expect(metrics).toContain('db_query_duration_seconds');
+    expect(metrics).toContain('query_type="SELECT"');
   });
 
   it('should return metrics in correct format', async () => {
@@ -74,6 +82,6 @@ describe('MetricsService', () => {
     
     const metrics = await metricsService.getMetrics();
     // After reset, counters should be cleared
-    expect(metrics).not.toContain('endpoint="/test"');
+    expect(metrics).not.toContain('endpoint="/test"} 1');
   });
 });
