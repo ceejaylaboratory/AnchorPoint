@@ -46,6 +46,9 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
+                  "u64": 1
+                },
+                {
                   "i128": {
                     "hi": 0,
                     "lo": 500
@@ -69,6 +72,9 @@
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "u64": 1
                 },
                 {
                   "i128": {
@@ -106,6 +112,9 @@
                   "symbol": "Balance"
                 },
                 {
+                  "u64": 1
+                },
+                {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 }
               ]
@@ -124,6 +133,9 @@
                   "vec": [
                     {
                       "symbol": "Balance"
+                    },
+                    {
+                      "u64": 1
                     },
                     {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -220,6 +232,9 @@
                           "vec": [
                             {
                               "symbol": "TotalSupply"
+                            },
+                            {
+                              "u64": 1
                             }
                           ]
                         },
