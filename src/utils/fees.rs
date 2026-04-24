@@ -1,4 +1,4 @@
-#![no_std]
+
 use soroban_sdk::{contracttype, Vec};
 
 #[contracttype]

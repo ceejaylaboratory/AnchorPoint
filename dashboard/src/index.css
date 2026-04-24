@@ -21,7 +21,7 @@
 
 @layer components {
   .glass-card {
-    @apply bg-card/50 backdrop-blur-md border border-slate-800 rounded-xl overflow-hidden;
+    @apply bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-xl overflow-hidden;
   }
   
   .btn-primary {
@@ -29,6 +29,6 @@
   }
   
   .input-field {
-    @apply bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all;
+    @apply bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all;
   }
 }

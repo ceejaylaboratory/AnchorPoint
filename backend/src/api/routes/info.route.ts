@@ -9,7 +9,6 @@ const router = Router();
  *   get:
  *     summary: SEP-1 Info Endpoint
  *     description: Returns stellar.toml information in JSON or TOML format. Supports both JSON and TOML responses based on Accept header or format query parameter.
- *     tags: [SEP-1 Info]
  *     tags: [Info]
  *     parameters:
  *       - in: query
@@ -18,19 +17,6 @@ const router = Router();
  *           type: string
  *           enum: [json, toml]
  *         description: Response format preference (json or toml)
- *     responses:
- *       200:
- *         description: Anchor information retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               description: SEP-1 anchor info in JSON format
- *           text/plain:
- *             schema:
- *               type: string
- *               description: SEP-1 anchor info in TOML format
- *         description: Response format (json or toml)
  *       - in: header
  *         name: Accept
  *         schema:
@@ -38,7 +24,7 @@ const router = Router();
  *         description: Accept header for content negotiation
  *     responses:
  *       200:
- *         description: SEP-1 info response
+ *         description: Anchor information retrieved successfully
  *         content:
  *           application/json:
  *             schema:

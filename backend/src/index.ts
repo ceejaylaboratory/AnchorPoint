@@ -24,10 +24,11 @@ app.use(express.json());
  * /:
  *   get:
  *     summary: Root endpoint
+ *     description: Welcome message for the AnchorPoint API
  *     tags: [Health]
  *     responses:
  *       200:
- *         description: API running status
+ *         description: Welcome message
  *         content:
  *           text/plain:
  *             schema:
@@ -37,83 +38,6 @@ app.use(express.json());
 app.get('/', (req: Request, res: Response) => {
   res.send('AnchorPoint Backend API is running.');
 });
-
-/**
- * @swagger
- * /health:
- *   get:
- *     summary: Health check endpoint
- *     tags: [Health]
- *     responses:
- *       200:
- *         description: Service health status
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: UP
- *                 timestamp:
- *                   type: string
- *                   format: date-time
- */
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'UP', timestamp: new Date().toISOString() });
-});
-
-// Swagger UI documentation endpoint
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-// JSON endpoint for Swagger spec
-// Swagger API Documentation
-/**
- * @swagger
- * /api-docs:
- *   get:
- *     summary: API Documentation
- *     description: Interactive Swagger UI documentation for the AnchorPoint API
- *     tags: [Documentation]
- *     responses:
- *       200:
- *         description: Swagger UI HTML page
- */
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-  customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: 'AnchorPoint API Documentation',
-  swaggerOptions: {
-    persistAuthorization: true,
-    displayOperationId: true,
-    filter: true,
-  },
-}));
-
-// API Documentation JSON endpoint
-app.get('/api-docs.json', (req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.send(swaggerSpec);
-});
-// Apply metrics tracking middleware
-app.use(connectionTracker);
-app.use(metricsMiddleware);
-
-app.use('/api/transactions', transactionsRouter);
-
-// Prometheus metrics endpoint
-app.use('/metrics', metricsRouter);
-
-// SEP-38 Price Quotes API
-app.use('/sep38', sep38Router);
-
-// SEP-1 Info endpoint
-app.use('/info', infoRouter);
-
-// SEP-24 routes
-app.use('/sep24', sep24Router);
-
-// SEP-6 routes
-app.use('/sep6', sep6Router);
 
 /**
  * @swagger
@@ -141,30 +65,54 @@ app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'UP', timestamp: new Date().toISOString() });
 });
 
+// Swagger API Documentation
 /**
  * @swagger
- * /:
+ * /api-docs:
  *   get:
- *     summary: Root endpoint
- *     description: Welcome message for the AnchorPoint API
- *     tags: [Health]
+ *     summary: API Documentation
+ *     description: Interactive Swagger UI documentation for the AnchorPoint API
+ *     tags: [Documentation]
  *     responses:
  *       200:
- *         description: Welcome message
- *         content:
- *           text/html:
- *             schema:
- *               type: string
- *               example: AnchorPoint Backend API is running.
+ *         description: Swagger UI HTML page
  */
-app.get('/', (req: Request, res: Response) => {
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'UP', timestamp: new Date().toISOString() });
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'AnchorPoint API Documentation',
+  swaggerOptions: {
+    persistAuthorization: true,
+    displayOperationId: true,
+    filter: true,
+  },
+}));
+
+// API Documentation JSON endpoint
+app.get('/api-docs.json', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
 });
 
-app.get('/', (_req: Request, res: Response) => {
-  res.send('AnchorPoint Backend API is running.');
-});
+// Apply metrics tracking middleware
+app.use(connectionTracker);
+app.use(metricsMiddleware);
+
+app.use('/api/transactions', transactionsRouter);
+
+// Prometheus metrics endpoint
+app.use('/metrics', metricsRouter);
+
+// SEP-38 Price Quotes API
+app.use('/sep38', sep38Router);
+
+// SEP-1 Info endpoint
+app.use('/info', infoRouter);
+
+// SEP-24 routes
+app.use('/sep24', sep24Router);
+
+// SEP-6 routes
+app.use('/sep6', sep6Router);
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);

@@ -35,7 +35,7 @@ export const createRateLimiter = (options: RateLimitOptions = {}) => {
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
     // Redis store configuration
     store: new RedisStore({
-      // @ts-ignore
+      // @ts-expect-error - ioredis call signature mismatch with rate-limit-redis expectation
       sendCommand: (...args: string[]) => redis.call(...args),
       prefix: keyPrefix,
     }),

@@ -1,4 +1,4 @@
-import { Response, Request } from 'express';
+import { Response } from 'express';
 import { randomUUID } from 'crypto';
 import prisma from '../../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -51,7 +51,7 @@ export const sep6Info = (_req: AuthRequest, res: Response): Response => {
  * SEP-6 non-interactive deposit. Creates a pending transaction and returns instructions.
  */
 export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Response> => {
-  const { asset_code, account, amount, email_address, first_name, last_name } = req.query as Record<string, string>;
+  const { asset_code, amount, email_address } = req.query as Record<string, string>;
   const publicKey = req.user!.publicKey;
   const code = normalizeAssetCode(asset_code);
 

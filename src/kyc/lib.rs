@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Bytes, BytesN};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Bytes, BytesN, xdr::ToXdr};
 
 #[contracttype]
 pub enum DataKey {
@@ -28,8 +28,8 @@ impl KycVerifier {
         assert!(expires_at > current_time, "proof expired");
 
         let mut data = Bytes::new(&env);
-        data.append(&user.to_xdr(&env));
-        data.append(&(expires_at as u128).to_be_bytes().as_slice().into()); // Example message data
+        data.append(&user.clone().to_xdr(&env));
+        data.append(&Bytes::from_slice(&env, &(expires_at as u128).to_be_bytes())); // Example message data
 
         // In real cases, we'd hash the data or use a specific format.
         // For simplicity, let's verify ed25519 signature.

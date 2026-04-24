@@ -69,11 +69,11 @@ impl StakingContract {
 
     pub fn withdraw(env: Env, user: Address) {
         user.require_auth();
-        let mut info = Self::get_stake_info(env.clone(), user.clone());
+        let info = Self::get_stake_info(env.clone(), user.clone());
         assert!(info.amount > 0, "nothing to withdraw");
 
         let current_time = env.ledger().timestamp();
-        let mut rewards = info.accumulated_rewards + Self::calc_new_rewards(env.clone(), &info, current_time);
+        let rewards = info.accumulated_rewards + Self::calc_new_rewards(env.clone(), &info, current_time);
         let mut amount_to_return = info.amount;
 
         // Apply penalty if before lock_end

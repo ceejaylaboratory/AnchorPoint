@@ -1,6 +1,5 @@
 [package]
-name = "staking-pool"
-name = "staking-snapshot"
+name = "staking"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,7 +7,6 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 path = "lib.rs"
-path = "snapshot.rs"
 doctest = false
 
 [dependencies]

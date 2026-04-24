@@ -1,10 +1,9 @@
-#![no_std]
 //! Standardized Contract Event Emitter for AnchorPoint
 //! 
 //! Provides a unified shape for all events emitted by AnchorPoint contracts,
 //! making it easier for off-chain indexers to process Soroban data.
 
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Val};
+use soroban_sdk::{contracttype, symbol_short, Address, Env};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]

@@ -1,5 +1,0 @@
-* feat/dynamic-fees
-  feat/kyc-verifier
-  feat/rate-limiting
-  feat/staking-pool
-  main

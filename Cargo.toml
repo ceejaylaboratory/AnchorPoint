@@ -10,20 +10,9 @@ members = [
     "src/batch",
     "src/utils",
     "src/flash_loan",
-    "src/kyc"
-    "src/staking"
-  "src/upgradeable",
-  "src/token",
-  "src/escrow_multisig",
-  "src/governance",
-  "src/auth",
-  "src/amm",
-  "src/oracle_consumer",
-  "src/batch",
-  "src/utils",
-  "src/flash_loan",
-  "src/staking",
-  "src/escrow_timelock",
+    "src/kyc",
+    "src/staking",
+    "src/escrow_timelock"
 ]
 resolver = "2"
 

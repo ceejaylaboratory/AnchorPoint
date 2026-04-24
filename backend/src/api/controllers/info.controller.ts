@@ -40,13 +40,7 @@ export interface StellarInfo {
   };
 }
 
-type FeeVariation = {
-  min_amount: string;
-  max_amount: string;
-  fee_fixed: number;
-  fee_percent: number;
-  fee_minimum: number;
-};
+
 
 export const getInfo = (req: Request, res: Response): Response => {
   const format = req.query.format as string;
@@ -101,7 +95,6 @@ export const getInfo = (req: Request, res: Response): Response => {
 
   const filteredInfo = Object.fromEntries(
     Object.entries(stellarInfo).filter(([, v]) => v !== undefined)
-    Object.entries(stellarInfo).filter(([, value]) => value !== undefined)
   ) as StellarInfo;
 
   if (isToml) {
@@ -112,114 +105,6 @@ export const getInfo = (req: Request, res: Response): Response => {
   return res.json(filteredInfo);
 };
 
-// Helper functions to generate asset information
-function getAssetType(asset: string): string {
-  switch (asset) {
-    case 'USDC':
-      return 'fiat';
-    case 'USD':
-      return 'fiat';
-    case 'BTC':
-      return 'crypto';
-    case 'ETH':
-      return 'crypto';
-    default:
-      return 'other';
-  }
-}
-
-function getAssetDescription(asset: string): string {
-  switch (asset) {
-    case 'USDC':
-      return 'USD Coin - a fully collateralized US dollar stablecoin';
-    case 'USD':
-      return 'US Dollar - traditional currency';
-    case 'BTC':
-      return 'Bitcoin - decentralized digital currency';
-    case 'ETH':
-      return 'Ethereum - smart contract platform';
-    default:
-      return `${asset} - supported asset`;
-  }
-}
-
-function getMaxAmount(asset: string): string {
-  const maxAmounts: { [key: string]: string } = {
-    'USDC': '1000000',
-    'USD': '1000000',
-    'BTC': '100',
-    'ETH': '1000'
-  };
-  return maxAmounts[asset] || '1000000';
-}
-
-function getMinAmount(asset: string): string {
-  const minAmounts: { [key: string]: string } = {
-    'USDC': '0.01',
-    'USD': '0.01',
-    'BTC': '0.00001',
-    'ETH': '0.001'
-  };
-  return minAmounts[asset] || '0.01';
-}
-
-function getFeeFixed(asset: string): number {
-  const feeFixed: { [key: string]: number } = {
-    'USDC': 0.50,
-    'USD': 0.50,
-    'BTC': 0.001,
-    'ETH': 0.01
-  };
-  return feeFixed[asset] || 0.50;
-}
-
-function getFeePercent(asset: string): number {
-  const feePercent: { [key: string]: number } = {
-    'USDC': 0.005,
-    'USD': 0.005,
-    'BTC': 0.01,
-    'ETH': 0.01
-  };
-  return feePercent[asset] || 0.005;
-}
-
-function getFeeMinimum(asset: string): number {
-  const feeMinimum: { [key: string]: number } = {
-    'USDC': 0.50,
-    'USD': 0.50,
-    'BTC': 0.001,
-    'ETH': 0.01
-  };
-  return feeMinimum[asset] || 0.50;
-}
-
-function getDepositFeeVariations() {
-  const variations: Record<string, FeeVariation> = {};
-  SUPPORTED_ASSETS.forEach(asset => {
-    variations[asset] = {
-      min_amount: getMinAmount(asset),
-      max_amount: getMaxAmount(asset),
-      fee_fixed: getFeeFixed(asset),
-      fee_percent: getFeePercent(asset),
-      fee_minimum: getFeeMinimum(asset)
-    };
-  });
-  return variations;
-}
-
-function getWithdrawFeeVariations() {
-  const variations: Record<string, FeeVariation> = {};
-  SUPPORTED_ASSETS.forEach(asset => {
-    variations[asset] = {
-      min_amount: getMinAmount(asset),
-      max_amount: getMaxAmount(asset),
-      fee_fixed: getFeeFixed(asset),
-      fee_percent: getFeePercent(asset),
-      fee_minimum: getFeeMinimum(asset)
-    };
-  });
-  return variations;
-}
 
 function convertToTOML(info: StellarInfo): string {
   const lines: string[] = [

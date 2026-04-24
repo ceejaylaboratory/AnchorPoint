@@ -3,7 +3,6 @@ name = "anchorpoint-utils"
 version = "0.1.0"
 edition = "2021"
 description = "Shared utilities for AnchorPoint: events and dynamic fee calculation"
-description = "Shared utilities: standardized event emitter and C2C call wrapper for Soroban contracts"
 
 [dependencies]
 soroban-sdk = "22.0.0"
