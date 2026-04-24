@@ -18,6 +18,14 @@ pub struct MultiAssetSwap;
 
 #[contractimpl]
 impl MultiAssetSwap {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initializes the swap pool.
     pub fn initialize(env: Env, token_a: Address, token_b: Address) {
         if env.storage().instance().has(&DataKey::TokenA) {
@@ -32,6 +40,14 @@ impl MultiAssetSwap {
 
     /// Deposits liquidity into the pool.
     pub fn deposit(env: Env, from: Address, amount_a: i128, amount_b: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         from.require_auth();
         assert!(amount_a > 0 && amount_b > 0, "amount must be positive");
 

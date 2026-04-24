@@ -101,6 +101,14 @@ pub struct RBACContract;
 
 #[contractimpl]
 impl RBACContract {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initializes the RBAC contract with an initial administrator.
     pub fn initialize(env: Env, admin: Address) {
         RBAC::init_admin(&env, &admin);
@@ -113,6 +121,14 @@ impl RBACContract {
 
     /// Revokes any role from a target address. Only the admin can call this.
     pub fn revoke_role(env: Env, from: Address, target: Address) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         RBAC::revoke_role(&env, &from, &target);
     }
 

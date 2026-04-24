@@ -47,6 +47,14 @@ pub struct SnapshotStaking;
 
 #[contractimpl]
 impl SnapshotStaking {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     // ── Admin ─────────────────────────────────────────────────────────────
 
     /// Initialise the contract. Must be called once before any other function.
@@ -91,6 +99,14 @@ impl SnapshotStaking {
 
     /// Record a stake of `amount` for `user` at the current epoch.
     pub fn stake(env: Env, user: Address, amount: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
@@ -113,6 +129,14 @@ impl SnapshotStaking {
 
     /// Record an unstake of `amount` for `user` at the current epoch.
     pub fn unstake(env: Env, user: Address, amount: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 

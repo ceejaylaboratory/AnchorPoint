@@ -25,6 +25,14 @@ pub struct OracleConsumer;
 
 #[contractimpl]
 impl OracleConsumer {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initializes the consumer with an admin and the initial oracle source.
     pub fn initialize(env: Env, admin: Address, oracle: Address) {
         if env.storage().instance().has(&DataKey::OracleAddress) {

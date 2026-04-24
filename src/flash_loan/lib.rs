@@ -15,6 +15,14 @@ pub struct FlashLoanProvider;
 
 #[contractimpl]
 impl FlashLoanProvider {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Executes a flash loan.
     /// 
     /// # Arguments

@@ -19,6 +19,14 @@ pub struct TokenContract;
 
 #[contractimpl]
 impl TokenContract {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     pub fn initialize(env: Env, admin: Address, decimals: u32, name: String, symbol: String) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -32,6 +40,14 @@ impl TokenContract {
     }
 
     pub fn mint(env: Env, to: Address, amount: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         assert!(amount > 0, "amount must be positive");
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -43,6 +59,14 @@ impl TokenContract {
     }
 
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         from.require_auth();
         assert!(amount > 0, "amount must be positive");
         let from_bal = Self::balance_of(env.clone(), from.clone());
@@ -54,6 +78,14 @@ impl TokenContract {
     }
 
     pub fn approve(env: Env, owner: Address, spender: Address, amount: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         owner.require_auth();
         assert!(amount >= 0, "amount must be non-negative");
         env.storage().persistent().set(&DataKey::Allowance(owner.clone(), spender.clone()), &amount);
@@ -61,6 +93,14 @@ impl TokenContract {
     }
 
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         spender.require_auth();
         assert!(amount > 0, "amount must be positive");
         let allowance = Self::allowance(env.clone(), from.clone(), spender.clone());
@@ -75,6 +115,14 @@ impl TokenContract {
     }
 
     pub fn burn(env: Env, from: Address, amount: i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         from.require_auth();
         assert!(amount > 0, "amount must be positive");
         let bal = Self::balance_of(env.clone(), from.clone());

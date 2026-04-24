@@ -15,6 +15,14 @@ pub struct EscrowMultisig;
 
 #[contractimpl]
 impl EscrowMultisig {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initialize the escrow contract with signers, threshold, and recipient.
     pub fn initialize(e: Env, signers: Vec<Address>, threshold: u32, recipient: Address) {
         if e.storage().instance().has(&DataKey::Initialized) {

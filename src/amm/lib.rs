@@ -20,6 +20,14 @@ pub struct AMM;
 
 #[contractimpl]
 impl AMM {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initializes the AMM pool for a specific pair of tokens.
     pub fn initialize(env: Env, token_a: Address, token_b: Address) {
         if env.storage().instance().has(&DataKey::TokenA) {
@@ -42,6 +50,14 @@ impl AMM {
 
     /// Deposits liquidity into the pool. Returns the number of LP shares minted.
     pub fn deposit(env: Env, from: Address, amount_a: i128, amount_b: i128) -> i128 {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         from.require_auth();
 
         let token_a: Address = env.storage().instance().get(&DataKey::TokenA).expect("not initialized");
@@ -83,6 +99,14 @@ impl AMM {
 
     /// Swaps tokens using the constant product formula (x * y = k) with a 0.3% fee.
     pub fn swap(env: Env, from: Address, token_in: Address, amount_in: i128, min_amount_out: i128) -> i128 {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         from.require_auth();
 
         let token_a: Address = env.storage().instance().get(&DataKey::TokenA).expect("not initialized");
@@ -132,6 +156,14 @@ impl AMM {
 
     /// Withdraws liquidity from the pool.
     pub fn withdraw(env: Env, from: Address, shares: i128) -> (i128, i128) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         from.require_auth();
 
         let token_a: Address = env.storage().instance().get(&DataKey::TokenA).expect("not initialized");

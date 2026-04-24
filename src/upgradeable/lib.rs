@@ -17,6 +17,14 @@ pub struct UpgradeableContract;
 
 #[contractimpl]
 impl UpgradeableContract {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initializes the contract with the given admin address.
     ///
     /// # Arguments
@@ -47,6 +55,14 @@ impl UpgradeableContract {
     /// # Panics
     /// Panics if the caller is not the admin.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         // Retrieve the admin and enforce authorization.
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
