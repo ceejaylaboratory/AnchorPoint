@@ -18,10 +18,10 @@ resolver = "2"
 
 [profile.release]
 opt-level = "z"
-overflow-checks = true
+overflow-checks = false
 debug = 0
-strip = "symbols"
+strip = true
 debug-assertions = false
 panic = "abort"
 codegen-units = 1
-lto = true
+lto = "fat"
