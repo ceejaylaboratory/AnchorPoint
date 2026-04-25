@@ -11,6 +11,7 @@ jest.mock('../../lib/prisma', () => ({
     findMany: jest.fn(),
     count: jest.fn(),
   },
+  $queryRaw: jest.fn(),
 }));
 
 // Mock Rate Limiting
@@ -64,8 +65,8 @@ describe('Transactions Router', () => {
     expect(prisma.transaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         assetCode: 'USDC',
-        user: { publicKey: mockPublicKey },
-      })
+        userId: expect.any(String),
+      }),
     }));
   });
 
@@ -87,6 +88,27 @@ describe('Transactions Router', () => {
       .set('Authorization', `Bearer ${token}`)
       .query({ page: 'abc' });
     expect(res.statusCode).toEqual(400);
+  });
+
+  it('should search transactions by indexed sender value', async () => {
+    const eventRows = [{ txHash: 'tx123' }];
+    (prisma.$queryRaw as jest.Mock).mockResolvedValue(eventRows);
+    (prisma.transaction.findMany as jest.Mock).mockResolvedValue([{ id: '1', stellarTxId: 'tx123', amount: '100' }]);
+    (prisma.transaction.count as jest.Mock).mockResolvedValue(1);
+
+    const res = await request(app)
+      .get('/api/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ sender: 'GABC', page: '1', limit: '10' });
+
+    expect(res.statusCode).toEqual(200);
+    expect(prisma.$queryRaw).toHaveBeenCalled();
+    expect(prisma.transaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        stellarTxId: { in: ['tx123'] },
+      }),
+    }));
+    expect(res.body.data.transactions).toEqual([{ id: '1', stellarTxId: 'tx123', amount: '100' }]);
   });
 
   it('should return 500 on database error', async () => {
