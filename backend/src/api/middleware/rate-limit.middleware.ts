@@ -69,6 +69,13 @@ export const sensitiveApiLimiter = createRateLimiter({
   keyPrefix: 'rl:sensitive:',
 });
 
+export const publicLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  message: 'Too many requests to this public endpoint, please try again later.',
+  keyPrefix: 'rl:public:',
+});
+
 /**
  * Configuration for the submission rate limiter
  */
