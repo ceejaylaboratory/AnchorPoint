@@ -6,8 +6,14 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
+}
+
+enum Tier {
+  Free
+  Pro
+  Enterprise
 }
 
 model User {
@@ -28,11 +34,12 @@ model ApiKey {
   key       String   @unique
   userId    String
   user      User     @relation(fields: [userId], references: [id])
-  tier      String   @default("FREE")
+  tier      Tier     @default(Free)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
   @@index([key])
+  @@index([userId])
 }
 
 model Transaction {
@@ -79,61 +86,4 @@ model KycCustomer {
   updatedAt   DateTime  @updatedAt
 
   @@index([userId])
-}
-
-<<<<<<< HEAD
-enum JobStatus {
-  PENDING
-  ACTIVE
-  COMPLETED
-  FAILED
-  DELAYED
-  RETRYING
-}
-
-enum JobPriority {
-  LOW
-  NORMAL
-  HIGH
-  URGENT
-}
-
-model ContractJob {
-  id              String      @id @default(uuid())
-  jobId           String      @unique // BullMQ job ID
-  type            String      // CONTRACT_CALL, CONTRACT_DEPLOY, SETTLEMENT, etc.
-  priority        JobPriority @default(NORMAL)
-  status          JobStatus   @default(PENDING)
-  contractId      String?     // Stellar contract ID
-  functionName    String?     // Contract function to call
-  parameters      Json?       // Function parameters
-  result          Json?       // Job result
-  error           String?     // Error message if failed
-  attempts        Int         @default(0)
-  maxAttempts     Int         @default(3)
-  createdBy       String?     // User who created the job
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  startedAt       DateTime?
-  completedAt     DateTime?
-  failedAt        DateTime?
-  metadata        Json?       // Additional metadata
-
-  @@index([jobId])
-  @@index([type])
-  @@index([status])
-  @@index([priority])
-  @@index([createdBy])
-  @@index([createdAt])
-=======
-model SystemConfig {
-  id          String   @id @default(uuid())
-  version     Int      @unique
-  settings    String
-  isActive    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([isActive])
->>>>>>> pr-190
 }
