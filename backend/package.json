@@ -11,7 +11,13 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint \"src/**/*.ts\"",
-    "lint:fix": "eslint \"src/**/*.ts\" --fix"
+    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "migrate:check": "ts-node scripts/migration-integrity-checker.ts",
+    "migrate:safe": "npm run migrate:check && npx prisma migrate deploy",
+    "migrate:dev": "npx prisma migrate dev",
+    "migrate:deploy": "npx prisma migrate deploy",
+    "migrate:rollback": "ts-node scripts/generate-rollback.ts",
+    "migrate:status": "npx prisma migrate status"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

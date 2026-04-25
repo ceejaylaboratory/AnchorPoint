@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Check if Prisma schema or migrations have changed
+PRISMA_CHANGED=$(git diff --cached --name-only | grep -E "prisma/(schema.prisma|migrations)")
+
+if [ -n "$PRISMA_CHANGED" ]; then
+  echo "🔍 Prisma changes detected. Running migration integrity checks..."
+  
+  cd backend
+  npm run migrate:check
+  
+  if [ $? -ne 0 ]; then
+    echo "❌ Migration integrity check failed. Commit aborted."
+    echo "Fix the issues or use 'git commit --no-verify' to bypass (not recommended)."
+    exit 1
+  fi
+  
+  echo "✅ Migration integrity check passed!"
+fi
+
+exit 0

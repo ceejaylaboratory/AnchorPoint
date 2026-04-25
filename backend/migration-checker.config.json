@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Migration Integrity Checker Configuration",
+  "description": "Configuration for database migration validation",
+  
+  "strictMode": false,
+  "treatWarningsAsErrors": false,
+  
+  "checks": {
+    "pendingMigrations": {
+      "enabled": true,
+      "severity": "error"
+    },
+    "schemaDrift": {
+      "enabled": true,
+      "severity": "warning"
+    },
+    "destructiveChanges": {
+      "enabled": true,
+      "severity": "error",
+      "allowedOperations": []
+    },
+    "migrationFiles": {
+      "enabled": true,
+      "severity": "error"
+    },
+    "rollbackSimulation": {
+      "enabled": true,
+      "severity": "warning"
+    }
+  },
+  
+  "destructiveOperations": {
+    "dropTable": {
+      "allowed": false,
+      "requiresApproval": true,
+      "severity": "error"
+    },
+    "dropColumn": {
+      "allowed": false,
+      "requiresApproval": true,
+      "severity": "error"
+    },
+    "deleteData": {
+      "allowed": false,
+      "requiresApproval": true,
+      "severity": "error"
+    },
+    "alterColumn": {
+      "allowed": true,
+      "requiresApproval": false,
+      "severity": "warning"
+    },
+    "renameTable": {
+      "allowed": true,
+      "requiresApproval": true,
+      "severity": "warning"
+    },
+    "renameColumn": {
+      "allowed": true,
+      "requiresApproval": true,
+      "severity": "warning"
+    }
+  },
+  
+  "environments": {
+    "development": {
+      "strictMode": false,
+      "allowDestructiveChanges": true
+    },
+    "staging": {
+      "strictMode": true,
+      "allowDestructiveChanges": false,
+      "requireBackup": true
+    },
+    "production": {
+      "strictMode": true,
+      "allowDestructiveChanges": false,
+      "requireBackup": true,
+      "requireApproval": true
+    }
+  },
+  
+  "notifications": {
+    "onError": {
+      "enabled": true,
+      "channels": ["console", "ci"]
+    },
+    "onWarning": {
+      "enabled": true,
+      "channels": ["console"]
+    },
+    "onSuccess": {
+      "enabled": false,
+      "channels": ["console"]
+    }
+  },
+  
+  "reporting": {
+    "generateReport": true,
+    "reportFormat": "markdown",
+    "reportPath": "./migration-report.md",
+    "includeDetails": true
+  },
+  
+  "rollback": {
+    "autoGenerate": true,
+    "validateReversibility": true,
+    "requireManualReview": true
+  }
+}
