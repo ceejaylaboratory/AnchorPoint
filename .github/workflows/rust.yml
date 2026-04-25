@@ -19,3 +19,6 @@ jobs:
         run: cargo test -p sep41-token
       - name: Test upgradeable
         run: cargo test -p upgradeable
+      - name: Run Security Audit
+        run: ./scripts/security_audit.sh
+
