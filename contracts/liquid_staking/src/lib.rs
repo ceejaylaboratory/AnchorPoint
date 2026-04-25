@@ -81,7 +81,8 @@ impl LiquidStaking {
                 .set(&DataKey::RewardPerTokenStored, &rpt);
         }
 
-        env.events().publish((symbol_short!("dep_rwd"), from), amount);
+        // Topic: event name only; from + amount in data.
+        env.events().publish(symbol_short!("dep_rwd"), (from, amount));
     }
 
     pub fn stake(env: Env, user: Address, amount: i128, lock_duration: u64) -> u64 {
@@ -126,7 +127,8 @@ impl LiquidStaking {
         let total: i128 = env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0);
         env.storage().instance().set(&DataKey::TotalStaked, &(total + amount));
 
-        env.events().publish((symbol_short!("staked"), user), (token_id, amount, lock_time));
+        // Topic: event name only; user + token_id + amount + lock_time in data.
+        env.events().publish(symbol_short!("staked"), (user, token_id, amount, lock_time));
         
         token_id
     }
@@ -182,7 +184,8 @@ impl LiquidStaking {
             (env.current_contract_address(), token_id).into_val(&env),
         );
 
-        env.events().publish((symbol_short!("unstaked"), user), (token_id, amount));
+        // Topic: event name only; user + token_id + amount in data.
+        env.events().publish(symbol_short!("unstaked"), (user, token_id, amount));
     }
 
     pub fn claim(env: Env, user: Address, token_id: u64) -> i128 {
@@ -210,7 +213,8 @@ impl LiquidStaking {
                 &reward,
             );
 
-            env.events().publish((symbol_short!("claimed"), user), (token_id, reward));
+            // Topic: event name only; user + token_id + reward in data.
+            env.events().publish(symbol_short!("claimed"), (user, token_id, reward));
         }
 
         reward

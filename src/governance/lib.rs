@@ -174,9 +174,10 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::TotalCreditsIssued, &(total_issued + credits));
 
+        // Topic: event name only; user + amounts in data to avoid indexing large Address.
         env.events().publish(
-            (symbol_short!("credits"), user),
-            (caller, credits, new_credits),
+            symbol_short!("credits"),
+            (user, caller, credits, new_credits),
         );
     }
 
@@ -223,8 +224,9 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::QuorumPercentage, &percentage);
 
+        // Topic: event name only; caller + percentage in data.
         env.events()
-            .publish((symbol_short!("quorum"), caller), percentage);
+            .publish(symbol_short!("quorum"), (caller, percentage));
     }
 
     /// Create a new proposal
@@ -299,6 +301,7 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::ProposalQuadraticCost(new_id), &0i128);
 
+        // Topic: only the scalar proposal id; creator + title in data.
         env.events()
             .publish((symbol_short!("created"), new_id), (creator, title));
 
@@ -408,10 +411,10 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
-        // Emit vote event
+        // Emit vote event — topic uses only small scalar (proposal_id: u32); voter + details in data.
         env.events().publish(
-            (symbol_short!("voted"), proposal_id, voter.clone()),
-            (support, votes, quadratic_cost),
+            (symbol_short!("voted"), proposal_id),
+            (voter, support, votes, quadratic_cost),
         );
     }
 
@@ -577,6 +580,7 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
+        // Topic: only scalar proposal_id; executor Address in data.
         env.events()
             .publish((symbol_short!("executed"), proposal_id), executor);
     }

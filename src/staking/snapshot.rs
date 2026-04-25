@@ -123,8 +123,9 @@ impl SnapshotStaking {
             .instance()
             .set(&DataKey::TotalStaked, &(total + amount));
 
+        // Topic: event name only; user + amount in data.
         env.events()
-            .publish((symbol_short!("staked"), user), amount);
+            .publish(symbol_short!("staked"), (user, amount));
     }
 
     /// Record an unstake of `amount` for `user` at the current epoch.
@@ -155,8 +156,9 @@ impl SnapshotStaking {
             .instance()
             .set(&DataKey::TotalStaked, &(total - amount));
 
+        // Topic: event name only; user + amount in data.
         env.events()
-            .publish((symbol_short!("unstaked"), user), amount);
+            .publish(symbol_short!("unstaked"), (user, amount));
     }
 
     // ── Views ─────────────────────────────────────────────────────────────

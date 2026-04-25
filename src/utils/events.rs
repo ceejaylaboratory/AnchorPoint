@@ -44,7 +44,8 @@ pub struct VotedEvent {
     pub proposal_id: u32,
     pub voter: Address,
     pub support: bool,
-    pub votes: i128,
+    /// Downscaled from i128 — max safe votes fit in i64 given quadratic cost constraints.
+    pub votes: i64,
 }
 
 #[contracttype]
@@ -166,7 +167,7 @@ mod tests {
             proposal_id: 1,
             voter: voter.clone(),
             support: true,
-            votes: 25,
+            votes: 25i64,
         });
 
         client.emit_test_event(&event);

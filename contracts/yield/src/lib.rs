@@ -122,8 +122,9 @@ impl YieldDistribution {
                 .set(&DataKey::RewardPerTokenStored, &rpt);
         }
 
+        // Topic: event name only; from + amount in data.
         env.events()
-            .publish((symbol_short!("dep_rwd"), from), amount);
+            .publish(symbol_short!("dep_rwd"), (from, amount));
     }
 
     // ── Staking ───────────────────────────────────────────────────────────
@@ -165,8 +166,9 @@ impl YieldDistribution {
             .instance()
             .set(&DataKey::TotalStaked, &(total + amount));
 
+        // Topic: event name only; user + amount in data.
         env.events()
-            .publish((symbol_short!("staked"), user), amount);
+            .publish(symbol_short!("staked"), (user, amount));
     }
 
     /// Unstake `amount` of the staking token.
@@ -207,8 +209,9 @@ impl YieldDistribution {
             &amount,
         );
 
+        // Topic: event name only; user + amount in data.
         env.events()
-            .publish((symbol_short!("unstaked"), user), amount);
+            .publish(symbol_short!("unstaked"), (user, amount));
     }
 
     // ── Claiming ──────────────────────────────────────────────────────────
@@ -245,8 +248,9 @@ impl YieldDistribution {
                 &reward,
             );
 
+            // Topic: event name only; user + reward in data.
             env.events()
-                .publish((symbol_short!("claimed"), user), reward);
+                .publish(symbol_short!("claimed"), (user, reward));
         }
 
         reward

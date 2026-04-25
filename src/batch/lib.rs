@@ -71,10 +71,10 @@ impl BatchExecutor {
             results.push_back(result);
         }
 
-        // Emit event for batch execution
+        // Topic: event name only; caller + nonce + count in data.
         env.events().publish(
-            (soroban_sdk::symbol_short!("batch"), caller.clone()),
-            (current_nonce, calls.len()),
+            symbol_short!("batch"),
+            (caller, current_nonce, calls.len()),
         );
 
         results

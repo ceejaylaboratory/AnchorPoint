@@ -50,9 +50,9 @@ impl FlashLoanProvider {
             panic!("Flash loan not repaid with fee");
         }
 
-        // 6. Emit event
+        // Topic: event name only; receiver + token (Addresses) + amounts in data.
         env.events()
-            .publish((symbol_short!("flash_ln"), receiver, token), (amount, fee));
+            .publish(symbol_short!("flash_ln"), (receiver, token, amount, fee));
     }
 }
 

@@ -54,9 +54,9 @@ impl RBAC {
         let key = AccessDataKey::Role(target.clone());
         env.storage().instance().set(&key, &role);
 
-        // Emit role change event
+        // Emit role change event — topic: event name only; target + role in data.
         env.events()
-            .publish((symbol_short!("role_set"), target.clone()), role);
+            .publish(symbol_short!("role_set"), (target.clone(), role));
     }
 
     /// Revokes any role from a target address. Only an Admin can call this.
@@ -67,9 +67,9 @@ impl RBAC {
         let key = AccessDataKey::Role(target.clone());
         env.storage().instance().remove(&key);
 
-        // Emit role revocation event
+        // Emit role revocation event — topic: event name only; target in data.
         env.events()
-            .publish((symbol_short!("role_rev"), target.clone()), ());
+            .publish(symbol_short!("role_rev"), target.clone());
     }
 
     /// Inits the first admin. This can only be called once.
@@ -90,8 +90,8 @@ impl RBAC {
             .set(&AccessDataKey::AdminInitialized, &true);
 
         env.events().publish(
-            (symbol_short!("role_set"), admin.clone()),
-            AccessRole::Admin,
+            symbol_short!("role_set"),
+            (admin.clone(), AccessRole::Admin),
         );
     }
 }

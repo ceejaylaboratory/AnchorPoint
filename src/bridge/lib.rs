@@ -102,8 +102,9 @@ impl Bridge {
                 // Inbound: tokens locked on source chain → mint wrapped tokens here.
                 token_client.mint(&msg.recipient, &msg.amount);
 
+                // Topic: op symbol only; all details in data. source_chain (u32) is small.
                 env.events().publish(
-                    (symbol_short!("bridge"), symbol_short!("mint")),
+                    symbol_short!("bridge_mn"),
                     (
                         msg.source_chain,
                         msg.recipient.clone(),
@@ -117,8 +118,9 @@ impl Bridge {
                 // Outbound: burn wrapped tokens here → unlock on source chain.
                 token_client.burn(&msg.recipient, &msg.amount);
 
+                // Topic: op symbol only; all details in data.
                 env.events().publish(
-                    (symbol_short!("bridge"), symbol_short!("burn")),
+                    symbol_short!("bridge_bn"),
                     (
                         msg.source_chain,
                         msg.recipient.clone(),

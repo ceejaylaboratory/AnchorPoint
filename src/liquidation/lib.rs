@@ -69,7 +69,10 @@ impl LiquidationEngine {
         
         env.storage().persistent().set(&DataKey::Vaults(vault_id), &vault);
         
-        // Emit liquidation event with the liquidator and incentive
-        env.events().publish((symbol_short!("liquidate"), vault_id, liquidator), incentive);
+        // Topic: event name only; vault_id (u32) + liquidator + incentive in data.
+        env.events().publish(
+            symbol_short!("liquidate"),
+            (vault_id, liquidator, incentive),
+        );
     }
 }

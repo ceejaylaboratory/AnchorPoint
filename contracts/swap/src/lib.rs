@@ -38,11 +38,12 @@ pub struct Position {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SwapEvent {
-    pub sender: Address,
+    /// The address that initiated and received the swap (sender == recipient in this contract).
     pub recipient: Address,
     pub amount_0: i128,
     pub amount_1: i128,
-    pub sqrt_price_x96: u128,
+    /// Packed as u64 to halve storage vs u128; full precision not needed for event indexing.
+    pub sqrt_price_x96: u64,
     pub liquidity: i128,
     pub tick: i32,
 }
@@ -336,7 +337,8 @@ impl MultiAssetSwap {
             env.storage().instance().set(&DataKey::CurrentLiquidity, &(current_liquidity + liquidity));
         }
         
-        env.events().publish((symbol_short!("mint"), recipient), (tick_lower, tick_upper, liquidity, amount0, amount1));
+        // Topic: event name only; recipient + tick range + amounts in data.
+        env.events().publish(symbol_short!("mint"), (recipient, tick_lower, tick_upper, liquidity, amount0, amount1));
         
         (liquidity, amount0, amount1)
     }
@@ -484,14 +486,14 @@ impl MultiAssetSwap {
         current_tick = if zero_for_one { current_tick - 1 } else { current_tick + 1 };
         env.storage().instance().set(&DataKey::CurrentTick, &current_tick);
         
+        // Topic: event name only; all swap details in data.
         env.events().publish(
-            (symbol_short!("swap"), recipient),
+            symbol_short!("swap"),
             SwapEvent {
-                sender: recipient,
                 recipient,
                 amount_0: if zero_for_one { amount_in } else { -amount_out },
                 amount_1: if zero_for_one { -amount_out } else { amount_in },
-                sqrt_price_x96: current_sqrt_price_x96,
+                sqrt_price_x96: current_sqrt_price_x96 as u64,
                 liquidity: current_liquidity,
                 tick: current_tick,
             },
@@ -546,7 +548,8 @@ impl MultiAssetSwap {
         updated_position.fee_growth_inside_1_last_x128 = fee_growth_global_1;
         env.storage().instance().set(&position_key, &updated_position);
         
-        env.events().publish((symbol_short!("collect"), recipient), (tick_lower, tick_upper, amount0, amount1));
+        // Topic: event name only; recipient + tick range + amounts in data.
+        env.events().publish(symbol_short!("collect"), (recipient, tick_lower, tick_upper, amount0, amount1));
         
         (amount0, amount1)
     }
@@ -611,7 +614,8 @@ impl MultiAssetSwap {
             env.storage().instance().set(&DataKey::CurrentLiquidity, &(current_liquidity - amount));
         }
         
-        env.events().publish((symbol_short!("burn"), owner), (tick_lower, tick_upper, amount, amount0, amount1));
+        // Topic: event name only; owner + tick range + amounts in data.
+        env.events().publish(symbol_short!("burn"), (owner, tick_lower, tick_upper, amount, amount0, amount1));
         
         (amount0, amount1)
     }

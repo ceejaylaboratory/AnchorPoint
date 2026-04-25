@@ -191,9 +191,10 @@ impl RandomNumberGenerator {
             .instance()
             .set(&DataKey::CommitCount(round_id), &(commit_count + 1));
 
+        // Topic: event name + round_id (u32 scalar); user Address in data.
         env.events().publish(
-            (symbol_short!("commit"), round_id, user),
-            commitment,
+            (symbol_short!("commit"), round_id),
+            (user, commitment),
         );
     }
 
@@ -320,9 +321,10 @@ impl RandomNumberGenerator {
             .instance()
             .set(&DataKey::RevealCount(round_id), &(reveal_count + 1));
 
+        // Topic: event name + round_id (u32 scalar); user Address in data.
         env.events().publish(
-            (symbol_short!("reveal"), round_id, user),
-            symbol_short!("done"),
+            (symbol_short!("reveal"), round_id),
+            user,
         );
     }
 

@@ -115,9 +115,10 @@ impl OracleMedianizer {
 
         env.storage().instance().set(&DataKey::OracleCount, &(count + 1));
 
+        // Topic: event name + oracle Address (needed for indexing source changes).
         env.events().publish(
-            (symbol_short!("oracle"), oracle),
-            symbol_short!("added"),
+            symbol_short!("oracle_add"),
+            oracle,
         );
     }
 
@@ -155,9 +156,10 @@ impl OracleMedianizer {
             env.storage().instance().set(&DataKey::OracleCount, &(count - 1));
         }
 
+        // Topic: event name only; oracle Address in data.
         env.events().publish(
-            (symbol_short!("oracle"), oracle),
-            symbol_short!("removed"),
+            symbol_short!("oracle_rm"),
+            oracle,
         );
     }
 
@@ -245,9 +247,10 @@ impl OracleMedianizer {
             .instance()
             .set(&DataKey::PriceData(asset.clone(), oracle.clone()), &feed);
 
+        // Topic: event name only; asset + oracle + price in data.
         env.events().publish(
-            (symbol_short!("submit"), asset.clone(), oracle),
-            price,
+            symbol_short!("submit"),
+            (asset, oracle, price),
         );
     }
 
@@ -358,9 +361,10 @@ impl OracleMedianizer {
                 .instance()
                 .set(&DataKey::LastUpdate(asset.clone()), &env.ledger().timestamp());
 
+            // Topic: event name only; asset + median in data.
             env.events().publish(
-                (symbol_short!("median"), asset),
-                median,
+                symbol_short!("median"),
+                (asset, median),
             );
         }
 

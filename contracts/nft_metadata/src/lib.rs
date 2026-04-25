@@ -602,9 +602,10 @@ impl NftMetadataContract {
             env.storage().instance().remove(&DataKey::OperatorApproval(owner.clone(), operator.clone()));
         }
 
+        // Topic: event name only; owner + operator + approved in data.
         env.events().publish(
-            (symbol_short!("appr_all"), owner.clone()),
-            (operator, approved),
+            symbol_short!("appr_all"),
+            (owner, operator, approved),
         );
     }
 
