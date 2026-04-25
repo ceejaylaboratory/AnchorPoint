@@ -1,5 +1,5 @@
 //! Standardized Contract Event Emitter for AnchorPoint
-//! 
+//!
 //! Provides a unified shape for all events emitted by AnchorPoint contracts,
 //! making it easier for off-chain indexers to process Soroban data.
 
@@ -96,13 +96,16 @@ pub fn emit_event(env: &Env, event: AnchorEvent) {
         AnchorEvent::FundsReleased(_) => symbol_short!("release"),
     };
 
-    env.events().publish((symbol_short!("anchor"), sub_topic), event);
+    env.events()
+        .publish((symbol_short!("anchor"), sub_topic), event);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, testutils::Events, vec, IntoVal, FromVal, contract, contractimpl};
+    use soroban_sdk::{
+        contract, contractimpl, testutils::Address as _, testutils::Events, vec, FromVal, IntoVal,
+    };
 
     #[contract]
     pub struct DummyContract;
@@ -132,19 +135,22 @@ mod tests {
 
         let events = env.events().all();
         assert_eq!(events.len(), 1);
-        
+
         let last_event = events.last().unwrap();
         let expected_topics: soroban_sdk::Vec<Val> = vec![
-            &env, 
-            symbol_short!("anchor").into_val(&env), 
-            symbol_short!("deposit").into_val(&env)
+            &env,
+            symbol_short!("anchor").into_val(&env),
+            symbol_short!("deposit").into_val(&env),
         ];
-        
+
         assert_eq!(last_event.1.len(), expected_topics.len());
         for i in 0..expected_topics.len() {
-            assert_eq!(last_event.1.get(i).unwrap().get_payload(), expected_topics.get(i).unwrap().get_payload());
+            assert_eq!(
+                last_event.1.get(i).unwrap().get_payload(),
+                expected_topics.get(i).unwrap().get_payload()
+            );
         }
-        
+
         let published_event: AnchorEvent = AnchorEvent::from_val(&env, &last_event.2);
         assert_eq!(published_event, event);
     }
@@ -167,20 +173,22 @@ mod tests {
 
         let events = env.events().all();
         assert_eq!(events.len(), 1);
-        
+
         let last_event = events.last().unwrap();
         let expected_topics: soroban_sdk::Vec<Val> = vec![
-            &env, 
-            symbol_short!("anchor").into_val(&env), 
-            symbol_short!("voted").into_val(&env)
+            &env,
+            symbol_short!("anchor").into_val(&env),
+            symbol_short!("voted").into_val(&env),
         ];
-        
+
         for i in 0..expected_topics.len() {
-            assert_eq!(last_event.1.get(i).unwrap().get_payload(), expected_topics.get(i).unwrap().get_payload());
+            assert_eq!(
+                last_event.1.get(i).unwrap().get_payload(),
+                expected_topics.get(i).unwrap().get_payload()
+            );
         }
-        
+
         let published_event: AnchorEvent = AnchorEvent::from_val(&env, &last_event.2);
         assert_eq!(published_event, event);
     }
-
 }

@@ -68,18 +68,13 @@ impl UpgradeableContract {
         admin.require_auth();
 
         // Increment the version counter.
-        let current_version: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::Version)
-            .unwrap_or(1);
+        let current_version: u32 = env.storage().instance().get(&DataKey::Version).unwrap_or(1);
         env.storage()
             .instance()
             .set(&DataKey::Version, &(current_version + 1));
 
         // Perform the upgrade — this replaces the running WASM.
-        env.deployer()
-            .update_current_contract_wasm(new_wasm_hash);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     /// Transfers the admin role to a new address.
@@ -103,10 +98,7 @@ impl UpgradeableContract {
     ///
     /// The version starts at 1 and is incremented on each successful upgrade.
     pub fn version(env: Env) -> u32 {
-        env.storage()
-            .instance()
-            .get(&DataKey::Version)
-            .unwrap_or(0)
+        env.storage().instance().get(&DataKey::Version).unwrap_or(0)
     }
 
     /// Returns the current admin address.

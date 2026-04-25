@@ -13,9 +13,7 @@
 
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, Address, Env};
 
 // Fixed-point precision: 1e18
 const PRECISION: i128 = 1_000_000_000_000_000_000;
@@ -66,10 +64,16 @@ impl YieldDistribution {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::StakeToken, &stake_token);
-        env.storage().instance().set(&DataKey::RewardToken, &reward_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::StakeToken, &stake_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardToken, &reward_token);
         env.storage().instance().set(&DataKey::TotalStaked, &0_i128);
-        env.storage().instance().set(&DataKey::RewardPerTokenStored, &0_i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardPerTokenStored, &0_i128);
     }
 
     /// Deposit `amount` of reward tokens into the contract for distribution.
@@ -118,10 +122,8 @@ impl YieldDistribution {
                 .set(&DataKey::RewardPerTokenStored, &rpt);
         }
 
-        env.events().publish(
-            (symbol_short!("dep_rwd"), from),
-            amount,
-        );
+        env.events()
+            .publish((symbol_short!("dep_rwd"), from), amount);
     }
 
     // ── Staking ───────────────────────────────────────────────────────────
@@ -163,7 +165,8 @@ impl YieldDistribution {
             .instance()
             .set(&DataKey::TotalStaked, &(total + amount));
 
-        env.events().publish((symbol_short!("staked"), user), amount);
+        env.events()
+            .publish((symbol_short!("staked"), user), amount);
     }
 
     /// Unstake `amount` of the staking token.
@@ -204,7 +207,8 @@ impl YieldDistribution {
             &amount,
         );
 
-        env.events().publish((symbol_short!("unstaked"), user), amount);
+        env.events()
+            .publish((symbol_short!("unstaked"), user), amount);
     }
 
     // ── Claiming ──────────────────────────────────────────────────────────
@@ -335,7 +339,7 @@ impl YieldDistribution {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _},
+        testutils::Address as _,
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env,
     };
@@ -362,9 +366,20 @@ mod tests {
 
         let contract_id = env.register_contract(None, YieldDistribution);
         let client = YieldDistributionClient::new(&env, &contract_id);
-        client.initialize(&admin, &stake_token_id.address(), &reward_token_id.address());
+        client.initialize(
+            &admin,
+            &stake_token_id.address(),
+            &reward_token_id.address(),
+        );
 
-        (env, contract_id, admin, alice, bob, reward_token_id.address())
+        (
+            env,
+            contract_id,
+            admin,
+            alice,
+            bob,
+            reward_token_id.address(),
+        )
     }
 
     #[test]

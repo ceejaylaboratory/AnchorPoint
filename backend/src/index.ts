@@ -1,27 +1,18 @@
-import express, { Request, Response } from "express";
-import cors from "cors";
-import swaggerUi from "swagger-ui-express";
-import { config } from "./config/env";
-import { swaggerSpec } from "./config/swagger";
-import logger from "./utils/logger";
-import transactionsRouter from "./api/routes/transactions.route";
-import sep24Router from "./api/routes/sep24.route";
-import sep6Router from "./api/routes/sep6.route";
-import sep38Router from "./api/routes/sep38.route";
-import sep31Router from "./api/routes/sep31.route";
-import infoRouter from "./api/routes/info.route";
-import metricsRouter from "./api/routes/metrics.route";
-import { errorHandler } from "./api/middleware/error.middleware";
-import {
-  metricsMiddleware,
-  connectionTracker,
-} from "./api/middleware/metrics.middleware";
-import { authLimiter } from "./api/middleware/rate-limit.middleware";
-import { dynamicRateLimiter } from "./api/middleware/dynamic-rate-limit.middleware";
-import { TierConfigService } from "./services/tier-config.service";
-import { ApiKeyService } from "./services/api-key.service";
-import { redis } from "./lib/redis";
-import { createApiKeysRouter } from "./api/routes/api-keys.route";
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import swaggerUi from 'swagger-ui-express';
+import { config } from './config/env';
+import { swaggerSpec } from './config/swagger';
+import logger from './utils/logger';
+import transactionsRouter from './api/routes/transactions.route';
+import adminRouter from './api/routes/admin.route';
+import sep24Router from './api/routes/sep24.route';
+import sep6Router from './api/routes/sep6.route';
+import sep38Router from './api/routes/sep38.route';
+import infoRouter from './api/routes/info.route';
+import metricsRouter from './api/routes/metrics.route';
+import { errorHandler } from './api/middleware/error.middleware';
+import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 
 const app = express();
 const PORT = config.PORT;
@@ -45,8 +36,8 @@ app.use(express.json());
  *               type: string
  *               example: AnchorPoint Backend API is running.
  */
-app.get("/", (req: Request, res: Response) => {
-  res.send("AnchorPoint Backend API is running.");
+app.get('/', (req: Request, res: Response) => {
+  res.send('AnchorPoint Backend API is running.');
 });
 
 /**
@@ -71,8 +62,8 @@ app.get("/", (req: Request, res: Response) => {
  *                   type: string
  *                   format: date-time
  */
-app.get("/health", (req: Request, res: Response) => {
-  res.json({ status: "UP", timestamp: new Date().toISOString() });
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ status: 'UP', timestamp: new Date().toISOString() });
 });
 
 // Swagger API Documentation
@@ -87,23 +78,19 @@ app.get("/health", (req: Request, res: Response) => {
  *       200:
  *         description: Swagger UI HTML page
  */
-app.use(
-  "/api-docs",
-  swaggerUi.serve,
-  swaggerUi.setup(swaggerSpec, {
-    customCss: ".swagger-ui .topbar { display: none }",
-    customSiteTitle: "AnchorPoint API Documentation",
-    swaggerOptions: {
-      persistAuthorization: true,
-      displayOperationId: true,
-      filter: true,
-    },
-  }),
-);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'AnchorPoint API Documentation',
+  swaggerOptions: {
+    persistAuthorization: true,
+    displayOperationId: true,
+    filter: true,
+  },
+}));
 
 // API Documentation JSON endpoint
-app.get("/api-docs.json", (req: Request, res: Response) => {
-  res.setHeader("Content-Type", "application/json");
+app.get('/api-docs.json', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
   res.send(swaggerSpec);
 });
 
@@ -111,48 +98,32 @@ app.get("/api-docs.json", (req: Request, res: Response) => {
 app.use(connectionTracker);
 app.use(metricsMiddleware);
 
-// Dynamic rate limiting setup
-const tierConfig = new TierConfigService();
-const apiKeyService = new ApiKeyService();
-
-// Apply authLimiter (IP-based) then dynamicRateLimiter (API-key-based) to all routes
-// /health, /metrics, /api-docs are bypassed inside dynamicRateLimiter
-app.use(authLimiter);
-app.use(dynamicRateLimiter(apiKeyService, tierConfig, redis));
-
-// API Key management routes
-app.use("/api/keys", createApiKeysRouter(apiKeyService));
-
-app.use("/api/transactions", transactionsRouter);
+app.use('/api/transactions', transactionsRouter);
+app.use('/api/admin', adminRouter);
 
 // Prometheus metrics endpoint
-app.use("/metrics", metricsRouter);
+app.use('/metrics', metricsRouter);
 
 // SEP-38 Price Quotes API
-app.use("/sep38", sep38Router);
+app.use('/sep38', sep38Router);
 
 // SEP-1 Info endpoint
-app.use("/info", infoRouter);
+app.use('/info', infoRouter);
 
 // SEP-24 routes
-app.use("/sep24", sep24Router);
+app.use('/sep24', sep24Router);
 
 // SEP-6 routes
-app.use("/sep6", sep6Router);
-
-// SEP-31 Cross-Border Payments routes
-app.use("/sep31", sep31Router);
+app.use('/sep6', sep6Router);
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);
 
 /* istanbul ignore next */
-if (process.env.NODE_ENV !== "test") {
+if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     logger.info(`Backend service listening at http://localhost:${PORT}`);
-    logger.info(
-      `API Documentation available at http://localhost:${PORT}/api-docs`,
-    );
+    logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
   });
 }
 

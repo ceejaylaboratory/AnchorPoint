@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
-import { ASSETS } from '../../config/assets';
+import { ASSETS, getIssuer } from '../../config/assets';
+import { stellarService } from '../../services/stellar.service';
+import { NETWORKS } from '../../config/networks';
 
 export interface StellarAsset {
   code: string;
@@ -40,12 +42,13 @@ export interface StellarInfo {
   };
 }
 
-
-
 export const getInfo = (req: Request, res: Response): Response => {
   const format = req.query.format as string;
   const acceptHeader = req.headers.accept || '';
   const isToml = format === 'toml' || acceptHeader.includes('text/toml') || acceptHeader.includes('application/toml');
+
+  const currentNetwork = stellarService.getNetwork();
+  const networkConfig = NETWORKS[currentNetwork];
 
   const feeVariationEntries = (type: 'deposit' | 'withdraw') =>
     Object.fromEntries(
@@ -56,7 +59,7 @@ export const getInfo = (req: Request, res: Response): Response => {
 
   const stellarInfo: StellarInfo = {
     version: '1.0.0',
-    network: process.env.STELLAR_NETWORK || 'testnet',
+    network: currentNetwork.toLowerCase(),
     federation_server: process.env.FEDERATION_SERVER,
     auth_server: process.env.AUTH_SERVER,
     kyc_server: process.env.KYC_SERVER,
@@ -71,7 +74,7 @@ export const getInfo = (req: Request, res: Response): Response => {
     },
     assets: ASSETS.map(a => ({
       code: a.code,
-      issuer: a.issuer,
+      issuer: getIssuer(a.code, currentNetwork),
       status: 'live',
       is_asset_anchored: true,
       anchored_asset_type: a.type,
@@ -83,7 +86,7 @@ export const getInfo = (req: Request, res: Response): Response => {
       fee_minimum: a.feeMinimum,
     })),
     signing_key: process.env.SIGNING_KEY || 'SB2Q6JYYK7GKXQJYRJLJHZFAP2Y7VJMLMIEUJQGHQFJ2D2K5A4HQKMF',
-    horizon_url: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org',
+    horizon_url: networkConfig.horizonUrl,
     url: process.env.BASE_URL || 'http://localhost:3002',
     documentation: process.env.DOCUMENTATION_URL,
     preflight_commit: process.env.PREFLIGHT_COMMIT === 'true',
