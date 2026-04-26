@@ -13,6 +13,7 @@ import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
+import { publicLimiter } from './api/middleware/rate-limit.middleware';
 
 const app = express();
 const PORT = config.PORT;
@@ -101,20 +102,12 @@ app.use(metricsMiddleware);
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/admin', adminRouter);
 
-// Prometheus metrics endpoint
-app.use('/metrics', metricsRouter);
-
-// SEP-38 Price Quotes API
-app.use('/sep38', sep38Router);
-
-// SEP-1 Info endpoint
-app.use('/info', infoRouter);
-
-// SEP-24 routes
-app.use('/sep24', sep24Router);
-
-// SEP-6 routes
-app.use('/sep6', sep6Router);
+// Public endpoints with shared Redis-backed rate limit state
+app.use('/sep38', publicLimiter, sep38Router);
+app.use('/info', publicLimiter, infoRouter);
+app.use('/sep24', publicLimiter, sep24Router);
+app.use('/sep6', publicLimiter, sep6Router);
+app.use('/metrics', publicLimiter, metricsRouter);
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);

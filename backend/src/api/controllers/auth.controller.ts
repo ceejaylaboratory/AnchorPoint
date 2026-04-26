@@ -1,12 +1,16 @@
 import { Request, Response } from 'express';
 import { RedisService } from '../../services/redis.service';
-import { 
-  generateChallenge, 
-  storeChallenge, 
-  getChallenge as getChallengeFromRedis, 
+import {
+  generateSep10ChallengeTransaction,
+  storeSep10Challenge,
+  getChallenge as getChallengeFromRedis,
   removeChallenge,
-  signToken 
+  signToken,
+  verifySep10ChallengeTransaction,
+  extractAccountFromSep10Transaction
 } from '../../services/auth.service';
+import { config } from '../../config/env';
+import { NetworkType } from '../../config/networks';
 
 interface ChallengeRequest {
   account: string;
@@ -46,17 +50,23 @@ export const getChallenge = async (
   }
 
   try {
-    // Generate a new challenge
-    const challenge = generateChallenge();
-    
-    // Store the challenge in Redis with TTL
-    await storeChallenge(redisService, account, challenge);
+    // Use configured anchor key or generate a default one for demo
+    const anchorPublicKey = config.ANCHOR_PUBLIC_KEY || 'GBAD_PUBLIC_KEY'; // Default for demo
+    const networkType = config.STELLAR_NETWORK === 'public' ? NetworkType.PUBLIC : NetworkType.TESTNET;
 
-    // In a real implementation, you would create a Stellar transaction
-    // with the challenge as a manage_data operation
+    // Generate a SEP-10 challenge transaction
+    const sep10Challenge = generateSep10ChallengeTransaction(
+      anchorPublicKey,
+      account,
+      networkType
+    );
+
+    // Store the challenge in Redis
+    await storeSep10Challenge(redisService, account, sep10Challenge);
+
     const response: ChallengeResponse = {
-      transaction: challenge, // Simplified - should be a base64 encoded transaction
-      network_passphrase: process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015'
+      transaction: sep10Challenge.transactionXdr,
+      network_passphrase: sep10Challenge.networkPassphrase
     };
 
     return res.json(response);
@@ -86,28 +96,44 @@ export const getToken = async (
   }
 
   try {
-    // In a real implementation, you would:
-    // 1. Parse the signed transaction
-    // 2. Verify the signature
-    // 3. Extract the account and challenge from the transaction
-    // 4. Verify the challenge matches what's stored in Redis
-    
-    // For this example, we'll use the transaction as the challenge
-    // and assume a fixed account for demonstration
-    const mockAccount = 'GBAD_PUBLIC_KEY'; // In real implementation, extract from transaction
-    const storedChallenge = await getChallengeFromRedis(redisService, mockAccount);
+    const networkType = config.STELLAR_NETWORK === 'public' ? NetworkType.PUBLIC : NetworkType.TESTNET;
 
-    if (!storedChallenge || storedChallenge.challenge !== transaction) {
+    // Extract the account from the signed transaction
+    const account = extractAccountFromSep10Transaction(transaction, networkType);
+
+    if (!account) {
       return res.status(400).json({
-        error: 'Invalid or expired challenge'
+        error: 'Invalid transaction format'
+      });
+    }
+
+    // Get the stored challenge
+    const storedChallenge = await getChallengeFromRedis(redisService, account);
+
+    if (!storedChallenge) {
+      return res.status(400).json({
+        error: 'Challenge not found or expired'
+      });
+    }
+
+    // Verify the signed transaction
+    const verification = verifySep10ChallengeTransaction(
+      transaction,
+      storedChallenge,
+      networkType
+    );
+
+    if (!verification.isValid) {
+      return res.status(400).json({
+        error: 'Invalid signature or challenge'
       });
     }
 
     // Remove the challenge to prevent replay attacks
-    await removeChallenge(redisService, mockAccount);
+    await removeChallenge(redisService, account);
 
     // Generate JWT token
-    const token = signToken(mockAccount);
+    const token = signToken(account);
 
     const response: TokenResponse = {
       token,

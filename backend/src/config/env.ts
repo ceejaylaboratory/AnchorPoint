@@ -36,6 +36,8 @@ const envSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),
+  ANCHOR_PUBLIC_KEY: z.string().optional(), // For SEP-10 challenges
+  ANCHOR_SECRET_KEY: z.string().optional(), // For SEP-10 challenges
 });
 
 const parsed = envSchema.safeParse({
