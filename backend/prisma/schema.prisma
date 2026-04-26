@@ -25,6 +25,7 @@ model User {
   transactions  Transaction[]
   kycCustomer   KycCustomer?
   apiKeys       ApiKey[]
+  recurringPaymentSchedules RecurringPaymentSchedule[]
 
   @@index([publicKey])
 }
@@ -40,6 +41,55 @@ model ApiKey {
 
   @@index([key])
   @@index([userId])
+}
+
+enum RecurringPaymentScheduleStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum RecurringPaymentRunStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+model RecurringPaymentSchedule {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  destination String
+  assetCode   String
+  amount      String
+  cron        String
+  status      RecurringPaymentScheduleStatus @default(ACTIVE)
+  nextRunAt   DateTime
+  lastRunAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  runs        RecurringPaymentRun[]
+
+  @@index([userId])
+  @@index([status, nextRunAt])
+}
+
+model RecurringPaymentRun {
+  id          String   @id @default(uuid())
+  scheduleId  String
+  schedule    RecurringPaymentSchedule @relation(fields: [scheduleId], references: [id])
+  status      RecurringPaymentRunStatus @default(PENDING)
+  attempt     Int      @default(0)
+  stellarTxId String?  @unique
+  error       String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([scheduleId])
+  @@index([status])
 }
 
 model Transaction {

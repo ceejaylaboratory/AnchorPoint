@@ -11,6 +11,7 @@ import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
+import recurringPaymentsRouter from './api/routes/recurring-payments.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 
@@ -115,6 +116,8 @@ app.use('/sep24', sep24Router);
 
 // SEP-6 routes
 app.use('/sep6', sep6Router);
+
+app.use('/api/recurring-payments', recurringPaymentsRouter);
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);
