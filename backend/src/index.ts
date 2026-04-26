@@ -6,6 +6,7 @@ import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
 import adminRouter from './api/routes/admin.route';
+import authRouter from './api/routes/auth.route';
 import sep24Router from './api/routes/sep24.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
@@ -105,6 +106,7 @@ app.use('/api/transactions', transactionsRouter);
 app.use('/api/admin', adminRouter);
 
 // Public endpoints with shared Redis-backed rate limit state
+app.use('/auth', publicLimiter, authRouter);
 app.use('/sep38', publicLimiter, sep38Router);
 app.use('/sep31', publicLimiter, sep31Router);
 app.use('/sep12', publicLimiter, sep12Router);

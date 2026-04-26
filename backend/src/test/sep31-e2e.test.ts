@@ -204,7 +204,7 @@ describe('SEP-31 Cross-Border Payment E2E Flow', () => {
     it('should include the completed SEP-31 transaction in history', async () => {
       const res = await request(app)
         .get('/api/transactions')
-        .query({ asset_code: 'USDC', limit: 10 });
+        .query({ assetCode: 'USDC', limit: 10 });
 
       expect(res.status).toBe(200);
       expect(res.body.data.transactions).toContainEqual(

@@ -126,7 +126,7 @@ For local development without Docker, see the [Backend README](./backend/README.
 
 The project includes a comprehensive end-to-end test suite that simulates a complete cross-border payment flow, including:
 
-- **SEP-10 Authentication**: Challenge generation and signature verification
+- **SEP-10 Authentication**: Challenge generation and signature verification (mocked for testing)
 - **SEP-12 KYC Submission**: Customer information upload and status tracking
 - **SEP-31 Cross-Border Payments**: Transaction creation, status updates, and settlement
 - **SEP-38 Quotes**: Price discovery and quote generation
@@ -151,31 +151,41 @@ npm run test:sep31
 The E2E test suite covers:
 
 1. **SEP-1 Info**: Stellar.toml configuration and asset discovery
-2. **SEP-10 Auth**: Challenge-response authentication flow
+2. **SEP-10 Auth**: Challenge-response authentication flow (mocked)
 3. **SEP-12 KYC**: Customer information submission and webhook updates
-4. **SEP-31 Payments**: Full cross-border payment lifecycle
+4. **SEP-31 Payments**: Full cross-border payment lifecycle from creation to settlement
 5. **SEP-38 Quotes**: Firm quote generation with external price feeds
 6. **SEP-24 Interactive**: Deposit/withdrawal flow initiation
+7. **Complete Flow Integration**: End-to-end flow from KYC submission through final settlement
 
 #### Test Flow Example
 
 ```typescript
-// 1. SEP-10 Authentication
-const challenge = await request(app).post('/auth').send({ account: publicKey });
-const signedChallenge = signChallenge(challenge.transaction);
-const token = await request(app).post('/auth/token').send({ transaction: signedChallenge });
+// 1. SEP-10 Authentication (Mocked for testing)
+const authToken = 'mock-jwt-token-for-e2e-testing';
 
 // 2. SEP-12 KYC Submission
-await request(app).put('/sep12/customer')
-  .set('Authorization', `Bearer ${token}`)
-  .field('account', publicKey)
+const kycRes = await request(app)
+  .put('/sep12/customer')
+  .set('Authorization', `Bearer ${authToken}`)
+  .field('account', clientPublicKey)
   .field('first_name', 'John')
-  .field('last_name', 'Doe')
-  .attach('document', fileBuffer);
+  .field('last_name', 'Doe');
 
-// 3. SEP-31 Transaction Creation
-const transaction = await request(app).post('/sep31/transactions')
-  .set('Authorization', `Bearer ${token}`)
+// 3. SEP-38 Quote Generation
+const quoteRes = await request(app)
+  .post('/sep38/quote')
+  .set('Authorization', `Bearer ${authToken}`)
+  .send({
+    source_asset: 'USDC',
+    source_amount: '100',
+    destination_asset: 'XLM'
+  });
+
+// 4. SEP-31 Transaction Creation
+const transaction = await request(app)
+  .post('/sep31/transactions')
+  .set('Authorization', `Bearer ${authToken}`)
   .send({
     asset_code: 'USDC',
     amount: '100.00',
@@ -183,9 +193,16 @@ const transaction = await request(app).post('/sep31/transactions')
     receiver_info: { /* KYC data */ }
   });
 
-// 4. Status Updates and Settlement
-await request(app).patch(`/admin/transactions/${transaction.id}`)
-  .send({ status: 'completed', stellar_transaction_id: 'tx_123' });
+// 5. Status Updates and Settlement
+await request(app)
+  .patch(`/api/admin/transactions/${transaction.id}`)
+  .send({
+    status: 'completed',
+    stellar_transaction_id: 'tx_123',
+    external_transaction_id: 'bank_tx_456',
+    amount_out: '99.50',
+    amount_fee: '0.50'
+  });
 ```
 
-The test suite ensures compliance with Stellar Ecosystem Proposals and validates the complete user journey from authentication to final settlement.
+The test suite ensures compliance with Stellar Ecosystem Proposals and validates the complete user journey from authentication to final settlement, including proper callback handling and status transitions.

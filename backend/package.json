@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",
-    "test:e2e": "jest src/test/e2e.test.ts",
+    "test:e2e": "node run-e2e.js",
     "test:sep31": "jest src/test/sep31-e2e.test.ts",
     "test:coverage": "jest --coverage",
     "lint": "eslint \"src/**/*.ts\"",

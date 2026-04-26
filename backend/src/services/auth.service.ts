@@ -217,9 +217,7 @@ export const storeSep10Challenge = async (
  * @param networkType The Stellar network type
  * @returns Verification result with account
  */
-export {
-  extractAccountFromSep10Transaction
-} from '../utils/sep10-stellar';
+export const verifySep10ChallengeTransaction = (
   signedTransactionXdr: string,
   storedChallenge: Challenge,
   networkType: NetworkType = NetworkType.TESTNET
