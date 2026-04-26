@@ -1,11 +1,9 @@
 import jwt from 'jsonwebtoken';
 import { randomBytes } from 'crypto';
+
 import { RedisService } from './redis.service';
-<<<<<<< HEAD
+import { config } from '../config/env';
 import { traceAsync, traceSync, SpanKind } from '../utils/tracing';
-=======
-import configService from './config.service';
->>>>>>> pr-190
 
 export interface VerifiedToken {
   sub: string;
@@ -17,7 +15,7 @@ export interface Challenge {
   createdAt: number;
 }
 
-const CHALLENGE_TTL_SECONDS = 300; // 5 minutes
+const CHALLENGE_TTL_SECONDS = 300;
 
 export const extractBearerToken = (authorization?: string): string | null => {
   if (!authorization || !authorization.startsWith('Bearer ')) return null;
@@ -26,14 +24,11 @@ export const extractBearerToken = (authorization?: string): string | null => {
 };
 
 export const signToken = (publicKey: string): string => {
-<<<<<<< HEAD
   return traceSync(
     'auth.sign_token',
     (span) => {
       span.setAttribute('auth.public_key', publicKey);
-      // SEP-10 convention (and how our middleware uses it):
-      // the user's public key is stored in the JWT `sub` claim.
-      return jwt.sign({ sub: publicKey }, JWT_SECRET);
+      return jwt.sign({ sub: publicKey }, config.JWT_SECRET);
     },
     SpanKind.INTERNAL
   );
@@ -44,36 +39,19 @@ export const verifyToken = (token: string): VerifiedToken => {
     'auth.verify_token',
     (span) => {
       span.setAttribute('auth.token_length', token.length);
-      const decoded = jwt.verify(token, JWT_SECRET) as { sub?: string };
+      const decoded = jwt.verify(token, config.JWT_SECRET) as { sub?: string };
       if (!decoded?.sub) throw new Error('Invalid token payload');
       span.setAttribute('auth.subject', decoded.sub);
       return { sub: decoded.sub };
     },
     SpanKind.INTERNAL
   );
-=======
-  // SEP-10 convention (and how our middleware uses it):
-  // the user's public key is stored in the JWT `sub` claim.
-  return jwt.sign({ sub: publicKey }, configService.getConfig().JWT_SECRET);
 };
 
-export const verifyToken = (token: string): VerifiedToken => {
-  const decoded = jwt.verify(token, configService.getConfig().JWT_SECRET) as { sub?: string };
-  if (!decoded?.sub) throw new Error('Invalid token payload');
-  return { sub: decoded.sub };
->>>>>>> pr-190
-};
-
-/**
- * Generates a random challenge for SEP-10 authentication
- */
 export const generateChallenge = (): string => {
   return randomBytes(32).toString('base64');
 };
 
-/**
- * Stores a challenge in Redis with TTL
- */
 export const storeChallenge = async (
   redisService: RedisService,
   publicKey: string,
@@ -84,13 +62,13 @@ export const storeChallenge = async (
     async (span) => {
       span.setAttribute('auth.public_key', publicKey);
       span.setAttribute('auth.challenge_length', challenge.length);
-      
+
       const challengeData: Challenge = {
         challenge,
         publicKey,
-        createdAt: Date.now()
+        createdAt: Date.now(),
       };
-      
+
       const key = `sep10:challenge:${publicKey}`;
       await redisService.setJSON(key, challengeData, CHALLENGE_TTL_SECONDS);
     },
@@ -102,9 +80,6 @@ export const storeChallenge = async (
   );
 };
 
-/**
- * Retrieves and validates a challenge from Redis
- */
 export const getChallenge = async (
   redisService: RedisService,
   publicKey: string
@@ -115,12 +90,14 @@ export const getChallenge = async (
       span.setAttribute('auth.public_key', publicKey);
       const key = `sep10:challenge:${publicKey}`;
       const result = await redisService.getJSON<Challenge>(key);
+
       if (result) {
         span.setAttribute('auth.challenge_found', true);
         span.setAttribute('auth.challenge_age_ms', Date.now() - result.createdAt);
       } else {
         span.setAttribute('auth.challenge_found', false);
       }
+
       return result;
     },
     SpanKind.CLIENT,
@@ -130,9 +107,6 @@ export const getChallenge = async (
   );
 };
 
-/**
- * Removes a challenge from Redis after successful verification
- */
 export const removeChallenge = async (
   redisService: RedisService,
   publicKey: string
@@ -150,4 +124,3 @@ export const removeChallenge = async (
     }
   );
 };
-

@@ -56,3 +56,25 @@ To run the linter:
 ```bash
 npm run lint
 ```
+
+## Admin Password Reset
+AnchorPoint backend includes a secure password reset flow for admin users.
+
+Endpoints:
+- `POST /api/admin/password-reset/request`
+- `POST /api/admin/password-reset/confirm`
+
+Security behavior:
+- Email-based verification token delivery
+- Tokens are random 256-bit values and only a hashed token is stored
+- Tokens expire after `PASSWORD_RESET_TTL_MINUTES` (default: 15)
+- Tokens are single-use and outstanding tokens are invalidated on new requests
+- Request endpoint returns a non-enumerating success message even for unknown emails
+
+Optional SMTP environment variables:
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM`
+- `ADMIN_PASSWORD_RESET_URL_BASE`

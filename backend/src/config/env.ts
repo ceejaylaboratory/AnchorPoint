@@ -36,6 +36,21 @@ const envSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : undefined))
+    .pipe(z.number().int().positive().optional()),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().email().optional(),
+  ADMIN_PASSWORD_RESET_URL_BASE: z.string().url().default('http://localhost:3000/admin/reset-password'),
+  PASSWORD_RESET_TTL_MINUTES: z
+    .string()
+    .default('15')
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().min(5).max(60)),
 });
 
 const parsed = envSchema.safeParse({

@@ -29,6 +29,30 @@ model User {
   @@index([publicKey])
 }
 
+model AdminUser {
+  id                  String                    @id @default(uuid())
+  email               String                    @unique
+  passwordHash        String
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  passwordResetTokens AdminPasswordResetToken[]
+
+  @@index([email])
+}
+
+model AdminPasswordResetToken {
+  id          String    @id @default(uuid())
+  adminUserId String
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([adminUserId, usedAt])
+  @@index([expiresAt])
+}
+
 model ApiKey {
   id        String   @id @default(uuid())
   key       String   @unique
