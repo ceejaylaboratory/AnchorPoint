@@ -9,6 +9,8 @@ import adminRouter from './api/routes/admin.route';
 import sep24Router from './api/routes/sep24.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
+import sep31Router from './api/routes/sep31.route';
+import sep12Router from './api/routes/sep12.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
 import { errorHandler } from './api/middleware/error.middleware';
@@ -104,6 +106,8 @@ app.use('/api/admin', adminRouter);
 
 // Public endpoints with shared Redis-backed rate limit state
 app.use('/sep38', publicLimiter, sep38Router);
+app.use('/sep31', publicLimiter, sep31Router);
+app.use('/sep12', publicLimiter, sep12Router);
 app.use('/info', publicLimiter, infoRouter);
 app.use('/sep24', publicLimiter, sep24Router);
 app.use('/sep6', publicLimiter, sep6Router);

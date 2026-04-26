@@ -119,3 +119,73 @@ docker-compose down -v
 ### Development
 
 For local development without Docker, see the [Backend README](./backend/README.md).
+
+## Testing
+
+### End-to-End Test Suite
+
+The project includes a comprehensive end-to-end test suite that simulates a complete cross-border payment flow, including:
+
+- **SEP-10 Authentication**: Challenge generation and signature verification
+- **SEP-12 KYC Submission**: Customer information upload and status tracking
+- **SEP-31 Cross-Border Payments**: Transaction creation, status updates, and settlement
+- **SEP-38 Quotes**: Price discovery and quote generation
+- **SEP-24 Deposits/Withdrawals**: Interactive deposit and withdrawal flows
+
+#### Running E2E Tests
+
+```bash
+# Ensure Docker services are running
+docker-compose up -d
+
+# Run the full E2E test suite
+cd backend
+npm run test:e2e
+
+# Run SEP-31 specific cross-border payment tests
+npm run test:sep31
+```
+
+#### Test Coverage
+
+The E2E test suite covers:
+
+1. **SEP-1 Info**: Stellar.toml configuration and asset discovery
+2. **SEP-10 Auth**: Challenge-response authentication flow
+3. **SEP-12 KYC**: Customer information submission and webhook updates
+4. **SEP-31 Payments**: Full cross-border payment lifecycle
+5. **SEP-38 Quotes**: Firm quote generation with external price feeds
+6. **SEP-24 Interactive**: Deposit/withdrawal flow initiation
+
+#### Test Flow Example
+
+```typescript
+// 1. SEP-10 Authentication
+const challenge = await request(app).post('/auth').send({ account: publicKey });
+const signedChallenge = signChallenge(challenge.transaction);
+const token = await request(app).post('/auth/token').send({ transaction: signedChallenge });
+
+// 2. SEP-12 KYC Submission
+await request(app).put('/sep12/customer')
+  .set('Authorization', `Bearer ${token}`)
+  .field('account', publicKey)
+  .field('first_name', 'John')
+  .field('last_name', 'Doe')
+  .attach('document', fileBuffer);
+
+// 3. SEP-31 Transaction Creation
+const transaction = await request(app).post('/sep31/transactions')
+  .set('Authorization', `Bearer ${token}`)
+  .send({
+    asset_code: 'USDC',
+    amount: '100.00',
+    sender_info: { /* KYC data */ },
+    receiver_info: { /* KYC data */ }
+  });
+
+// 4. Status Updates and Settlement
+await request(app).patch(`/admin/transactions/${transaction.id}`)
+  .send({ status: 'completed', stellar_transaction_id: 'tx_123' });
+```
+
+The test suite ensures compliance with Stellar Ecosystem Proposals and validates the complete user journey from authentication to final settlement.
