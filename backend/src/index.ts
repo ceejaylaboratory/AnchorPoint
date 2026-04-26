@@ -11,6 +11,7 @@ import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
+import relayerRouter from './api/routes/relayer.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 
@@ -100,6 +101,9 @@ app.use(metricsMiddleware);
 
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/admin', adminRouter);
+
+// Relayer API for gasless token approvals
+app.use('/api/relayer', relayerRouter);
 
 // Prometheus metrics endpoint
 app.use('/metrics', metricsRouter);

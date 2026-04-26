@@ -1,4 +1,4 @@
-const DEFAULT_HORIZON_URL = "https://horizon.stellar.org";
+import { config } from '../../config/env';
 
 export class HorizonError extends Error {
   constructor(message: string) {
@@ -15,7 +15,7 @@ export class HorizonResolverImpl implements HorizonResolver {
   private readonly horizonUrl: string;
 
   constructor() {
-    this.horizonUrl = process.env.HORIZON_URL ?? DEFAULT_HORIZON_URL;
+    this.horizonUrl = config.HORIZON_URL;
   }
 
   async resolveHomeDomain(issuerPublicKey: string): Promise<string | null> {

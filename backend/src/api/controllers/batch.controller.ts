@@ -8,11 +8,12 @@ import { Request, Response, NextFunction } from 'express';
 import { BatchPaymentService } from '../services/batch-payment.service';
 import { BatchPaymentError, BatchErrorType } from '../services/batch-payment.types';
 import logger from '../utils/logger';
+import { config } from '../config/env';
 
 // Initialize batch payment service
 const batchService = new BatchPaymentService({
-  horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-  networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+  horizonUrl: config.STELLAR_HORIZON_URL,
+  networkPassphrase: config.STELLAR_NETWORK_PASSPHRASE,
 });
 
 /**

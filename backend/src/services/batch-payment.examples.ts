@@ -5,11 +5,12 @@
  */
 
 import { BatchPaymentService, PaymentOperation } from './batch-payment.index';
+import { config } from '../config/env';
 
 // Initialize the service
 const batchService = new BatchPaymentService({
-  horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-  networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+  horizonUrl: config.STELLAR_HORIZON_URL,
+  networkPassphrase: config.STELLAR_NETWORK_PASSPHRASE,
   maxOperationsPerBatch: 100,
   maxRetries: 3,
   retryDelayMs: 1000,

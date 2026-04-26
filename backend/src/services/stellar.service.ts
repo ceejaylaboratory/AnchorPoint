@@ -1,11 +1,16 @@
 import { Horizon, rpc } from '@stellar/stellar-sdk';
 import { NetworkType, NETWORKS } from '../config/networks';
+import { config } from '../config/env';
 
 export class StellarService {
   private static instance: StellarService;
-  private currentNetwork: NetworkType = NetworkType.TESTNET;
+  private currentNetwork: NetworkType;
 
-  private constructor() {}
+  private constructor() {
+    // Initialize network from environment configuration
+    const networkFromEnv = config.STELLAR_NETWORK.toUpperCase();
+    this.currentNetwork = NetworkType[networkFromEnv as keyof typeof NetworkType] || NetworkType.TESTNET;
+  }
 
   public static getInstance(): StellarService {
     if (!StellarService.instance) {
