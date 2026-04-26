@@ -15,7 +15,13 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - name: Build Contracts
+        run: cargo build --target wasm32-unknown-unknown --release
       - name: Test sep41-token
         run: cargo test -p sep41-token
       - name: Test upgradeable
         run: cargo test -p upgradeable
+      - name: Run Security Audit
+        run: ./scripts/security_audit.sh
+
+
