@@ -67,6 +67,15 @@ function checkDrift() {
     console.log('--- Checking for schema drift ---');
     // Check if the current database state matches the migrations
     try {
+        // Check if database exists for SQLite
+        const dbUrl = process.env.DATABASE_URL || 'file:./prisma/dev.db';
+        if (dbUrl.startsWith('file:')) {
+            const dbPath = path.join(__dirname, '../prisma', dbUrl.replace('file:', ''));
+            if (!fs.existsSync(dbPath)) {
+                console.log('⚠️  Database does not exist, skipping drift check (expected in CI)');
+                return;
+            }
+        }
         run(`${PRISMA_BINARY} migrate status`);
         console.log('✅ No drift detected.');
     } catch (error) {
