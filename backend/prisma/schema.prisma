@@ -48,12 +48,17 @@ model Transaction {
   user                User      @relation(fields: [userId], references: [id])
   assetCode           String
   amount              String
-  type                String    // DEPOSIT | WITHDRAW | SEP31
+  type                String    // DEPOSIT | WITHDRAW | SEP31 | SWAP
   status              String    // PENDING, COMPLETED, FAILED
   externalId          String?   @unique
   stellarTxId         String?   @unique
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+
+  // Fee tracking
+  feeAmount           String?   @default("0")  // Fee amount in asset units
+  feeAssetCode        String?   // Asset code for fee (e.g., XLM, USDC)
+  feeType             String?   // FLAT, PERCENTAGE, TIERED
 
   // SEP-31 specific fields (nullable for backward compatibility)
   senderInfo          Json?
@@ -65,6 +70,27 @@ model Transaction {
   refunded            Boolean   @default(false)
 
   @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model FeeReport {
+  id              String    @id @default(uuid())
+  reportType      String    // DAILY, MONTHLY
+  startDate       DateTime
+  endDate         DateTime
+  totalFees       String    // Total fees collected in base asset
+  totalFeesXLM    String    // Total fees converted to XLM
+  operationCounts Json      // { DEPOSIT: 10, WITHDRAW: 5, SWAP: 3, SEP31: 2 }
+  feeBreakdown    Json      // Detailed breakdown by operation type
+  generatedAt     DateTime  @default(now())
+  filePath        String?   // Path to generated report file
+  fileType        String?   // JSON, PDF
+
+  @@index([reportType])
+  @@index([startDate])
+  @@index([endDate])
 }
 
 enum KYCStatus {

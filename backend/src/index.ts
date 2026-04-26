@@ -11,6 +11,8 @@ import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
+import feeReportRouter from './api/routes/fee-report.route';
+import { feeReportScheduler } from './workers/fee-report.scheduler';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 
@@ -100,6 +102,7 @@ app.use(metricsMiddleware);
 
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/reports', feeReportRouter);
 
 // Prometheus metrics endpoint
 app.use('/metrics', metricsRouter);
@@ -124,6 +127,9 @@ if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     logger.info(`Backend service listening at http://localhost:${PORT}`);
     logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+    
+    // Start fee report scheduler
+    feeReportScheduler.start();
   });
 }
 
