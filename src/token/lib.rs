@@ -14,6 +14,8 @@ pub enum DataKey {
     Name,
     Symbol,
     Decimals,
+    UserLastLedger(u64, Address),
+    BalanceSnapshot(u64, Address, u32),
 }
 
 #[contract]
@@ -228,6 +230,14 @@ impl TokenContract {
         env.storage().instance().get(&DataKey::Symbol).unwrap()
     }
 
+    pub fn get_past_balance(env: Env, owner: Address, token_id: u64, ledger: u32) -> i128 {
+        let last_ledger: u32 = env.storage().persistent().get(&DataKey::UserLastLedger(token_id, owner.clone())).unwrap_or(0);
+        if ledger >= last_ledger {
+            return Self::balance_of(env.clone(), owner, token_id);
+        }
+        env.storage().persistent().get(&DataKey::BalanceSnapshot(token_id, owner, ledger)).unwrap_or(0)
+    }
+
     fn do_transfer(env: &Env, from: Address, to: Address, token_id: u64, amount: i128) {
         assert!(amount > 0, "amount must be positive");
         let from_bal = env
@@ -236,6 +246,9 @@ impl TokenContract {
             .get::<_, i128>(&DataKey::Balance(token_id, from.clone()))
             .unwrap_or(0);
         assert!(from_bal >= amount, "insufficient balance");
+
+        let current_ledger = env.ledger().sequence();
+        Self::_write_checkpoint(env, from.clone(), token_id, current_ledger, from_bal);
 
         env.storage().persistent().set(
             &DataKey::Balance(token_id, from.clone()),
@@ -246,12 +259,23 @@ impl TokenContract {
             .persistent()
             .get::<_, i128>(&DataKey::Balance(token_id, to.clone()))
             .unwrap_or(0);
+
+        Self::_write_checkpoint(env, to.clone(), token_id, current_ledger, to_bal);
+
         env.storage()
             .persistent()
             .set(&DataKey::Balance(token_id, to.clone()), &(to_bal + amount));
 
         env.events()
             .publish((symbol_short!("transfer"), from, to, token_id), amount);
+    }
+
+    fn _write_checkpoint(env: &Env, user: Address, token_id: u64, current_ledger: u32, current_balance: i128) {
+        let last_ledger: u32 = env.storage().persistent().get(&DataKey::UserLastLedger(token_id, user.clone())).unwrap_or(0);
+        if last_ledger != current_ledger {
+            env.storage().persistent().set(&DataKey::BalanceSnapshot(token_id, user.clone(), last_ledger), &current_balance);
+            env.storage().persistent().set(&DataKey::UserLastLedger(token_id, user.clone()), &current_ledger);
+        }
     }
 }
 

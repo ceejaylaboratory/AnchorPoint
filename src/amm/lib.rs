@@ -285,6 +285,20 @@ impl AMM {
                 .unwrap_or(0),
         )
     }
+
+    pub fn get_shares(env: Env, user: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Shares(user))
+            .unwrap_or(0)
+    }
+
+    pub fn get_total_shares(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalShares)
+            .unwrap_or(0)
+    }
 }
 
 /// Helper function to perform cross-contract token transfers.

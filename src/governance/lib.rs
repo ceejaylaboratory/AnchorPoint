@@ -80,6 +80,8 @@ pub struct Proposal {
     pub status: ProposalStatus,
     /// Required quorum (absolute number of votes)
     pub quorum: i128,
+    /// Ledger sequence when the proposal was created for token snapshotting
+    pub created_at_ledger: u32,
 }
 
 /// Vote record for a user on a proposal
@@ -287,6 +289,7 @@ impl GovernanceContract {
             deadline: env.ledger().timestamp() + voting_period,
             status: ProposalStatus::OPEN,
             quorum,
+            created_at_ledger: env.ledger().sequence(),
         };
 
         env.storage()
@@ -367,6 +370,18 @@ impl GovernanceContract {
         assert!(
             user_credits >= quadratic_cost,
             "insufficient voting credits"
+        );
+
+        let token_contract: Address = env.storage().instance().get(&DataKey::TokenContract).unwrap();
+        let past_token_balance: i128 = env.invoke_contract(
+            &token_contract,
+            &soroban_sdk::Symbol::new(&env, "get_past_balance"),
+            soroban_sdk::vec![&env, voter.to_val(), 1u64.into(), proposal.created_at_ledger.into()]
+        );
+
+        assert!(
+            past_token_balance >= quadratic_cost,
+            "insufficient snapshot token balance"
         );
 
         // Deduct credits from user

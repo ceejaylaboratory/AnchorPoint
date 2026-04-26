@@ -21,6 +21,9 @@ members = [
     "src/upgradeable",
     "src/utils",
     "src/vesting",
+    "src/proxy",
+    "src/yield_farming",
+    "src/benchmarks"
 ]
 resolver = "2"
 
