@@ -1,10 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import logger from '../utils/logger';
-<<<<<<< HEAD
 import { traceAsync, SpanKind } from '../utils/tracing';
-=======
 import configService from './config.service';
->>>>>>> pr-190
 
 export interface TransactionWebhookRecord {
   id: string;
@@ -243,35 +240,26 @@ export class WebhookService {
     payload: TransactionStatusChangedPayload,
     transactionId: string
   ): Promise<WebhookDeliveryResult> {
-<<<<<<< HEAD
     return traceAsync(
       'webhook.deliver',
       async (span) => {
         span.setAttribute('webhook.transaction_id', transactionId);
         span.setAttribute('webhook.event_type', payload.event);
-        
+
+        const config = configService.getConfig();
         const requestBody = JSON.stringify(payload);
         let lastStatusCode: number | undefined;
         let lastResponseBody: string | undefined;
         let lastError: unknown;
 
-        for (let attempt = 1; attempt <= this.config.maxRetries + 1; attempt += 1) {
-=======
-    const config = this.getConfig();
-    const requestBody = JSON.stringify(payload);
-    let lastStatusCode: number | undefined;
-    let lastResponseBody: string | undefined;
-    let lastError: unknown;
-
-    for (let attempt = 1; attempt <= config.maxRetries + 1; attempt += 1) {
->>>>>>> pr-190
+        for (let attempt = 1; attempt <= config.WEBHOOK_MAX_RETRIES + 1; attempt += 1) {
       const timestamp = new Date().toISOString();
-      const signature = signWebhookPayload(requestBody, config.secret!, timestamp);
+      const signature = signWebhookPayload(requestBody, config.WEBHOOK_SECRET!, timestamp);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+      const timeout = setTimeout(() => controller.abort(), config.WEBHOOK_TIMEOUT_MS);
 
       try {
-        const response = await this.httpClient(config.url!, {
+        const response = await this.httpClient(config.WEBHOOK_URL!, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -302,7 +290,7 @@ export class WebhookService {
           };
         }
 
-        if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt > config.maxRetries) {
+        if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt > config.WEBHOOK_MAX_RETRIES) {
           this.log.warn('Webhook delivery failed without further retries', {
             transactionId,
             attempts: attempt,
@@ -320,7 +308,7 @@ export class WebhookService {
         clearTimeout(timeout);
         lastError = error;
 
-        if (attempt > config.maxRetries) {
+        if (attempt > config.WEBHOOK_MAX_RETRIES) {
           this.log.error('Webhook delivery exhausted retries after request error', {
             transactionId,
             attempts: attempt,
@@ -341,7 +329,7 @@ export class WebhookService {
 
     return {
       delivered: false,
-      attempts: config.maxRetries + 1,
+      attempts: config.WEBHOOK_MAX_RETRIES + 1,
       statusCode: lastStatusCode,
       responseBody: lastResponseBody,
       error: lastError instanceof Error ? lastError.message : 'Webhook delivery failed',
@@ -349,8 +337,8 @@ export class WebhookService {
   },
   SpanKind.CLIENT,
   {
-    'webhook.url': this.config.url,
-    'webhook.max_retries': this.config.maxRetries,
+    'webhook.url': config.WEBHOOK_URL,
+    'webhook.max_retries': config.WEBHOOK_MAX_RETRIES,
   }
   );
   }

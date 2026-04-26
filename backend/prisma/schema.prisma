@@ -87,3 +87,18 @@ model KycCustomer {
 
   @@index([userId])
 }
+
+model Quote {
+  id            String   @id @default(uuid())
+  sellAsset     String
+  sellAmount    String
+  buyAsset      String
+  buyAmount     String
+  price         String
+  expiresAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([sellAsset])
+  @@index([buyAsset])
+}

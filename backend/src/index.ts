@@ -6,13 +6,17 @@ import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
 import adminRouter from './api/routes/admin.route';
+import authRouter from './api/routes/auth.route';
 import sep24Router from './api/routes/sep24.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
+import sep31Router from './api/routes/sep31.route';
+import sep12Router from './api/routes/sep12.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
+import { publicLimiter } from './api/middleware/rate-limit.middleware';
 
 const app = express();
 const PORT = config.PORT;
@@ -101,20 +105,15 @@ app.use(metricsMiddleware);
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/admin', adminRouter);
 
-// Prometheus metrics endpoint
-app.use('/metrics', metricsRouter);
-
-// SEP-38 Price Quotes API
-app.use('/sep38', sep38Router);
-
-// SEP-1 Info endpoint
-app.use('/info', infoRouter);
-
-// SEP-24 routes
-app.use('/sep24', sep24Router);
-
-// SEP-6 routes
-app.use('/sep6', sep6Router);
+// Public endpoints with shared Redis-backed rate limit state
+app.use('/auth', publicLimiter, authRouter);
+app.use('/sep38', publicLimiter, sep38Router);
+app.use('/sep31', publicLimiter, sep31Router);
+app.use('/sep12', publicLimiter, sep12Router);
+app.use('/info', publicLimiter, infoRouter);
+app.use('/sep24', publicLimiter, sep24Router);
+app.use('/sep6', publicLimiter, sep6Router);
+app.use('/metrics', publicLimiter, metricsRouter);
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);
