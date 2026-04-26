@@ -39,6 +39,12 @@ pub enum DataKey {
     RelayerKey,
     /// Nonce tracking processed message hashes to prevent replay.
     Processed(BytesN<32>),
+    /// Last activity timestamp from the relayer (for emergency exit).
+    LastRelayerActivity,
+    /// Emergency mode flag.
+    EmergencyMode,
+    /// User locked balance for emergency withdrawal.
+    LockedBalance(Address),
 }
 
 #[contract]
@@ -60,6 +66,16 @@ impl Bridge {
         env.storage()
             .instance()
             .set(&DataKey::RelayerKey, &relayer_key);
+        
+        // Initialize last activity timestamp
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRelayerActivity, &env.ledger().timestamp());
+        
+        // Initialize emergency mode as false
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyMode, &false);
     }
 
     // -----------------------------------------------------------------------
@@ -75,6 +91,7 @@ impl Bridge {
     ///      processed before.
     ///   3. Executes mint (inbound) or burn (outbound) on the wrapped token.
     ///   4. Emits an event for off-chain indexers / relayers.
+    ///   5. Updates the last relayer activity timestamp.
     pub fn process_message(env: Env, relayer: Address, msg: BridgeMessage) {
         relayer.require_auth();
 
@@ -95,7 +112,12 @@ impl Bridge {
         }
         env.storage().persistent().set(&processed_key, &true);
 
-        // 3. Mint / Burn
+        // 3. Update last relayer activity timestamp
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRelayerActivity, &env.ledger().timestamp());
+
+        // 4. Mint / Burn
         let token_client = token::Client::new(&env, &msg.token);
         match msg.op {
             BridgeOp::Mint => {
@@ -132,6 +154,86 @@ impl Bridge {
     }
 
     // -----------------------------------------------------------------------
+    // Emergency Exit Logic
+    // -----------------------------------------------------------------------
+
+    /// Activates emergency mode. Can be called by admin or automatically after 72h of inactivity.
+    pub fn activate_emergency_mode(env: Env, caller: Address) {
+        caller.require_auth();
+        
+        // Check if already in emergency mode
+        let emergency_mode: bool = env.storage().instance().get(&DataKey::EmergencyMode).unwrap_or(false);
+        if emergency_mode {
+            panic!("emergency mode already active");
+        }
+        
+        // Check if 72 hours (259200 seconds) have passed since last relayer activity
+        let last_activity: u64 = env.storage().instance().get(&DataKey::LastRelayerActivity).unwrap_or(0);
+        let current_time = env.ledger().timestamp();
+        let elapsed = current_time.saturating_sub(last_activity);
+        
+        // 72 hours = 72 * 60 * 60 = 259200 seconds
+        if elapsed < 259200 {
+            // Only admin can manually activate before 72h
+            let admin: Address = env.storage().instance().get(&DataKey::RelayerKey).expect("not initialized");
+            if caller != admin {
+                panic!("only admin can activate emergency mode before 72h");
+            }
+        }
+        
+        // Activate emergency mode
+        env.storage().instance().set(&DataKey::EmergencyMode, &true);
+        
+        env.events().publish(
+            (symbol_short!("emergency"), symbol_short!("activated")),
+            (caller, elapsed),
+        );
+    }
+
+    /// Allows users to withdraw their locked assets when emergency mode is active.
+    pub fn emergency_withdraw(env: Env, user: Address, token: Address, amount: i128) {
+        user.require_auth();
+        
+        // Check if emergency mode is active
+        let emergency_mode: bool = env.storage().instance().get(&DataKey::EmergencyMode).unwrap_or(false);
+        if !emergency_mode {
+            panic!("emergency mode not active");
+        }
+        
+        // Transfer tokens to user
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &user, &amount);
+        
+        env.events().publish(
+            (symbol_short!("emergency"), symbol_short!("withdraw")),
+            (user, token, amount),
+        );
+    }
+
+    /// Deactivates emergency mode. Only admin can call this.
+    pub fn deactivate_emergency_mode(env: Env, admin: Address) {
+        admin.require_auth();
+        
+        // Verify caller is admin (relayer key holder)
+        let stored_admin: Address = env.storage().instance().get(&DataKey::RelayerKey).expect("not initialized");
+        if admin != stored_admin {
+            panic!("caller is not admin");
+        }
+        
+        env.storage().instance().set(&DataKey::EmergencyMode, &false);
+        
+        // Reset activity timestamp to current time
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRelayerActivity, &env.ledger().timestamp());
+        
+        env.events().publish(
+            (symbol_short!("emergency"), symbol_short!("deactivated")),
+            admin,
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // View helpers
     // -----------------------------------------------------------------------
 
@@ -148,5 +250,25 @@ impl Bridge {
             .instance()
             .get(&DataKey::RelayerKey)
             .expect("not initialized")
+    }
+
+    /// Returns `true` if emergency mode is active.
+    pub fn is_emergency_mode(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::EmergencyMode).unwrap_or(false)
+    }
+
+    /// Returns the timestamp of the last relayer activity.
+    pub fn last_relayer_activity(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LastRelayerActivity)
+            .unwrap_or(0)
+    }
+
+    /// Returns the time elapsed since last relayer activity in seconds.
+    pub fn time_since_last_activity(env: Env) -> u64 {
+        let last_activity: u64 = env.storage().instance().get(&DataKey::LastRelayerActivity).unwrap_or(0);
+        let current_time = env.ledger().timestamp();
+        current_time.saturating_sub(last_activity)
     }
 }
