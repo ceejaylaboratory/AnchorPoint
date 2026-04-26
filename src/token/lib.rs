@@ -1,7 +1,9 @@
 #![no_std]
 //! SEP-41 Compatible Token Wrapper
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, String,
+};
 
 #[contracttype]
 pub enum DataKey {
@@ -14,6 +16,7 @@ pub enum DataKey {
     Name,
     Symbol,
     Decimals,
+    PermitNonce(u64, Address, Address),
     UserLastLedger(u64, Address),
     BalanceSnapshot(u64, Address, u32),
 }
@@ -113,6 +116,50 @@ impl TokenContract {
             .publish((symbol_short!("app_all"), owner, operator), approved);
     }
 
+    /// Gasless approval using Soroban's signed auth entries.
+    ///
+    /// The owner signs this payload off-chain and a relayer can submit it on-chain.
+    /// Replay protection is enforced via nonce and expiry via deadline timestamp.
+    pub fn permit(
+        env: Env,
+        owner: Address,
+        spender: Address,
+        token_id: u64,
+        amount: i128,
+        nonce: u64,
+        deadline: u64,
+    ) {
+        assert!(amount >= 0, "amount must be non-negative");
+        assert!(env.ledger().timestamp() <= deadline, "permit expired");
+
+        let current_nonce = Self::permit_nonce(env.clone(), owner.clone(), spender.clone(), token_id);
+        assert!(nonce == current_nonce, "invalid nonce");
+
+        owner.require_auth_for_args(
+            (
+                symbol_short!("permit"),
+                spender.clone(),
+                token_id,
+                amount,
+                nonce,
+                deadline,
+            )
+                .into_val(&env),
+        );
+
+        env.storage().persistent().set(
+            &DataKey::Allowance(token_id, owner.clone(), spender.clone()),
+            &amount,
+        );
+        env.storage().persistent().set(
+            &DataKey::PermitNonce(token_id, owner.clone(), spender.clone()),
+            &(current_nonce + 1),
+        );
+
+        env.events()
+            .publish((symbol_short!("permit"), owner, spender, token_id), (amount, nonce));
+    }
+
     pub fn transfer_from(
         env: Env,
         spender: Address,
@@ -198,6 +245,13 @@ impl TokenContract {
         env.storage()
             .persistent()
             .get(&DataKey::Allowance(token_id, owner, spender))
+            .unwrap_or(0)
+    }
+
+    pub fn permit_nonce(env: Env, owner: Address, spender: Address, token_id: u64) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PermitNonce(token_id, owner, spender))
             .unwrap_or(0)
     }
 
@@ -399,6 +453,46 @@ mod tests {
         client.burn(&alice, &token_id, &200);
         assert_eq!(client.balance_of(&alice, &token_id), 300);
         assert_eq!(client.total_supply(&token_id), 300);
+    }
+
+    #[test]
+    fn test_permit_sets_allowance_and_increments_nonce() {
+        let (env, client, _) = setup();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let token_id = 1u64;
+
+        env.ledger().with_mut(|li| li.timestamp = 100);
+
+        assert_eq!(client.permit_nonce(&owner, &spender, &token_id), 0);
+        client.permit(&owner, &spender, &token_id, &700, &0, &200);
+        assert_eq!(client.allowance(&owner, &spender, &token_id), 700);
+        assert_eq!(client.permit_nonce(&owner, &spender, &token_id), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "permit expired")]
+    fn test_permit_expired_panics() {
+        let (env, client, _) = setup();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let token_id = 1u64;
+
+        env.ledger().with_mut(|li| li.timestamp = 100);
+        client.permit(&owner, &spender, &token_id, &100, &0, &99);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid nonce")]
+    fn test_permit_replay_panics() {
+        let (env, client, _) = setup();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let token_id = 1u64;
+
+        env.ledger().with_mut(|li| li.timestamp = 100);
+        client.permit(&owner, &spender, &token_id, &100, &0, &200);
+        client.permit(&owner, &spender, &token_id, &100, &0, &200);
     }
 }
 
