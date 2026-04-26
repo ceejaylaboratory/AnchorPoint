@@ -1,103 +1,200 @@
-# Pull Request: Add Hardware Wallet Support for SEP-10 Authentication
+# Pull Request: Add Comprehensive E2E Test Suite for Cross-Border Payments
 
 ## Overview
 
-This PR extends AnchorPoint's SEP-10 authentication flow to support hardware wallets such as Trezor and Ledger. It does so by generating and validating SEP-10 compliant Stellar challenge transactions instead of simplified string challenges.
+This PR adds a comprehensive end-to-end test suite that simulates the complete cross-border payment flow, including KYC submission, quote generation, and final settlement. The test suite validates the full implementation of SEP-31 cross-border payments alongside existing SEP-10, SEP-12, SEP-24, and SEP-38 functionality.
 
 ## Motivation
 
-Hardware wallets require a real Stellar transaction envelope to sign, not a plain string. Existing software-wallet-friendly challenge handling did not provide the transaction structure and signature validation semantics needed for hardware-wallet compatibility.
+The AnchorPoint dashboard needed comprehensive testing to ensure reliable operation of complex financial flows. Cross-border payments involve multiple SEPs (SEP-10, SEP-12, SEP-31) and require careful validation of the entire user journey from authentication through settlement. This E2E test suite provides confidence in the system's ability to handle real-world payment scenarios.
 
 ## What Changed
 
-### 1. SEP-10 Transaction Utilities
-**File:** `backend/src/utils/sep10-stellar.ts`
+### 1. E2E Test Infrastructure
+**Files:**
+- `backend/src/test/e2e.test.ts` (extended)
+- `backend/src/test/sep31-e2e.test.ts` (new)
 
-- Added challenge generation for SEP-10 authentication transactions
-- Added verification of signed SEP-10 transactions
-- Added account extraction from signed transaction XDR
+- Added comprehensive test coverage for SEP-31 cross-border payments
+- Extended existing E2E tests to include SEP-12 KYC flows
+- Created focused test suite for SEP-31 payment lifecycle
+- Added mocking for external services (KYC providers, price feeds, callbacks)
 
-### 2. Auth Service Enhancements
-**File:** `backend/src/services/auth.service.ts`
+### 2. API Route Configuration
+**File:** `backend/src/index.ts`
 
-- Added `generateSep10ChallengeTransaction()` to produce a proper Stellar challenge transaction
-- Added `storeSep10Challenge()` to persist challenge metadata and XDR for verification
-- Added `verifySep10ChallengeTransaction()` to validate signed transaction format, challenge, and signature
-- Updated challenge storage model to include transaction XDR
-- Kept existing JWT signing flow intact
+- Added SEP-31 route mounting (`/sep31`)
+- Added SEP-12 route mounting (`/sep12`)
+- Ensured proper middleware application for public endpoints
 
-### 3. Auth Controller Updates
-**File:** `backend/src/api/controllers/auth.controller.ts`
+### 3. Admin API for Transaction Management
+**File:** `backend/src/api/routes/admin.route.ts`
 
-- `getChallenge()` now returns a `transaction` XDR and `network_passphrase`
-- `getToken()` now verifies the signed transaction, extracts the account, and returns a JWT
-- Added network-type handling for `testnet` and `public`
+- Added `PATCH /api/admin/transactions/:id` endpoint for updating transaction status
+- Implemented status validation and callback notifications
+- Added support for settlement data (Stellar TX ID, external TX ID, amounts)
 
-### 4. Config Updates
-**File:** `backend/src/config/env.ts`
+### 4. Test Dependencies
+**File:** `backend/package.json`
 
-- Added optional environment variables for anchor key configuration:
-  - `ANCHOR_PUBLIC_KEY`
-  - `ANCHOR_SECRET_KEY`
+- Added `nock` for HTTP request mocking
+- Added test scripts: `test:e2e` and `test:sep31`
 
-### 5. Documentation
+### 5. Documentation Updates
 **File:** `README.md`
 
-- Clarified SEP-10 support for Trezor and Ledger hardware wallets
-- Explained how the backend now generates proper challenge transactions
+- Added comprehensive testing section
+- Documented E2E test coverage and execution
+- Included example test flows and API interactions
 
 ## Technical Details
 
-- Challenge transactions use `manage_data` with name `stellar.sep10.challenge`
-- Source account is the anchor public key
-- Sequence number is `0` per SEP-10 requirements
-- Time bounds are set to a 5-minute validity window
-- Verification checks:
-  - single operation exists
-  - operation is `manage_data`
-  - challenge value matches stored challenge
-  - signature validates against the signing account
+### Test Coverage
 
-## API Behavior
+The E2E test suite validates:
 
-### `POST /auth`
+1. **SEP-1 Info**: Asset configuration and endpoint discovery
+2. **SEP-10 Authentication**: Challenge generation and JWT token flow
+3. **SEP-12 KYC**: Customer information submission and status tracking
+4. **SEP-31 Payments**: Complete cross-border payment lifecycle
+5. **SEP-38 Quotes**: Price discovery with external API integration
+6. **SEP-24 Interactive**: Deposit/withdrawal flow initiation
 
-Request:
+### SEP-31 Payment Flow Testing
 
-```json
-{ "account": "G..." }
+The test suite simulates the complete payment journey:
+
+```
+KYC Submission → Transaction Creation → Status Updates → Settlement
 ```
 
-Response:
+**Key Test Scenarios:**
+- Multi-party KYC validation (sender and receiver)
+- Transaction status progression through all SEP-31 states
+- Callback notification handling
+- Final settlement with transaction ID recording
+- Error handling and validation
 
+### Mocking Strategy
+
+- **KYC Provider**: Simulates third-party KYC service responses
+- **Price Feeds**: Mocks CoinGecko API for quote generation
+- **Callbacks**: Validates merchant notification endpoints
+- **Authentication**: Bypasses SEP-10 for focused testing
+
+## API Changes
+
+### New Admin Endpoint
+
+```http
+PATCH /api/admin/transactions/:id
+```
+
+**Request Body:**
 ```json
 {
-  "transaction": "<base64-xdr>",
-  "network_passphrase": "<network-passphrase>"
+  "status": "completed",
+  "stellar_transaction_id": "stellar_tx_123",
+  "external_transaction_id": "bank_transfer_456",
+  "amount_out": "99.50",
+  "amount_fee": "0.50"
 }
 ```
 
-### `POST /auth/token`
-
-Request:
-
-```json
-{ "transaction": "<signed-xdr>" }
-```
-
-Response:
-
+**Response:**
 ```json
 {
-  "token": "<jwt>",
-  "type": "bearer",
-  "expires_in": 3600
+  "message": "Transaction status updated successfully",
+  "transaction": { /* updated transaction object */ }
 }
 ```
 
 ## Testing
 
-The implementation includes validation for:
+### Prerequisites
+
+```bash
+# Start Docker services
+docker-compose up -d
+
+# Generate Prisma client
+cd backend && npx prisma generate
+```
+
+### Running Tests
+
+```bash
+# Full E2E test suite
+cd backend && npm run test:e2e
+
+# SEP-31 specific tests
+cd backend && npm run test:sep31
+
+# With coverage
+npm run test:coverage
+```
+
+### Test Structure
+
+```
+backend/src/test/
+├── e2e.test.ts          # Comprehensive multi-SEP test suite
+└── sep31-e2e.test.ts    # Focused cross-border payment tests
+```
+
+### Mock Data
+
+The tests use realistic mock data:
+- Stellar public keys for test accounts
+- Complete KYC information sets
+- Valid transaction amounts and fees
+- Proper callback URLs and signatures
+
+## Database Considerations
+
+- Tests use SQLite database (configured via `DATABASE_URL`)
+- Automatic cleanup between test runs
+- No persistent data modifications
+- Isolated test environment
+
+## Security Validation
+
+The test suite validates:
+- **Input sanitization** for all API endpoints
+- **Authentication bypass** prevention (mocked appropriately)
+- **Data encryption** for PII in SEP-12 flows
+- **Rate limiting** effectiveness
+- **Error handling** for invalid requests
+
+## Performance Impact
+
+- Tests run efficiently with mocked external services
+- No real network calls to Stellar Horizon or external APIs
+- Database operations are optimized for test scenarios
+- Parallel test execution support
+
+## Future Enhancements
+
+The test foundation enables:
+- **Frontend E2E tests** with Playwright/Cypress
+- **Load testing** for high-volume scenarios
+- **Integration tests** with real Stellar network
+- **Multi-currency support** validation
+- **Regulatory compliance** verification
+
+## Breaking Changes
+
+None. This PR adds new test infrastructure without modifying existing functionality.
+
+## Checklist
+
+- [x] Tests pass in isolated environment
+- [x] No breaking changes to existing APIs
+- [x] Comprehensive documentation added
+- [x] Mock services properly configured
+- [x] Database cleanup implemented
+- [x] Error scenarios covered
+- [x] Performance considerations addressed
 - malformed or invalid transaction XDR
 - expired or missing challenge data
 - invalid operation type
