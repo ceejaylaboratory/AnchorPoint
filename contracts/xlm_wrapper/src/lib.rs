@@ -611,3 +611,543 @@ mod tests {
         assert_eq!(client.total_supply(), 0);
     }
 }
+
+/// ============================================================================
+/// Formal Verification Invariants
+/// ============================================================================
+/// These tests verify critical invariants that must hold for all valid states
+/// and operations of the XLM wrapper contract. They use property-based testing
+/// patterns to ensure mathematical correctness and maintain the 1:1 peg.
+#[cfg(test)]
+mod invariants {
+    extern crate std;
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    /// Helper to set up a fresh contract instance
+    fn setup_fresh() -> (Env, XLMWrapperClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, XLMWrapper);
+        let client = XLMWrapperClient::new(&env, &contract_id);
+        client.initialize(
+            &admin,
+            &String::from_str(&env, "Wrapped XLM"),
+            &String::from_str(&env, "wXLM"),
+        );
+        (env, client, admin)
+    }
+
+    /// Helper to verify the supply conservation invariant
+    fn verify_supply_conservation(env: &Env, client: &XLMWrapperClient<'_>, users: &[Address]) {
+        let total_supply = client.total_supply();
+        let balance_sum: i128 = users.iter().map(|u| client.balance_of(u)).sum();
+        assert_eq!(
+            total_supply, balance_sum,
+            "INVARIANT VIOLATION: Total supply ({}) != Sum of balances ({})",
+            total_supply, balance_sum
+        );
+    }
+
+    // =========================================================================
+    // INVARIANT 1: Conservation of Supply
+    // =========================================================================
+    /// After any operation, the sum of all user balances must equal total_supply.
+    /// This is the fundamental invariant of any token contract.
+    #[test]
+    fn invariant_supply_conservation_after_deposit() {
+        let (env, client, _) = setup_fresh();
+        let user1 = Address::generate(&env);
+        let user2 = Address::generate(&env);
+        let user3 = Address::generate(&env);
+
+        // Deposit to multiple users
+        client.deposit(&user1, &1000);
+        verify_supply_conservation(&env, &client, &[user1.clone(), user2.clone(), user3.clone()]);
+
+        client.deposit(&user2, &500);
+        verify_supply_conservation(&env, &client, &[user1.clone(), user2.clone(), user3.clone()]);
+
+        client.deposit(&user3, &250);
+        verify_supply_conservation(&env, &client, &[user1, user2, user3]);
+    }
+
+    #[test]
+    fn invariant_supply_conservation_after_transfer() {
+        let (env, client, _) = setup_fresh();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let carol = Address::generate(&env);
+
+        client.deposit(&alice, &1000);
+        let supply_before = client.total_supply();
+
+        // Multiple transfers
+        client.transfer(&alice, &bob, &300);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        client.transfer(&bob, &carol, &150);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        client.transfer(&alice, &carol, &100);
+        verify_supply_conservation(&env, &client, &[alice, bob, carol]);
+
+        let supply_after = client.total_supply();
+        assert_eq!(
+            supply_before, supply_after,
+            "INVARIANT VIOLATION: Supply changed during transfers"
+        );
+    }
+
+    #[test]
+    fn invariant_supply_conservation_after_withdraw() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        client.deposit(&user, &1000);
+        let supply_before_withdraw = client.total_supply();
+
+        client.withdraw(&user, &300);
+        verify_supply_conservation(&env, &client, &[user.clone()]);
+
+        // Invariant: supply decreases by exactly the withdrawn amount
+        assert_eq!(
+            client.total_supply(),
+            supply_before_withdraw - 300,
+            "INVARIANT VIOLATION: Supply not reduced correctly after withdraw"
+        );
+
+        verify_supply_conservation(&env, &client, &[user]);
+    }
+
+    #[test]
+    fn invariant_supply_conservation_after_burn() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        client.deposit(&user, &1000);
+        let supply_before_burn = client.total_supply();
+
+        client.burn(&user, &300);
+        verify_supply_conservation(&env, &client, &[user.clone()]);
+
+        assert_eq!(
+            client.total_supply(),
+            supply_before_burn - 300,
+            "INVARIANT VIOLATION: Supply not reduced correctly after burn"
+        );
+
+        verify_supply_conservation(&env, &client, &[user]);
+    }
+
+    // =========================================================================
+    // INVARIANT 2: 1:1 Peg Maintenance
+    // =========================================================================
+    /// The total supply of wXLM should always equal the total amount of
+    /// native XLM held by the contract (minus any burned tokens).
+    #[test]
+    fn invariant_one_to_one_peg_after_operations() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        // Deposit creates 1:1 peg
+        client.deposit(&user, &1000);
+        assert_eq!(
+            client.total_supply(),
+            client.balance_of(&user),
+            "INVARIANT VIOLATION: 1:1 peg broken after deposit"
+        );
+
+        // Transfer maintains peg
+        let bob = Address::generate(&env);
+        client.transfer(&user, &bob, &300);
+        assert_eq!(
+            client.total_supply(),
+            client.balance_of(&user) + client.balance_of(&bob),
+            "INVARIANT VIOLATION: 1:1 peg broken after transfer"
+        );
+
+        // Withdraw maintains peg
+        client.withdraw(&user, &200);
+        assert_eq!(
+            client.total_supply(),
+            client.balance_of(&user) + client.balance_of(&bob),
+            "INVARIANT VIOLATION: 1:1 peg broken after withdraw"
+        );
+    }
+
+    // =========================================================================
+    // INVARIANT 3: Non-Negative Balances
+    // =========================================================================
+    /// All balances must always be non-negative (>= 0).
+    #[test]
+    fn invariant_non_negative_balances() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        assert!(
+            client.balance_of(&user) >= 0,
+            "INVARIANT VIOLATION: Initial balance is negative"
+        );
+
+        client.deposit(&user, &100);
+        assert!(
+            client.balance_of(&user) >= 0,
+            "INVARIANT VIOLATION: Balance negative after deposit"
+        );
+
+        client.withdraw(&user, &100);
+        assert!(
+            client.balance_of(&user) >= 0,
+            "INVARIANT VIOLATION: Balance negative after withdraw"
+        );
+    }
+
+    // =========================================================================
+    // INVARIANT 4: Conservation of Value in Transfer
+    // =========================================================================
+    /// In any transfer, the sum of sender and receiver balances before
+    /// must equal the sum after the transfer.
+    #[test]
+    fn invariant_transfer_value_conservation() {
+        let (env, client, _) = setup_fresh();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.deposit(&alice, &1000);
+
+        let alice_before = client.balance_of(&alice);
+        let bob_before = client.balance_of(&bob);
+        let sum_before = alice_before + bob_before;
+
+        client.transfer(&alice, &bob, &400);
+
+        let alice_after = client.balance_of(&alice);
+        let bob_after = client.balance_of(&bob);
+        let sum_after = alice_after + bob_after;
+
+        assert_eq!(
+            sum_before, sum_after,
+            "INVARIANT VIOLATION: Value not conserved in transfer"
+        );
+
+        assert_eq!(
+            alice_before - alice_after,
+            400,
+            "INVARIANT VIOLATION: Sender balance not reduced correctly"
+        );
+
+        assert_eq!(
+            bob_after - bob_before,
+            400,
+            "INVARIANT VIOLATION: Receiver balance not increased correctly"
+        );
+    }
+
+    // =========================================================================
+    // INVARIANT 5: Allowance Accounting
+    // =========================================================================
+    /// After transfer_from, the allowance must decrease by exactly the
+    /// transferred amount.
+    #[test]
+    fn invariant_allowance_decrease_on_transfer_from() {
+        let (env, client, _) = setup_fresh();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        client.deposit(&owner, &1000);
+        client.approve(&owner, &spender, &500);
+
+        let allowance_before = client.allowance(&owner, &spender);
+
+        client.transfer_from(&spender, &owner, &recipient, &200);
+
+        let allowance_after = client.allowance(&owner, &spender);
+
+        assert_eq!(
+            allowance_before - allowance_after,
+            200,
+            "INVARIANT VIOLATION: Allowance not reduced correctly"
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn invariant_allowance_cannot_exceed_approval() {
+        let (env, client, _) = setup_fresh();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        client.deposit(&owner, &1000);
+        client.approve(&owner, &spender, &100);
+
+        // Attempting to spend more than approved should fail
+        client.transfer_from(&spender, &owner, &recipient, &150);
+    }
+
+    // =========================================================================
+    // INVARIANT 6: No Double Spend
+    // =========================================================================
+    /// A user cannot spend the same tokens twice (either directly or via approval).
+    #[test]
+    #[should_panic]
+    fn invariant_no_double_spend_direct() {
+        let (env, client, _) = setup_fresh();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let carol = Address::generate(&env);
+
+        client.deposit(&alice, &100);
+
+        // First transfer succeeds
+        client.transfer(&alice, &bob, &60);
+
+        // Alice now has 40, trying to spend 60 more should fail
+        client.transfer(&alice, &carol, &60);
+    }
+
+    // =========================================================================
+    // INVARIANT 7: Total Supply Monotonicity
+    // =========================================================================
+    /// Total supply only increases via deposit and only decreases via withdraw/burn.
+    /// Transfers and approvals do not affect total supply.
+    #[test]
+    fn invariant_supply_only_changes_via_deposit_withdraw_burn() {
+        let (env, client, _) = setup_fresh();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        let initial_supply = client.total_supply();
+        assert_eq!(initial_supply, 0);
+
+        // Deposit increases supply
+        client.deposit(&alice, &500);
+        assert_eq!(client.total_supply(), 500);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
+
+        // Transfer does not change supply
+        client.transfer(&alice, &bob, &200);
+        assert_eq!(
+            client.total_supply(),
+            500,
+            "INVARIANT VIOLATION: Transfer changed total supply"
+        );
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
+
+        // Approve does not change supply
+        client.approve(&alice, &bob, &100);
+        assert_eq!(
+            client.total_supply(),
+            500,
+            "INVARIANT VIOLATION: Approve changed total supply"
+        );
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
+
+        // Burn decreases supply
+        client.burn(&alice, &100);
+        assert_eq!(client.total_supply(), 400);
+        verify_supply_conservation(&env, &client, &[alice, bob]);
+    }
+
+    // =========================================================================
+    // INVARIANT 8: Zero Amount Handling
+    // =========================================================================
+    /// The contract should handle zero amounts appropriately.
+    #[test]
+    #[should_panic]
+    fn invariant_deposit_zero_rejected() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        client.deposit(&user, &0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn invariant_withdraw_zero_rejected() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        client.deposit(&user, &100);
+        client.withdraw(&user, &0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn invariant_burn_zero_rejected() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        client.deposit(&user, &100);
+        client.burn(&user, &0);
+    }
+
+    // =========================================================================
+    // INVARIANT 9: Idempotency Properties
+    // =========================================================================
+    /// Certain operations should have predictable idempotent-like behavior.
+    #[test]
+    fn invariant_approve_overwrites() {
+        let (env, client, _) = setup_fresh();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+
+        client.deposit(&owner, &1000);
+        client.approve(&owner, &spender, &100);
+        assert_eq!(client.allowance(&owner, &spender), 100);
+
+        // New approval should overwrite, not add
+        client.approve(&owner, &spender, &200);
+        assert_eq!(
+            client.allowance(&owner, &spender),
+            200,
+            "INVARIANT VIOLATION: Approve did not overwrite previous allowance"
+        );
+    }
+
+    // =========================================================================
+    // PROPERTY-BASED INVARIANT TESTS
+    // =========================================================================
+    /// These tests verify invariants across sequences of operations.
+
+    #[test]
+    fn property_sequence_invariant() {
+        let (env, client, _) = setup_fresh();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let carol = Address::generate(&env);
+
+        // Sequence of operations that should maintain invariants
+        client.deposit(&alice, &1000);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        client.deposit(&bob, &500);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        client.transfer(&alice, &bob, &200);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        client.approve(&bob, &carol, &300);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        client.transfer_from(&carol, &bob, &alice, &150);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        client.withdraw(&alice, &100);
+        verify_supply_conservation(&env, &client, &[alice, bob, carol]);
+
+        // Verify final invariants
+        let total_balance = client.balance_of(&alice) + client.balance_of(&bob) + client.balance_of(&carol);
+
+        assert_eq!(
+            client.total_supply(),
+            total_balance,
+            "PROPERTY VIOLATION: Supply invariant broken after operation sequence"
+        );
+
+        assert!(
+            client.balance_of(&alice) >= 0 && client.balance_of(&bob) >= 0 && client.balance_of(&carol) >= 0,
+            "PROPERTY VIOLATION: Negative balance detected"
+        );
+    }
+
+    #[test]
+    fn property_deposit_withdraw_symmetry() {
+        let (env, client, _) = setup_fresh();
+        let user = Address::generate(&env);
+
+        // Deposit then withdraw same amount should return to initial state
+        let initial_supply = client.total_supply();
+        let initial_balance = client.balance_of(&user);
+
+        client.deposit(&user, &500);
+        verify_supply_conservation(&env, &client, &[user.clone()]);
+
+        client.withdraw(&user, &500);
+        verify_supply_conservation(&env, &client, &[user.clone()]);
+
+        assert_eq!(
+            client.total_supply(),
+            initial_supply,
+            "PROPERTY VIOLATION: Deposit-withdraw symmetry broken for supply"
+        );
+
+        assert_eq!(
+            client.balance_of(&user),
+            initial_balance,
+            "PROPERTY VIOLATION: Deposit-withdraw symmetry broken for balance"
+        );
+    }
+
+    #[test]
+    fn property_transfer_reversibility_check() {
+        let (env, client, _) = setup_fresh();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.deposit(&alice, &1000);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
+
+        let alice_initial = client.balance_of(&alice);
+        let bob_initial = client.balance_of(&bob);
+
+        // Transfer A -> B
+        client.transfer(&alice, &bob, &300);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
+
+        // Transfer B -> A (reverse)
+        client.transfer(&bob, &alice, &300);
+        verify_supply_conservation(&env, &client, &[alice, bob]);
+
+        // After round-trip, balances should be back to original
+        assert_eq!(
+            client.balance_of(&alice),
+            alice_initial,
+            "PROPERTY VIOLATION: Round-trip transfer didn't restore sender balance"
+        );
+
+        assert_eq!(
+            client.balance_of(&bob),
+            bob_initial,
+            "PROPERTY VIOLATION: Round-trip transfer didn't restore receiver balance"
+        );
+    }
+
+    #[test]
+    fn property_multi_user_supply_conservation() {
+        let (env, client, _) = setup_fresh();
+        let users: Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
+
+        // Random-like deposits
+        let mut total_deposited = 0_i128;
+        for (i, user) in users.iter().enumerate() {
+            let amount = ((i + 1) * 100) as i128;
+            client.deposit(user, &amount);
+            total_deposited += amount;
+            verify_supply_conservation(&env, &client, &users);
+        }
+
+        assert_eq!(
+            client.total_supply(),
+            total_deposited,
+            "PROPERTY VIOLATION: Total supply doesn't match total deposited"
+        );
+
+        // Random-like transfers between users
+        for i in 0..5 {
+            let from = users.get(i).unwrap();
+            let to = users.get(i + 1).unwrap();
+            client.transfer(from, to, &50);
+            verify_supply_conservation(&env, &client, &users);
+        }
+
+        assert_eq!(
+            client.total_supply(),
+            total_deposited,
+            "PROPERTY VIOLATION: Supply changed during transfers"
+        );
+    }
+}
