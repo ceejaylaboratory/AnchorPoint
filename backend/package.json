@@ -11,7 +11,15 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint \"src/**/*.ts\"",
-    "lint:fix": "eslint \"src/**/*.ts\" --fix"
+    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "migrate:verify": "ts-node scripts/verify-migrations.ts",
+    "migrate:check": "ts-node scripts/migration-integrity-checker.ts",
+    "migrate:rollback": "ts-node scripts/generate-rollback.ts",
+    "migrate:status": "prisma migrate status"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",
