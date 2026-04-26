@@ -87,3 +87,51 @@ model KycCustomer {
 
   @@index([userId])
 }
+
+enum JobStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+enum JobPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model ContractJob {
+  id          String      @id @default(uuid())
+  jobId       String      @unique
+  type        String
+  priority    JobPriority @default(NORMAL)
+  status      JobStatus   @default(PENDING)
+  contractId  String?
+  functionName String?
+  parameters   Json?
+  result      Json?
+  error       String?
+  errorCategory String?
+  errorSeverity String?
+  errorCode   String?
+  userMessage String?
+  suggestedAction String?
+  retryable   Boolean     @default(false)
+  attempts    Int         @default(0)
+  maxAttempts Int         @default(3)
+  createdBy   String?
+  metadata    Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  failedAt    DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([jobId])
+  @@index([status])
+  @@index([createdBy])
+  @@index([type])
+}

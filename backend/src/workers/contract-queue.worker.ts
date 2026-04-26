@@ -5,6 +5,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import logger from '../utils/logger';
 import { defaultWorkerOptions, QUEUE_NAMES, retryStrategies } from '../config/queue';
 import { ContractJobData, JobResult } from '../services/contract-queue.service';
+import sorobanErrorService from '../services/soroban-error.service';
 
 /**
  * Contract Queue Worker
@@ -59,14 +60,19 @@ async function processContractCall(job: Job<ContractJobData>): Promise<JobResult
   } catch (error: any) {
     logger.error(`Contract call failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     // Check if error is retryable
-    if (isRetryableError(error)) {
+    if (sorobanErrorService.isRetryable(error)) {
       throw error; // Will be retried by BullMQ
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -109,13 +115,18 @@ async function processContractDeploy(job: Job<ContractJobData>): Promise<JobResu
   } catch (error: any) {
     logger.error(`Contract deployment failed: ${job.id}`, error);
     
-    if (isRetryableError(error)) {
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
+    if (sorobanErrorService.isRetryable(error)) {
       throw error;
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -165,14 +176,19 @@ async function processSettlement(job: Job<ContractJobData>): Promise<JobResult> 
   } catch (error: any) {
     logger.error(`Settlement failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     // Settlements should be retried aggressively
-    if (isRetryableError(error)) {
+    if (sorobanErrorService.isRetryable(error)) {
       throw error;
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -226,28 +242,24 @@ async function processTransactionSubmit(job: Job<ContractJobData>): Promise<JobR
   } catch (error: any) {
     logger.error(`Transaction submission failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     // Check for specific Stellar errors
     if (error.response?.data?.extras?.result_codes) {
       const resultCodes = error.response.data.extras.result_codes;
       logger.error('Stellar error codes:', resultCodes);
-      
-      // Handle specific error codes
-      if (resultCodes.transaction === 'tx_too_early') {
-        throw new Error('too_early'); // Will be retried
-      }
-      
-      if (resultCodes.transaction === 'tx_failed') {
-        throw new Error('transaction_failed'); // Will be retried
-      }
     }
 
-    if (isRetryableError(error)) {
+    if (sorobanErrorService.isRetryable(error)) {
       throw error;
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -303,9 +315,14 @@ async function processBatchOperation(job: Job<ContractJobData>): Promise<JobResu
   } catch (error: any) {
     logger.error(`Batch operation failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -342,26 +359,6 @@ async function processJob(job: Job<ContractJobData>): Promise<JobResult> {
     logger.error(`Job ${job.id} processing error:`, error);
     throw error;
   }
-}
-
-/**
- * Check if an error is retryable
- */
-function isRetryableError(error: any): boolean {
-  const retryableErrors = [
-    'too_early',
-    'transaction_failed',
-    'network_error',
-    'timeout',
-    'ECONNREFUSED',
-    'ETIMEDOUT',
-  ];
-
-  const errorMessage = error.message?.toLowerCase() || '';
-  
-  return retryableErrors.some(retryable => 
-    errorMessage.includes(retryable.toLowerCase())
-  );
 }
 
 /**
