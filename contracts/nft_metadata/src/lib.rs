@@ -403,7 +403,13 @@ impl NftMetadataContract {
             .get(&DataKey::TokenOwner(token_id))
             .expect("token not found");
 
-        assert!(caller == owner, "only owner can update");
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to update");
 
         let mut metadata: NftMetadata = env
             .storage()
@@ -419,6 +425,47 @@ impl NftMetadataContract {
 
         env.events().publish(
             (symbol_short!("attr_add"), token_id),
+            caller,
+        );
+    }
+
+    /// Set all attributes for an NFT (replaces existing ones)
+    pub fn set_attrs(
+        env: Env,
+        caller: Address,
+        token_id: u64,
+        attributes: Vec<NftAttribute>,
+    ) {
+        caller.require_auth();
+
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenOwner(token_id))
+            .expect("token not found");
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to update");
+
+        let mut metadata: NftMetadata = env
+            .storage()
+            .instance()
+            .get(&DataKey::NftMetadata(token_id))
+            .expect("token not found");
+
+        assert!(metadata.is_mutable, "metadata is not mutable");
+
+        metadata.attributes = attributes;
+
+        env.storage().instance().set(&DataKey::NftMetadata(token_id), &metadata);
+
+        env.events().publish(
+            (symbol_short!("set_attrs"), token_id),
             caller,
         );
     }
