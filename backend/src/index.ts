@@ -11,8 +11,10 @@ import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
+import configRouter from './api/routes/config.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
+import configService from './services/config.service';
 
 const app = express();
 const PORT = config.PORT;
@@ -100,6 +102,7 @@ app.use(metricsMiddleware);
 
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/config', configRouter);
 
 // Prometheus metrics endpoint
 app.use('/metrics', metricsRouter);
@@ -121,10 +124,16 @@ app.use(errorHandler);
 
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
-    logger.info(`Backend service listening at http://localhost:${PORT}`);
-    logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
-  });
+  configService.initialize()
+    .catch((error) => {
+      logger.error('Failed to initialize config service:', error);
+    })
+    .finally(() => {
+      app.listen(PORT, () => {
+        logger.info(`Backend service listening at http://localhost:${PORT}`);
+        logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+      });
+    });
 }
 
 export default app;

@@ -50,3 +50,79 @@ if (!parsed.success) {
 
 export const config = parsed.data;
 export type Config = typeof config;
+
+const uiFieldRequirementSchema = z.object({
+  key: z.string().min(1, 'Field key is required'),
+  label: z.string().min(1, 'Field label is required'),
+  required: z.boolean().default(false),
+  placeholder: z.string().optional(),
+  helpText: z.string().optional(),
+});
+
+const dashboardUiSchema = z.object({
+  brandName: z.string().min(1).default('AnchorPoint'),
+  logoUrl: z.string().url().optional(),
+  primaryColor: z.string().regex(/^#([0-9a-fA-F]{6})$/, 'Primary color must be a hex value').default('#3b82f6'),
+  accentColor: z.string().regex(/^#([0-9a-fA-F]{6})$/, 'Accent color must be a hex value').default('#14b8a6'),
+  supportEmail: z.string().email().optional(),
+  fieldRequirements: z.object({
+    deposit: z.array(uiFieldRequirementSchema).default([]),
+    withdraw: z.array(uiFieldRequirementSchema).default([]),
+    kyc: z.array(uiFieldRequirementSchema).default([]),
+  }).default({
+    deposit: [],
+    withdraw: [],
+    kyc: [],
+  }),
+});
+
+export const dynamicConfigSchema = z.object({
+  JWT_SECRET: z.string().min(8, 'JWT_SECRET must be at least 8 characters'),
+  INTERACTIVE_URL: z.string().url(),
+  WEBHOOK_URL: z.string().url().optional(),
+  WEBHOOK_SECRET: z.string().min(1, 'WEBHOOK_SECRET cannot be empty').optional(),
+  WEBHOOK_TIMEOUT_MS: z.number().positive(),
+  WEBHOOK_MAX_RETRIES: z.number().int().min(0).max(10),
+  WEBHOOK_RETRY_DELAY_MS: z.number().int().min(0),
+  STELLAR_NETWORK: z.enum(['testnet', 'public']).default('testnet'),
+  STELLAR_HORIZON_URL: z.string().url(),
+  STELLAR_FEE_BUMP_SECRET: z.string().optional(),
+  STELLAR_BASE_FEE: z.string(),
+  ui: dashboardUiSchema.default({
+    brandName: 'AnchorPoint',
+    primaryColor: '#3b82f6',
+    accentColor: '#14b8a6',
+    fieldRequirements: {
+      deposit: [
+        { key: 'walletAddress', label: 'Wallet Address', required: true, placeholder: 'G...' },
+        { key: 'amount', label: 'Amount', required: true, placeholder: '500.00' },
+      ],
+      withdraw: [
+        { key: 'bankAccount', label: 'Bank Account', required: true, placeholder: 'Account number' },
+        { key: 'amount', label: 'Amount', required: true, placeholder: '120.50' },
+      ],
+      kyc: [
+        { key: 'firstName', label: 'First Name', required: true },
+        { key: 'lastName', label: 'Last Name', required: true },
+        { key: 'country', label: 'Country', required: true },
+      ],
+    },
+  }),
+});
+
+export type DynamicConfig = z.infer<typeof dynamicConfigSchema>;
+export type DashboardUiConfig = DynamicConfig['ui'];
+
+export const initialDynamicConfig: DynamicConfig = dynamicConfigSchema.parse({
+  JWT_SECRET: config.JWT_SECRET,
+  INTERACTIVE_URL: config.INTERACTIVE_URL,
+  WEBHOOK_URL: config.WEBHOOK_URL,
+  WEBHOOK_SECRET: config.WEBHOOK_SECRET,
+  WEBHOOK_TIMEOUT_MS: config.WEBHOOK_TIMEOUT_MS,
+  WEBHOOK_MAX_RETRIES: config.WEBHOOK_MAX_RETRIES,
+  WEBHOOK_RETRY_DELAY_MS: config.WEBHOOK_RETRY_DELAY_MS,
+  STELLAR_NETWORK: config.STELLAR_NETWORK,
+  STELLAR_HORIZON_URL: config.STELLAR_HORIZON_URL,
+  STELLAR_FEE_BUMP_SECRET: config.STELLAR_FEE_BUMP_SECRET,
+  STELLAR_BASE_FEE: config.STELLAR_BASE_FEE,
+});

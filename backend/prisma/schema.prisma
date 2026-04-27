@@ -87,3 +87,14 @@ model KycCustomer {
 
   @@index([userId])
 }
+
+model SystemConfig {
+  id        String   @id @default(uuid())
+  version   Int      @unique
+  settings  String
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isActive])
+  @@index([createdAt])
+}
