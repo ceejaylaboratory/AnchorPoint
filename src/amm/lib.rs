@@ -11,6 +11,8 @@ pub enum DataKey {
     ReserveB,
     TotalShares,
     Shares(Address),
+    /// Set to true when the pool is paused due to a de-peg event.
+    Paused,
 }
 
 #[contract]
@@ -38,8 +40,31 @@ impl AMM {
         env.storage().instance().set(&DataKey::TotalShares, &0_i128);
     }
 
+    /// Pauses the pool. Callable by any authorized oracle consumer contract.
+    pub fn pause_pool(env: Env) {
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events()
+            .publish((symbol_short!("paused"),), env.ledger().timestamp());
+    }
+
+    /// Returns whether the pool is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
     /// Deposits liquidity into the pool. Returns the number of LP shares minted.
     pub fn deposit(env: Env, from: Address, amount_a: i128, amount_b: i128) -> i128 {
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            panic!("pool is paused");
+        }
         from.require_auth();
 
         let token_a: Address = env
@@ -138,6 +163,14 @@ impl AMM {
         amount_in: i128,
         min_amount_out: i128,
     ) -> i128 {
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            panic!("pool is paused");
+        }
         from.require_auth();
 
         let token_a: Address = env

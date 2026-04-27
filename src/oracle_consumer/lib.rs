@@ -16,7 +16,12 @@ pub enum DataKey {
     OracleAddress,
     PriceRecord(Address),
     Admin,
+    /// Expected fiat peg price for an asset (6-decimal fixed-point, e.g. 1_000_000 = $1.00).
+    FiatTarget(Address),
 }
+
+/// Maximum allowed deviation from the fiat peg before a de-peg event fires (2% = 200 bps).
+const DEPEG_THRESHOLD_BPS: i128 = 200;
 
 #[contract]
 pub struct OracleConsumer;
@@ -79,6 +84,62 @@ impl OracleConsumer {
         }
 
         price_info.price
+    }
+
+    /// Sets the expected fiat peg price for an asset. Restricted to the administrator.
+    /// `target_price` uses 6-decimal fixed-point (e.g. 1_000_000 = $1.00).
+    pub fn set_fiat_target(env: Env, asset: Address, target_price: i128) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not configured");
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::FiatTarget(asset), &target_price);
+    }
+
+    /// Checks whether the stored price for `asset` has de-pegged by more than 2% from its
+    /// fiat target. If so, emits a `depeg` event and calls `pause_pool` on `amm_contract`.
+    /// Returns `true` if a de-peg was detected.
+    pub fn check_depeg(env: Env, asset: Address, amm_contract: Address) -> bool {
+        let price_info: PriceData = env
+            .storage()
+            .instance()
+            .get(&DataKey::PriceRecord(asset.clone()))
+            .expect("price record not found. call update_price first.");
+
+        let target: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::FiatTarget(asset.clone()))
+            .expect("fiat target not set for asset");
+
+        // deviation_bps = |price - target| * 10_000 / target
+        let diff = if price_info.price > target {
+            price_info.price - target
+        } else {
+            target - price_info.price
+        };
+        let deviation_bps = (diff * 10_000) / target;
+
+        if deviation_bps > DEPEG_THRESHOLD_BPS {
+            env.events().publish(
+                (symbol_short!("depeg"), asset),
+                (price_info.price, target, deviation_bps),
+            );
+            // Pause the AMM pool to protect liquidity providers.
+            env.invoke_contract::<()>(
+                &amm_contract,
+                &symbol_short!("pause_pool"),
+                ().into_val(&env),
+            );
+            true
+        } else {
+            false
+        }
     }
 
     /// Reconfigures the oracle source address. Restricted to the administrator.
