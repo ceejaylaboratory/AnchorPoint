@@ -36,6 +36,16 @@ const envSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),
+  // Key Management Configuration
+  KEY_MANAGEMENT_BACKEND: z.enum(['aws-kms', 'vault']).default('aws-kms'),
+  AWS_KMS_KEY_ARN: z.string().optional(),
+  AWS_REGION: z.string().optional(),
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  VAULT_ADDR: z.string().url().optional(),
+  VAULT_TOKEN: z.string().optional(),
+  VAULT_TRANSIT_PATH: z.string().optional(),
+  SIGNING_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse({
