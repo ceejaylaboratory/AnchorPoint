@@ -192,3 +192,170 @@ impl StakingContract {
         (info.amount * rate * seconds) / REWARD_PRECISION
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, Address, symbol_short};
+
+    #[contract]
+    pub struct MockRegistry;
+    #[contractimpl]
+    impl MockRegistry {
+        pub fn is_paused(env: Env) -> bool {
+            env.storage().instance().get(&symbol_short!("paused")).unwrap_or(false)
+        }
+        pub fn set_paused(env: Env, paused: bool) {
+            env.storage().instance().set(&symbol_short!("paused"), &paused);
+        }
+    }
+
+    fn setup() -> (Env, StakingContractClient<'static>, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(StakingContract, ());
+        let client = StakingContractClient::new(&env, &id);
+        
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env.register_stellar_asset_contract(token_admin);
+        
+        client.initialize(&admin, &token_id, &1000, &3600, &1000); // 10% penalty, 1hr lock
+        (env, client, admin, token_id)
+    }
+
+    #[test]
+    fn test_initialize() {
+        let (env, client, _admin, token_id) = setup();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.initialize(&Address::generate(&env), &token_id, &1000, &3600, &1000);
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stake() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        
+        let token_client = token::Client::new(&env, &token_id);
+        token_client.mint(&user, &10000);
+        
+        client.stake(&user, &1000);
+        
+        let info = client.get_stake_info(&user);
+        assert_eq!(info.amount, 1000);
+        assert_eq!(info.accumulated_rewards, 0);
+        assert_eq!(info.lock_end, env.ledger().timestamp() + 3600);
+        
+        assert_eq!(token_client.balance(&user), 9000);
+        assert_eq!(token_client.balance(&client.address), 1000);
+    }
+
+    #[test]
+    fn test_withdraw_with_penalty() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let token_client = token::Client::new(&env, &token_id);
+        token_client.mint(&user, &10000);
+        
+        client.stake(&user, &1000);
+        
+        // Withdraw immediately (before lock_end)
+        client.withdraw(&user);
+        
+        // 10% penalty on 1000 = 100. Should get 900 back.
+        assert_eq!(token_client.balance(&user), 9900);
+        let info = client.get_stake_info(&user);
+        assert_eq!(info.amount, 0);
+    }
+
+    #[test]
+    fn test_withdraw_no_penalty() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let token_client = token::Client::new(&env, &token_id);
+        token_client.mint(&user, &10000);
+        
+        client.stake(&user, &1000);
+        
+        // Advance time 4000s (> 3600s lock)
+        env.ledger().set_timestamp(env.ledger().timestamp() + 4000);
+        
+        client.withdraw(&user);
+        
+        // rewards = (1000 * 1000 * 4000) / 10,000,000 = 400
+        assert_eq!(token_client.balance(&user), 9000 + 1000 + 400);
+    }
+
+    #[test]
+    fn test_claim_rewards() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let token_client = token::Client::new(&env, &token_id);
+        token_client.mint(&user, &10000);
+        
+        client.stake(&user, &1000);
+        
+        env.ledger().set_timestamp(env.ledger().timestamp() + 1000);
+        
+        client.claim_rewards(&user);
+        
+        // rewards = 100
+        assert_eq!(token_client.balance(&user), 9000 + 100);
+        
+        let info = client.get_stake_info(&user);
+        assert_eq!(info.amount, 1000);
+        assert_eq!(info.accumulated_rewards, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_pause_functionality() {
+        let (env, client, _admin, _token_id) = setup();
+        let user = Address::generate(&env);
+        
+        let registry_id = env.register(MockRegistry, ());
+        let registry_client = MockRegistryClient::new(&env, &registry_id);
+        registry_client.set_paused(&true);
+        
+        client.set_security_registry(&registry_id);
+        
+        client.stake(&user, &100);
+    }
+
+    #[test]
+    #[should_panic(expected = "already set")]
+    fn test_set_registry_twice_panics() {
+        let (env, client, _admin, _token_id) = setup();
+        let registry_id = env.register(MockRegistry, ());
+        client.set_security_registry(&registry_id);
+        client.set_security_registry(&registry_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be positive")]
+    fn test_stake_zero_panics() {
+        let (env, client, _admin, _token_id) = setup();
+        let user = Address::generate(&env);
+        client.stake(&user, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "nothing to withdraw")]
+    fn test_withdraw_nothing_panics() {
+        let (env, client, _admin, _token_id) = setup();
+        let user = Address::generate(&env);
+        client.withdraw(&user);
+    }
+
+    #[test]
+    #[should_panic(expected = "no rewards to claim")]
+    fn test_claim_no_rewards_panics() {
+        let (env, client, _admin, _token_id) = setup();
+        let user = Address::generate(&env);
+        client.stake(&user, &1000);
+        client.claim_rewards(&user);
+    }
+}
+

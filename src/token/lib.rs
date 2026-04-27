@@ -400,7 +400,72 @@ mod tests {
         assert_eq!(client.balance_of(&alice, &token_id), 300);
         assert_eq!(client.total_supply(&token_id), 300);
     }
+
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn test_batch_transfer_length_mismatch() {
+        let (env, client, _) = setup();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let ids = soroban_sdk::Vec::from_array(&env, [1, 2]);
+        let amounts = soroban_sdk::Vec::from_array(&env, [100]);
+        client.batch_transfer(&alice, &bob, &ids, &amounts);
+    }
+
+    #[test]
+    #[should_panic(expected = "already initialized")]
+    fn test_initialize_twice_panics() {
+        let (env, client, admin) = setup();
+        client.initialize(
+            &admin,
+            &7u32,
+            &String::from_str(&env, "AnchorToken"),
+            &String::from_str(&env, "ANCT"),
+        );
+    }
+
+    #[test]
+    fn test_operator_does_not_consume_allowance() {
+        let (env, client, _) = setup();
+        let alice = Address::generate(&env);
+        let operator = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.mint(&alice, &1, &1000);
+        client.approve(&alice, &operator, &1, &500);
+        client.set_approval_for_all(&alice, &operator, &true);
+
+        client.transfer_from(&operator, &alice, &bob, &1, &300);
+        
+        // Allowance should still be 500 because operator bypasses it
+        assert_eq!(client.allowance(&alice, &operator, &1), 500);
+    }
+
+    #[test]
+    #[should_panic(expected = "insufficient allowance")]
+    fn test_transfer_from_insufficient_allowance() {
+        let (env, client, _) = setup();
+        let alice = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.mint(&alice, &1, &1000);
+        client.approve(&alice, &spender, &1, &100);
+        client.transfer_from(&spender, &alice, &bob, &1, &150);
+    }
+
+    #[test]
+    fn test_set_metadata_authorized() {
+        let (env, client, admin) = setup();
+        let token_id = 1u64;
+        let uri = String::from_str(&env, "ipfs://test");
+
+        client.set_token_metadata(&token_id, &uri);
+        assert_eq!(client.get_token_metadata(&token_id), uri);
+    }
 }
+
+
 
 /// ============================================================================
 /// Formal Verification Invariants
