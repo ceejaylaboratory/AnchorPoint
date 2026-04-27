@@ -36,6 +36,13 @@ const envSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),
+  KYC_PROVIDER: z.enum(['mock', 'persona', 'shufti']).default('mock'),
+  KYC_WEBHOOK_SECRET: z.string().optional(),
+  PERSONA_API_KEY: z.string().optional(),
+  PERSONA_API_URL: z.string().url().default('https://withpersona.com/api/v1'),
+  SHUFTI_CLIENT_ID: z.string().optional(),
+  SHUFTI_SECRET_KEY: z.string().optional(),
+  SHUFTI_API_URL: z.string().url().default('https://api.shuftipro.com'),
 });
 
 const parsed = envSchema.safeParse({

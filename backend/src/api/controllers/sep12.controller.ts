@@ -1,10 +1,21 @@
 import { Request, Response } from 'express';
 import prisma from '../../lib/prisma';
 import { cryptoService } from '../../services/crypto.service';
-import { kycProvider } from '../../services/kyc-provider.service';
+import { kycProvider, KycStatus } from '../../services/kyc-provider.service';
 import { KYCStatus } from '@prisma/client';
 
 export class Sep12Controller {
+
+  private toDbStatus(status: KycStatus): KYCStatus {
+    switch (status) {
+      case KycStatus.ACCEPTED:
+        return KYCStatus.ACCEPTED;
+      case KycStatus.REJECTED:
+        return KYCStatus.REJECTED;
+      default:
+        return KYCStatus.PENDING;
+    }
+  }
   
   async putCustomer(req: Request, res: Response) {
     try {
@@ -22,7 +33,9 @@ export class Sep12Controller {
       }
 
       // Handle File Uploads (Multer puts files in req.files)
-      const uploadedFiles = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      const uploadedFiles = (req as any).files as
+        | { [fieldname: string]: Array<{ path: string }> }
+        | undefined;
       const documents: Record<string, string> = {};
       if (uploadedFiles) {
         Object.keys(uploadedFiles).forEach((field) => {
@@ -68,19 +81,28 @@ export class Sep12Controller {
       });
 
       // Submit to 3rd party Provider
-      const customerData = { first_name, last_name, email_address, ...otherFields };
+      const customerData = {
+        account,
+        firstName: first_name,
+        lastName: last_name,
+        email: email_address,
+        extraFields: otherFields,
+      };
       const providerRes = await kycProvider.submitCustomer(customerData, documents);
 
-      if (providerRes.status !== KYCStatus.PENDING) {
-        await prisma.kycCustomer.update({
-          where: { id: kycCustomer.id },
-          data: { status: providerRes.status as KYCStatus }
-        });
-      }
+      await prisma.kycCustomer.update({
+        where: { id: kycCustomer.id },
+        data: {
+          provider: kycProvider.providerName,
+          providerRef: providerRes.providerRef,
+          status: this.toDbStatus(providerRes.status),
+        },
+      });
 
       res.status(202).json({
         id: user.publicKey,
-        status: providerRes.status
+        status: providerRes.status,
+        provider: kycProvider.providerName,
       });
 
     } catch (error) {
@@ -143,20 +165,42 @@ export class Sep12Controller {
 
   async handleWebhook(req: Request, res: Response) {
     try {
-      const signature = req.headers['x-kyc-signature'] as string;
+      const signature = req.headers['x-kyc-signature'] as string | undefined;
       const payloadString = JSON.stringify(req.body);
 
-      if (!kycProvider.verifyWebhookSignature(payloadString, signature)) {
+      if (!kycProvider.verifyWebhookSignature(payloadString, signature, req.headers)) {
         return res.status(401).json({ error: 'Invalid signature' });
       }
 
-      const { account, status } = req.body;
-      const user = await prisma.user.findUnique({ where: { publicKey: account } });
-      if (!user) return res.status(404).json({ error: 'User not found' });
+      const event = kycProvider.parseWebhook(req.body);
+      if (!event) {
+        return res.status(400).json({ error: 'Invalid webhook payload' });
+      }
+
+      let targetCustomer = null;
+
+      if (event.providerRef) {
+        targetCustomer = await prisma.kycCustomer.findFirst({
+          where: {
+            provider: kycProvider.providerName,
+            providerRef: event.providerRef,
+          },
+        });
+      }
+
+      if (!targetCustomer && event.account) {
+        const user = await prisma.user.findUnique({
+          where: { publicKey: event.account },
+          include: { kycCustomer: true },
+        });
+        targetCustomer = user?.kycCustomer ?? null;
+      }
+
+      if (!targetCustomer) return res.status(404).json({ error: 'Customer not found' });
 
       await prisma.kycCustomer.update({
-        where: { userId: user.id },
-        data: { status: status as KYCStatus }
+        where: { id: targetCustomer.id },
+        data: { status: this.toDbStatus(event.status) }
       });
 
       res.status(200).send('OK');
