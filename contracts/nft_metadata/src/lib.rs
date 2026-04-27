@@ -223,7 +223,7 @@ impl NftMetadataContract {
             .instance()
             .get(&DataKey::TokenCounter)
             .unwrap_or(0);
-        let token_id = counter + 1;
+        let token_id = counter.checked_add(1).expect("token id overflow");
 
         let metadata = NftMetadata {
             token_id,
@@ -285,7 +285,7 @@ impl NftMetadataContract {
             .instance()
             .get(&DataKey::TokenCounter)
             .unwrap_or(0);
-        let token_id = counter + 1;
+        let token_id = counter.checked_add(1).expect("token id overflow");
 
         let mut final_metadata = metadata;
         final_metadata.token_id = token_id;
@@ -741,7 +741,8 @@ impl NftMetadataContract {
             .get(&DataKey::NftMetadata(token_id))
             .expect("token not found");
 
-        let royalty_amount = (sale_price * metadata.royalty_percentage as i128) / 10000;
+        let royalty_amount = sale_price
+            .checked_mul(metadata.royalty_percentage as i128).expect("royalty overflow") / 10000;
 
         (metadata.royalty_recipient, royalty_amount)
     }

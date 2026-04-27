@@ -74,7 +74,7 @@ impl OracleConsumer {
             .expect("price record not found locally. call update_price first.");
 
         let current_time = env.ledger().timestamp();
-        if current_time > price_info.timestamp + max_age_seconds {
+        if current_time > price_info.timestamp.checked_add(max_age_seconds).expect("timestamp overflow") {
             panic!("price record is too stale and cannot be used.");
         }
 

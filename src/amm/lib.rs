@@ -71,11 +71,11 @@ impl AMM {
         // Calculate shares to mint
         let shares = if total_shares == 0 {
             // Initial liquidity = geometric mean
-            sqrt(amount_a * amount_b)
+            sqrt(amount_a.checked_mul(amount_b).expect("deposit overflow"))
         } else {
             // Proportional liquidity: min(amount_a/reserve_a, amount_b/reserve_b) * total_shares
-            let shares_a = (amount_a * total_shares) / reserve_a;
-            let shares_b = (amount_b * total_shares) / reserve_b;
+            let shares_a = amount_a.checked_mul(total_shares).expect("deposit overflow") / reserve_a;
+            let shares_b = amount_b.checked_mul(total_shares).expect("deposit overflow") / reserve_b;
             if shares_a < shares_b {
                 shares_a
             } else {
@@ -106,13 +106,13 @@ impl AMM {
         // Update state
         env.storage()
             .instance()
-            .set(&DataKey::ReserveA, &(reserve_a + amount_a));
+            .set(&DataKey::ReserveA, &reserve_a.checked_add(amount_a).expect("reserve overflow"));
         env.storage()
             .instance()
-            .set(&DataKey::ReserveB, &(reserve_b + amount_b));
+            .set(&DataKey::ReserveB, &reserve_b.checked_add(amount_b).expect("reserve overflow"));
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares, &(total_shares + shares));
+            .set(&DataKey::TotalShares, &total_shares.checked_add(shares).expect("shares overflow"));
 
         let old_shares: i128 = env
             .storage()
@@ -121,7 +121,7 @@ impl AMM {
             .unwrap_or(0);
         env.storage()
             .persistent()
-            .set(&DataKey::Shares(from.clone()), &(old_shares + shares));
+            .set(&DataKey::Shares(from.clone()), &old_shares.checked_add(shares).expect("shares overflow"));
 
         env.events().publish(
             (symbol_short!("deposit"), from),
@@ -171,9 +171,9 @@ impl AMM {
         );
 
         // Constant product formula with 0.3% fee: dy = (reserve_out * dx * 997) / (reserve_in * 1000 + dx * 997)
-        let amount_in_with_fee = amount_in * 997;
-        let numerator = amount_in_with_fee * reserve_out;
-        let denominator = (reserve_in * 1000) + amount_in_with_fee;
+        let amount_in_with_fee = amount_in.checked_mul(997).expect("swap overflow");
+        let numerator = amount_in_with_fee.checked_mul(reserve_out).expect("swap overflow");
+        let denominator = reserve_in.checked_mul(1000).expect("swap overflow").checked_add(amount_in_with_fee).expect("swap overflow");
         let amount_out = numerator / denominator;
 
         if amount_out < min_amount_out {
@@ -182,11 +182,11 @@ impl AMM {
 
         // Update state
         if token_in == token_a {
-            reserve_a += amount_in;
-            reserve_b -= amount_out;
+            reserve_a = reserve_a.checked_add(amount_in).expect("reserve overflow");
+            reserve_b = reserve_b.checked_sub(amount_out).expect("reserve underflow");
         } else {
-            reserve_b += amount_in;
-            reserve_a -= amount_out;
+            reserve_b = reserve_b.checked_add(amount_in).expect("reserve overflow");
+            reserve_a = reserve_a.checked_sub(amount_out).expect("reserve underflow");
         }
 
         env.storage().instance().set(&DataKey::ReserveA, &reserve_a);
@@ -233,22 +233,22 @@ impl AMM {
             panic!("insufficient shares");
         }
 
-        let amount_a = (shares * reserve_a) / total_shares;
-        let amount_b = (shares * reserve_b) / total_shares;
+        let amount_a = shares.checked_mul(reserve_a).expect("withdraw overflow") / total_shares;
+        let amount_b = shares.checked_mul(reserve_b).expect("withdraw overflow") / total_shares;
 
         // Update state
         env.storage()
             .instance()
-            .set(&DataKey::ReserveA, &(reserve_a - amount_a));
+            .set(&DataKey::ReserveA, &reserve_a.checked_sub(amount_a).expect("reserve underflow"));
         env.storage()
             .instance()
-            .set(&DataKey::ReserveB, &(reserve_b - amount_b));
+            .set(&DataKey::ReserveB, &reserve_b.checked_sub(amount_b).expect("reserve underflow"));
         env.storage()
             .instance()
-            .set(&DataKey::TotalShares, &(total_shares - shares));
+            .set(&DataKey::TotalShares, &total_shares.checked_sub(shares).expect("shares underflow"));
         env.storage()
             .persistent()
-            .set(&DataKey::Shares(from.clone()), &(user_shares - shares));
+            .set(&DataKey::Shares(from.clone()), &user_shares.checked_sub(shares).expect("shares underflow"));
 
         // Transfer tokens back to user
         transfer(
