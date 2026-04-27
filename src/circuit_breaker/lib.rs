@@ -272,7 +272,7 @@ impl CircuitBreaker {
             .get(&DataKey::TimelockSeconds)
             .unwrap_or(DEFAULT_TIMELOCK_SECONDS);
 
-        let unlocks_at = env.ledger().timestamp() + timelock;
+        let unlocks_at = env.ledger().timestamp().checked_add(timelock).expect("timelock overflow");
 
         env.storage()
             .instance()
@@ -465,7 +465,7 @@ impl CircuitBreaker {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TripCount, &(count + 1));
+            .set(&DataKey::TripCount, &count.checked_add(1).expect("trip count overflow"));
 
         env.events()
             .publish((symbol_short!("tripped"), tier), (caller, source));

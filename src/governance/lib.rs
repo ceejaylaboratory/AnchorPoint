@@ -168,13 +168,13 @@ impl GovernanceContract {
             .get(&DataKey::TotalCreditsIssued)
             .unwrap_or(0);
 
-        let new_credits = current_credits + credits;
+        let new_credits = current_credits.checked_add(credits).expect("credits overflow");
         env.storage()
             .instance()
             .set(&DataKey::VotingCredits(user.clone()), &new_credits);
         env.storage()
             .instance()
-            .set(&DataKey::TotalCreditsIssued, &(total_issued + credits));
+            .set(&DataKey::TotalCreditsIssued, &total_issued.checked_add(credits).expect("credits overflow"));
 
         env.events().publish(
             (symbol_short!("credits"), user),
@@ -258,7 +258,7 @@ impl GovernanceContract {
             .instance()
             .get(&DataKey::ProposalCounter)
             .unwrap_or(0);
-        let new_id = counter + 1;
+        let new_id = counter.checked_add(1).expect("proposal counter overflow");
 
         // Calculate quorum based on total credits issued
         let total_credits: i128 = env
@@ -274,7 +274,7 @@ impl GovernanceContract {
 
         // Quorum is percentage of total credits that must participate
         // Using integer math: quorum = (total_credits * quorum_percentage) / 100
-        let quorum = (total_credits * quorum_percentage) / 100;
+        let quorum = total_credits.checked_mul(quorum_percentage).expect("quorum overflow") / 100;
 
         let proposal = Proposal {
             id: new_id,
@@ -286,7 +286,7 @@ impl GovernanceContract {
             total_quadratic_cost: 0,
             voter_count: 0,
             created_at: env.ledger().timestamp(),
-            deadline: env.ledger().timestamp() + voting_period,
+            deadline: env.ledger().timestamp().checked_add(voting_period).expect("deadline overflow"),
             status: ProposalStatus::OPEN,
             quorum,
             created_at_ledger: env.ledger().sequence(),
@@ -392,14 +392,14 @@ impl GovernanceContract {
 
         // Update proposal vote totals
         if support {
-            proposal.votes_for += votes;
+            proposal.votes_for = proposal.votes_for.checked_add(votes).expect("votes overflow");
         } else {
-            proposal.votes_against += votes;
+            proposal.votes_against = proposal.votes_against.checked_add(votes).expect("votes overflow");
         }
 
         // Update quadratic cost tracking
-        proposal.total_quadratic_cost += quadratic_cost;
-        proposal.voter_count += 1;
+        proposal.total_quadratic_cost = proposal.total_quadratic_cost.checked_add(quadratic_cost).expect("cost overflow");
+        proposal.voter_count = proposal.voter_count.checked_add(1).expect("voter count overflow");
 
         // Store vote record
         let vote_record = VoteRecord {

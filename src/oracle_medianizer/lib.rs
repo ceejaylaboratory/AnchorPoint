@@ -113,7 +113,7 @@ impl OracleMedianizer {
             .get(&DataKey::OracleCount)
             .unwrap_or(0);
 
-        env.storage().instance().set(&DataKey::OracleCount, &(count + 1));
+        env.storage().instance().set(&DataKey::OracleCount, &count.checked_add(1).expect("oracle count overflow"));
 
         env.events().publish(
             (symbol_short!("oracle"), oracle),
@@ -297,13 +297,13 @@ impl OracleMedianizer {
         prices = Self::sort_prices(&env, prices);
 
         // Calculate mean for outlier detection
-        let sum: i128 = prices.iter().fold(0i128, |acc, p| acc + p);
+        let sum: i128 = prices.iter().fold(0i128, |acc, p| acc.checked_add(p).expect("sum overflow"));
         let mean = sum / prices.len() as i128;
 
         // Calculate standard deviation
         let variance_sum: i128 = prices.iter().fold(0i128, |acc, p| {
             let diff = p - mean;
-            acc + (diff * diff)
+            acc.checked_add(diff.checked_mul(diff).expect("variance overflow")).expect("variance overflow")
         });
         let variance = variance_sum / prices.len() as i128;
 
@@ -312,7 +312,7 @@ impl OracleMedianizer {
 
         // Filter outliers (remove values > 2 standard deviations from mean)
         let mut filtered_prices: Vec<i128> = Vec::new(&env);
-        let threshold = 2 * std_dev;
+        let threshold = 2_i128.checked_mul(std_dev).expect("threshold overflow");
 
         for price in prices.iter() {
             let diff = if price > mean { price - mean } else { mean - price };
@@ -336,7 +336,7 @@ impl OracleMedianizer {
             // Even number: average of two middle values
             let mid1 = filtered_prices.get_unchecked(len / 2 - 1);
             let mid2 = filtered_prices.get_unchecked(len / 2);
-            (mid1 + mid2) / 2
+            (mid1.checked_add(mid2).expect("median overflow")) / 2
         } else {
             // Odd number: middle value
             filtered_prices.get_unchecked(len / 2)
@@ -420,7 +420,7 @@ impl OracleMedianizer {
                 .get(&DataKey::LastUpdate(asset.clone()))
                 .unwrap_or(0);
 
-            if current_time > last_update + heartbeat {
+            if current_time > last_update.checked_add(heartbeat).expect("heartbeat overflow") {
                 return true; // Heartbeat exceeded
             }
         }
@@ -435,7 +435,7 @@ impl OracleMedianizer {
                         old_price - new_price
                     };
 
-                    let deviation_bps = (deviation * 10000) / old_price;
+                    let deviation_bps = deviation.checked_mul(10000).expect("deviation overflow") / old_price;
 
                     if deviation_bps >= deviation_threshold_bps as i128 {
                         return true; // Deviation threshold exceeded

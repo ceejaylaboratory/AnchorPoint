@@ -81,7 +81,7 @@ impl VestingContract {
         env.storage().persistent().set(&DataKey::Grant(id), &grant);
         env.storage()
             .instance()
-            .set(&DataKey::GrantCounter, &(id + 1));
+            .set(&DataKey::GrantCounter, &id.checked_add(1).expect("grant counter overflow"));
 
         env.events()
             .publish((symbol_short!("grant_new"), id), amount);
@@ -104,7 +104,7 @@ impl VestingContract {
 
         assert!(claimable > 0, "nothing to claim");
 
-        grant.claimed_amount += claimable;
+        grant.claimed_amount = grant.claimed_amount.checked_add(claimable).expect("claimed overflow");
         env.storage()
             .persistent()
             .set(&DataKey::Grant(grant_id), &grant);
@@ -146,12 +146,12 @@ impl VestingContract {
 
     fn calculate_vested_amount(grant: &Grant, current_time: u64) -> i128 {
         // Before cliff
-        if current_time < grant.start_time + grant.cliff_duration {
+        if current_time < grant.start_time.checked_add(grant.cliff_duration).expect("time overflow") {
             return 0;
         }
 
         // After full duration
-        if current_time >= grant.start_time + grant.vesting_duration {
+        if current_time >= grant.start_time.checked_add(grant.vesting_duration).expect("time overflow") {
             return grant.total_amount;
         }
 
@@ -159,7 +159,7 @@ impl VestingContract {
         let elapsed = (current_time - grant.start_time) as i128;
         let duration = grant.vesting_duration as i128;
 
-        (grant.total_amount * elapsed) / duration
+        grant.total_amount.checked_mul(elapsed).expect("vesting overflow") / duration
     }
 }
 

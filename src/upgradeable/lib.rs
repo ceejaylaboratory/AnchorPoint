@@ -71,7 +71,7 @@ impl UpgradeableContract {
         let current_version: u32 = env.storage().instance().get(&DataKey::Version).unwrap_or(1);
         env.storage()
             .instance()
-            .set(&DataKey::Version, &(current_version + 1));
+            .set(&DataKey::Version, &current_version.checked_add(1).expect("version overflow"));
 
         // Perform the upgrade — this replaces the running WASM.
         env.deployer().update_current_contract_wasm(new_wasm_hash);

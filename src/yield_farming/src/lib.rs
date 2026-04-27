@@ -69,13 +69,20 @@ impl YieldFarmingDistributor {
         
         if current_ledger > last_update && total_shares > 0 {
             let ledgers_elapsed = (current_ledger - last_update) as i128;
-            reward_per_share += (ledgers_elapsed * reward_rate * 1_000_000_000_000_000_000) / total_shares;
+            reward_per_share = reward_per_share.checked_add(
+                ledgers_elapsed
+                    .checked_mul(reward_rate).expect("reward overflow")
+                    .checked_mul(1_000_000_000_000_000_000).expect("reward overflow")
+                    / total_shares
+            ).expect("reward overflow");
         }
 
         let user_paid: i128 = env.storage().persistent().get(&DataKey::UserRewardPerSharePaid(user.clone())).unwrap_or(0);
         let rewards_accrued: i128 = env.storage().persistent().get(&DataKey::Rewards(user.clone())).unwrap_or(0);
 
-        rewards_accrued + (user_shares * (reward_per_share - user_paid)) / 1_000_000_000_000_000_000
+        rewards_accrued.checked_add(
+            user_shares.checked_mul(reward_per_share - user_paid).expect("reward overflow") / 1_000_000_000_000_000_000
+        ).expect("reward overflow")
     }
 
     fn _update_global_reward(env: &Env) {
@@ -89,7 +96,12 @@ impl YieldFarmingDistributor {
                 let reward_rate: i128 = env.storage().instance().get(&DataKey::RewardRate).unwrap();
                 let ledgers_elapsed = (current_ledger - last_update) as i128;
                 let mut stored: i128 = env.storage().instance().get(&DataKey::RewardPerShareStored).unwrap_or(0);
-                stored += (ledgers_elapsed * reward_rate * 1_000_000_000_000_000_000) / total_shares;
+                stored = stored.checked_add(
+                    ledgers_elapsed
+                        .checked_mul(reward_rate).expect("reward overflow")
+                        .checked_mul(1_000_000_000_000_000_000).expect("reward overflow")
+                        / total_shares
+                ).expect("reward overflow");
                 env.storage().instance().set(&DataKey::RewardPerShareStored, &stored);
             }
             env.storage().instance().set(&DataKey::LastUpdateLedger, &current_ledger);
@@ -105,10 +117,10 @@ impl YieldFarmingDistributor {
         let amm_pool: Address = env.storage().instance().get(&DataKey::AmmPool).unwrap();
         let user_shares: i128 = env.invoke_contract(&amm_pool, &soroban_sdk::Symbol::new(&env, "get_shares"), soroban_sdk::vec![env, user.to_val()]);
         
-        let earned = (user_shares * (stored - user_paid)) / 1_000_000_000_000_000_000;
+        let earned = user_shares.checked_mul(stored - user_paid).expect("reward overflow") / 1_000_000_000_000_000_000;
         if earned > 0 {
             let prev: i128 = env.storage().persistent().get(&DataKey::Rewards(user.clone())).unwrap_or(0);
-            env.storage().persistent().set(&DataKey::Rewards(user.clone()), &(prev + earned));
+            env.storage().persistent().set(&DataKey::Rewards(user.clone()), &prev.checked_add(earned).expect("reward overflow"));
         }
         env.storage().persistent().set(&DataKey::UserRewardPerSharePaid(user.clone()), &stored);
     }

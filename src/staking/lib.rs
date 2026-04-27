@@ -80,15 +80,19 @@ impl StakingContract {
         let current_time = env.ledger().timestamp();
 
         // Update rewards
-        info.accumulated_rewards += Self::calc_new_rewards(env.clone(), &info, current_time);
-        info.amount += amount;
+        info.accumulated_rewards = info.accumulated_rewards
+            .checked_add(Self::calc_new_rewards(env.clone(), &info, current_time))
+            .expect("rewards overflow");
+        info.amount = info.amount.checked_add(amount).expect("stake overflow");
         info.last_updated = current_time;
         info.lock_end = current_time
-            + env
-                .storage()
-                .instance()
-                .get::<_, u64>(&DataKey::LockPeriod)
-                .unwrap();
+            .checked_add(
+                env
+                    .storage()
+                    .instance()
+                    .get::<_, u64>(&DataKey::LockPeriod)
+                    .unwrap()
+            ).expect("lock end overflow");
 
         env.storage()
             .persistent()
@@ -112,19 +116,19 @@ impl StakingContract {
 
         let current_time = env.ledger().timestamp();
         let rewards =
-            info.accumulated_rewards + Self::calc_new_rewards(env.clone(), &info, current_time);
+            info.accumulated_rewards.checked_add(Self::calc_new_rewards(env.clone(), &info, current_time)).expect("rewards overflow");
         let mut amount_to_return = info.amount;
 
         // Apply penalty if before lock_end
         if current_time < info.lock_end {
             let penalty_bps: i128 = env.storage().instance().get(&DataKey::PenaltyBps).unwrap();
-            let penalty = (amount_to_return * penalty_bps) / 10000;
-            amount_to_return -= penalty;
+            let penalty = amount_to_return.checked_mul(penalty_bps).expect("penalty overflow") / 10000;
+            amount_to_return = amount_to_return.checked_sub(penalty).expect("penalty underflow");
             // Penalties stay in contract as "unclaimed rewards" or similar
             // Or just lost.
         }
 
-        let total_to_send = amount_to_return + rewards;
+        let total_to_send = amount_to_return.checked_add(rewards).expect("total overflow");
 
         // Reset stake info
         env.storage()
@@ -154,7 +158,7 @@ impl StakingContract {
         let mut info = Self::get_stake_info(env.clone(), user.clone());
         let current_time = env.ledger().timestamp();
         let rewards =
-            info.accumulated_rewards + Self::calc_new_rewards(env.clone(), &info, current_time);
+            info.accumulated_rewards.checked_add(Self::calc_new_rewards(env.clone(), &info, current_time)).expect("rewards overflow");
         assert!(rewards > 0, "no rewards to claim");
 
         info.accumulated_rewards = 0;
@@ -189,6 +193,6 @@ impl StakingContract {
         }
         let rate: i128 = env.storage().instance().get(&DataKey::RewardRate).unwrap();
         let seconds = (current_time - info.last_updated) as i128;
-        (info.amount * rate * seconds) / REWARD_PRECISION
+        info.amount.checked_mul(rate).expect("reward overflow").checked_mul(seconds).expect("reward overflow") / REWARD_PRECISION
     }
 }

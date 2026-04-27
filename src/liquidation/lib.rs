@@ -39,7 +39,7 @@ impl LiquidationEngine {
         };
         env.storage().persistent().set(&DataKey::Vaults(id), &vault);
         
-        id += 1;
+        id = id.checked_add(1).expect("vault id overflow");
         env.storage().instance().set(&DataKey::NextVaultId, &id);
         id - 1
     }
@@ -54,14 +54,14 @@ impl LiquidationEngine {
         // Assume oracle has `fn get_price(env: Env) -> u128` (price in e.g. 7 decimals)
         let collateral_price: u128 = env.invoke_contract(&oracle_id, &symbol_short!("get_price"), soroban_sdk::vec![&env]);
         
-        let collateral_value = vault.collateral_amount * collateral_price;
+        let collateral_value = vault.collateral_amount.checked_mul(collateral_price).expect("value overflow");
         // Assume debt is represented in same base units. Health factor * 100
-        let health_factor = (collateral_value * 100) / vault.debt_amount;
+        let health_factor = collateral_value.checked_mul(100).expect("health factor overflow") / vault.debt_amount;
         
         assert!(health_factor < 120, "vault is healthy"); // 120% min health factor
         
         // Liquidator incentive: 5% spread + 10 units fixed fee
-        let incentive = (vault.collateral_amount * 5) / 100 + 10;
+        let incentive = vault.collateral_amount.checked_mul(5).expect("incentive overflow") / 100 + 10;
         let liquidated_collateral = vault.collateral_amount;
         
         vault.collateral_amount = 0;
