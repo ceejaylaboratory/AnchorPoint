@@ -72,7 +72,9 @@ impl OracleMedianizer {
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::OracleCount, &0u32);
-        env.storage().instance().set(&DataKey::MinSources, &min_sources);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinSources, &min_sources);
     }
 
     /// Add an authorized oracle source
@@ -113,12 +115,12 @@ impl OracleMedianizer {
             .get(&DataKey::OracleCount)
             .unwrap_or(0);
 
-        env.storage().instance().set(&DataKey::OracleCount, &(count + 1));
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleCount, &(count + 1));
 
-        env.events().publish(
-            (symbol_short!("oracle"), oracle),
-            symbol_short!("added"),
-        );
+        env.events()
+            .publish((symbol_short!("oracle"), oracle), symbol_short!("added"));
     }
 
     /// Remove an oracle source
@@ -152,13 +154,13 @@ impl OracleMedianizer {
             .unwrap_or(0);
 
         if count > 0 {
-            env.storage().instance().set(&DataKey::OracleCount, &(count - 1));
+            env.storage()
+                .instance()
+                .set(&DataKey::OracleCount, &(count - 1));
         }
 
-        env.events().publish(
-            (symbol_short!("oracle"), oracle),
-            symbol_short!("removed"),
-        );
+        env.events()
+            .publish((symbol_short!("oracle"), oracle), symbol_short!("removed"));
     }
 
     /// Set heartbeat interval for an asset
@@ -245,10 +247,8 @@ impl OracleMedianizer {
             .instance()
             .set(&DataKey::PriceData(asset.clone(), oracle.clone()), &feed);
 
-        env.events().publish(
-            (symbol_short!("submit"), asset.clone(), oracle),
-            price,
-        );
+        env.events()
+            .publish((symbol_short!("submit"), asset.clone(), oracle), price);
     }
 
     /// Calculate and store the median price for an asset with outlier detection
@@ -270,10 +270,7 @@ impl OracleMedianizer {
             .get(&DataKey::MinSources)
             .expect("min sources not set");
 
-        assert!(
-            sources.len() >= min_sources,
-            "minimum sources not met"
-        );
+        assert!(sources.len() >= min_sources, "minimum sources not met");
 
         // Collect all valid prices
         let mut prices: Vec<i128> = Vec::new(&env);
@@ -315,7 +312,11 @@ impl OracleMedianizer {
         let threshold = 2 * std_dev;
 
         for price in prices.iter() {
-            let diff = if price > mean { price - mean } else { mean - price };
+            let diff = if price > mean {
+                price - mean
+            } else {
+                mean - price
+            };
 
             if diff <= threshold {
                 filtered_prices.push_back(price);
@@ -343,25 +344,20 @@ impl OracleMedianizer {
         };
 
         // Check if update should be triggered
-        let should_update = Self::should_update_price(
-            &env,
-            asset.clone(),
-            median,
-        );
+        let should_update = Self::should_update_price(&env, asset.clone(), median);
 
         if should_update {
             // Store median price
             env.storage()
                 .instance()
                 .set(&DataKey::MedianPrice(asset.clone()), &median);
-            env.storage()
-                .instance()
-                .set(&DataKey::LastUpdate(asset.clone()), &env.ledger().timestamp());
-
-            env.events().publish(
-                (symbol_short!("median"), asset),
-                median,
+            env.storage().instance().set(
+                &DataKey::LastUpdate(asset.clone()),
+                &env.ledger().timestamp(),
             );
+
+            env.events()
+                .publish((symbol_short!("median"), asset), median);
         }
 
         median
@@ -413,7 +409,11 @@ impl OracleMedianizer {
         let current_time = env.ledger().timestamp();
 
         // Check heartbeat trigger
-        if let Some(heartbeat) = env.storage().instance().get::<_, u64>(&DataKey::Heartbeat(asset.clone())) {
+        if let Some(heartbeat) = env
+            .storage()
+            .instance()
+            .get::<_, u64>(&DataKey::Heartbeat(asset.clone()))
+        {
             let last_update: u64 = env
                 .storage()
                 .instance()
@@ -426,8 +426,16 @@ impl OracleMedianizer {
         }
 
         // Check deviation trigger
-        if let Some(deviation_threshold_bps) = env.storage().instance().get::<_, u32>(&DataKey::DeviationThreshold(asset.clone())) {
-            if let Some(old_price) = env.storage().instance().get::<_, i128>(&DataKey::MedianPrice(asset.clone())) {
+        if let Some(deviation_threshold_bps) = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::DeviationThreshold(asset.clone()))
+        {
+            if let Some(old_price) = env
+                .storage()
+                .instance()
+                .get::<_, i128>(&DataKey::MedianPrice(asset.clone()))
+            {
                 if old_price > 0 {
                     let deviation = if new_price > old_price {
                         new_price - old_price
@@ -460,7 +468,7 @@ impl OracleMedianizer {
     ///
     /// # Returns
     /// Sorted vector of prices
-    fn sort_prices(env: &Env, prices: Vec<i128>) -> Vec<i128> {
+    fn sort_prices(_env: &Env, prices: Vec<i128>) -> Vec<i128> {
         let mut sorted = prices.clone();
         let len = sorted.len();
 
@@ -546,7 +554,7 @@ mod tests {
         // Submit prices
         client.submit_price(&oracle1, &asset, &1000000000i128); // $10.00
         client.submit_price(&oracle2, &asset, &1010000000i128); // $10.10
-        client.submit_price(&oracle3, &asset, &990000000i128);  // $9.90
+        client.submit_price(&oracle3, &asset, &990000000i128); // $9.90
 
         let sources = soroban_sdk::vec![&env, oracle1.clone(), oracle2.clone(), oracle3.clone()];
         let median = client.calculate_median(&asset, &sources);

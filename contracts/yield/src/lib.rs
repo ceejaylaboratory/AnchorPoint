@@ -123,7 +123,7 @@ impl YieldDistribution {
         }
 
         env.events()
-            .publish((symbol_short!("dep_rwd"), from), amount);
+            .publish((symbol_short!("dep_rwd"), from, reward_token), amount);
     }
 
     // ── Staking ───────────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ impl YieldDistribution {
             );
 
             env.events()
-                .publish((symbol_short!("claimed"), user), reward);
+                .publish((symbol_short!("claimed"), user, reward_token), reward);
         }
 
         reward

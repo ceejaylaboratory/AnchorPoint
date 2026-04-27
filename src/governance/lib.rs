@@ -7,7 +7,9 @@
 //! - Proposals require quorum to pass
 //! - Mathematical accuracy is ensured through careful integer operations
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, String,
+};
 
 /// Default voting credits allocated to each user
 const DEFAULT_VOTING_CREDITS: i128 = 10_000;
@@ -372,11 +374,20 @@ impl GovernanceContract {
             "insufficient voting credits"
         );
 
-        let token_contract: Address = env.storage().instance().get(&DataKey::TokenContract).unwrap();
+        let token_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap();
         let past_token_balance: i128 = env.invoke_contract(
             &token_contract,
             &soroban_sdk::Symbol::new(&env, "get_past_balance"),
-            soroban_sdk::vec![&env, voter.to_val(), 1u64.into(), proposal.created_at_ledger.into()]
+            soroban_sdk::vec![
+                &env,
+                voter.to_val(),
+                1u64.into_val(&env),
+                proposal.created_at_ledger.into()
+            ],
         );
 
         assert!(

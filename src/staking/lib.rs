@@ -27,12 +27,17 @@ pub struct StakingContract;
 
 #[contractimpl]
 impl StakingContract {
-
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
-        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+        if env
+            .storage()
+            .instance()
+            .has(&soroban_sdk::symbol_short!("sec_reg"))
+        {
             panic!("already set");
         }
-        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
     }
 
     pub fn initialize(
@@ -61,9 +66,16 @@ impl StakingContract {
     }
 
     pub fn stake(env: Env, user: Address, amount: i128) {
-
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&env, "is_paused"),
+                soroban_sdk::vec![&env],
+            );
             if is_paused {
                 panic!("contract is paused");
             }
@@ -98,9 +110,16 @@ impl StakingContract {
     }
 
     pub fn withdraw(env: Env, user: Address) {
-
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&env, "is_paused"),
+                soroban_sdk::vec![&env],
+            );
             if is_paused {
                 panic!("contract is paused");
             }
@@ -142,9 +161,16 @@ impl StakingContract {
     }
 
     pub fn claim_rewards(env: Env, user: Address) {
-
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&env, "is_paused"),
+                soroban_sdk::vec![&env],
+            );
             if is_paused {
                 panic!("contract is paused");
             }

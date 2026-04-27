@@ -86,19 +86,35 @@ impl CircuitBreaker {
         }
         admin.require_auth();
 
-        let tl = if timelock_secs == 0 { DEFAULT_TIMELOCK_SECONDS } else { timelock_secs };
-        let vbps = if volatility_bps == 0 { DEFAULT_VOLATILITY_BPS } else { volatility_bps };
+        let tl = if timelock_secs == 0 {
+            DEFAULT_TIMELOCK_SECONDS
+        } else {
+            timelock_secs
+        };
+        let vbps = if volatility_bps == 0 {
+            DEFAULT_VOLATILITY_BPS
+        } else {
+            volatility_bps
+        };
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::OracleContract, &oracle);
-        env.storage().instance().set(&DataKey::PauseTier, &PauseTier::None);
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleContract, &oracle);
+        env.storage()
+            .instance()
+            .set(&DataKey::PauseTier, &PauseTier::None);
         env.storage().instance().set(&DataKey::TimelockSeconds, &tl);
         env.storage().instance().set(&DataKey::VolatilityBps, &vbps);
-        env.storage().instance().set(&DataKey::UnpauseUnlocksAt, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::UnpauseUnlocksAt, &0u64);
         env.storage().instance().set(&DataKey::TripCount, &0u32);
 
         let bots: Vec<Address> = Vec::new(&env);
-        env.storage().instance().set(&DataKey::AuthorizedBots, &bots);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuthorizedBots, &bots);
     }
 
     // ── Bot management ────────────────────────────────────────────────────────
@@ -123,8 +139,11 @@ impl CircuitBreaker {
         }
 
         bots.push_back(bot.clone());
-        env.storage().instance().set(&DataKey::AuthorizedBots, &bots);
-        env.events().publish((symbol_short!("bot_add"), bot), caller);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuthorizedBots, &bots);
+        env.events()
+            .publish((symbol_short!("bot_add"), bot), caller);
     }
 
     /// Remove an address from the authorized-bot list (admin only).
@@ -149,7 +168,9 @@ impl CircuitBreaker {
             }
         }
         assert!(found, "bot not found");
-        env.storage().instance().set(&DataKey::AuthorizedBots, &new_bots);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuthorizedBots, &new_bots);
         env.events().publish((symbol_short!("bot_rm"), bot), caller);
     }
 
@@ -311,10 +332,14 @@ impl CircuitBreaker {
             .unwrap_or(PauseTier::None);
 
         env.storage().instance().set(&DataKey::PauseTier, &target);
-        env.storage().instance().set(&DataKey::UnpauseUnlocksAt, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::UnpauseUnlocksAt, &0u64);
 
-        env.events()
-            .publish((symbol_short!("unpaused"), target), env.ledger().timestamp());
+        env.events().publish(
+            (symbol_short!("unpaused"), target),
+            env.ledger().timestamp(),
+        );
     }
 
     /// Cancel a pending unpause (admin only).
@@ -332,8 +357,11 @@ impl CircuitBreaker {
 
         assert!(unlocks_at > 0, "no unpause pending");
 
-        env.storage().instance().set(&DataKey::UnpauseUnlocksAt, &0u64);
-        env.events().publish((symbol_short!("unp_cncl"), caller), unlocks_at);
+        env.storage()
+            .instance()
+            .set(&DataKey::UnpauseUnlocksAt, &0u64);
+        env.events()
+            .publish((symbol_short!("unp_cncl"), caller), unlocks_at);
     }
 
     // ── Configuration ─────────────────────────────────────────────────────────
@@ -343,8 +371,11 @@ impl CircuitBreaker {
         caller.require_auth();
         Self::assert_admin(&env, &caller);
         assert!(seconds > 0, "timelock must be positive");
-        env.storage().instance().set(&DataKey::TimelockSeconds, &seconds);
-        env.events().publish((symbol_short!("tl_set"), caller), seconds);
+        env.storage()
+            .instance()
+            .set(&DataKey::TimelockSeconds, &seconds);
+        env.events()
+            .publish((symbol_short!("tl_set"), caller), seconds);
     }
 
     /// Update the oracle volatility threshold in basis points (admin only).
@@ -353,15 +384,19 @@ impl CircuitBreaker {
         Self::assert_admin(&env, &caller);
         assert!(bps > 0 && bps <= 10_000, "bps must be 1-10000");
         env.storage().instance().set(&DataKey::VolatilityBps, &bps);
-        env.events().publish((symbol_short!("vbps_set"), caller), bps);
+        env.events()
+            .publish((symbol_short!("vbps_set"), caller), bps);
     }
 
     /// Update the oracle contract address (admin only).
     pub fn set_oracle(env: Env, caller: Address, oracle: Address) {
         caller.require_auth();
         Self::assert_admin(&env, &caller);
-        env.storage().instance().set(&DataKey::OracleContract, &oracle);
-        env.events().publish((symbol_short!("ora_set"), oracle), caller);
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleContract, &oracle);
+        env.events()
+            .publish((symbol_short!("ora_set"), oracle), caller);
     }
 
     // ── Read-only helpers ─────────────────────────────────────────────────────
@@ -376,12 +411,18 @@ impl CircuitBreaker {
 
     /// Returns true if swap operations are currently halted.
     pub fn is_swap_paused(env: Env) -> bool {
-        matches!(Self::get_pause_tier(env), PauseTier::SwapOnly | PauseTier::All)
+        matches!(
+            Self::get_pause_tier(env),
+            PauseTier::SwapOnly | PauseTier::All
+        )
     }
 
     /// Returns true if withdrawal operations are currently halted.
     pub fn is_withdraw_paused(env: Env) -> bool {
-        matches!(Self::get_pause_tier(env), PauseTier::WithdrawOnly | PauseTier::All)
+        matches!(
+            Self::get_pause_tier(env),
+            PauseTier::WithdrawOnly | PauseTier::All
+        )
     }
 
     /// Returns true if all operations are halted.
