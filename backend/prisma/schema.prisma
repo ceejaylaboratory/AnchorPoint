@@ -17,14 +17,16 @@ enum Tier {
 }
 
 model User {
-  id            String        @id @default(uuid())
-  publicKey     String        @unique
-  email         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  transactions  Transaction[]
-  kycCustomer   KycCustomer?
-  apiKeys       ApiKey[]
+  id                    String                 @id @default(uuid())
+  publicKey             String                 @unique
+  email                 String?
+  phone                 String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  transactions          Transaction[]
+  kycCustomer           KycCustomer?
+  apiKeys               ApiKey[]
+  notificationPreference NotificationPreference?
 
   @@index([publicKey])
 }
@@ -43,17 +45,18 @@ model ApiKey {
 }
 
 model Transaction {
-  id                  String    @id @default(uuid())
+  id                  String         @id @default(uuid())
   userId              String
-  user                User      @relation(fields: [userId], references: [id])
+  user                User           @relation(fields: [userId], references: [id])
   assetCode           String
   amount              String
-  type                String    // DEPOSIT | WITHDRAW | SEP31
-  status              String    // PENDING, COMPLETED, FAILED
-  externalId          String?   @unique
-  stellarTxId         String?   @unique
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  type                String         // DEPOSIT | WITHDRAW | SEP31
+  status              String         // PENDING, COMPLETED, FAILED
+  externalId          String?        @unique
+  stellarTxId         String?        @unique
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  notifications       Notification[]
 
   // SEP-31 specific fields (nullable for backward compatibility)
   senderInfo          Json?
@@ -62,9 +65,46 @@ model Transaction {
   sep31Status         String?
   requiredInfoMessage String?
   completedAt         DateTime?
-  refunded            Boolean   @default(false)
+  refunded            Boolean        @default(false)
 
   @@index([userId])
+}
+
+model NotificationPreference {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  user         User    @relation(fields: [userId], references: [id])
+  emailEnabled Boolean @default(true)
+  smsEnabled   Boolean @default(false)
+  pushEnabled  Boolean @default(false)
+
+  @@index([userId])
+}
+
+enum NotificationType {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model Notification {
+  id            String             @id @default(uuid())
+  userId        String
+  transactionId String?
+  transaction   Transaction?       @relation(fields: [transactionId], references: [id])
+  type          NotificationType
+  status        NotificationStatus @default(PENDING)
+  message       String
+  createdAt     DateTime           @default(now())
+
+  @@index([userId])
+  @@index([transactionId])
 }
 
 enum KYCStatus {
