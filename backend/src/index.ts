@@ -9,6 +9,7 @@ import adminRouter from './api/routes/admin.route';
 import sep24Router from './api/routes/sep24.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
+import sep40Router from './api/routes/sep40.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
 import { errorHandler } from './api/middleware/error.middleware';
@@ -106,6 +107,9 @@ app.use('/metrics', metricsRouter);
 
 // SEP-38 Price Quotes API
 app.use('/sep38', sep38Router);
+
+// SEP-40 Swap Rates API
+app.use('/sep40', sep40Router);
 
 // SEP-1 Info endpoint
 app.use('/info', infoRouter);
