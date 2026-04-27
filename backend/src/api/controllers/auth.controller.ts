@@ -2,29 +2,43 @@ import { Request, Response } from 'express';
 import { RedisService } from '../../services/redis.service';
 import { 
   generateChallenge, 
+  generateMultiKeyChallenge,
   storeChallenge, 
   getChallenge as getChallengeFromRedis, 
   removeChallenge,
-  signToken 
+  signToken,
+  validateMultiKeySignatures,
+  SignerInfo,
+  SignatureInfo,
+  MultiKeyChallenge,
+  MultiKeyVerifiedToken
 } from '../../services/auth.service';
 
 interface ChallengeRequest {
   account: string;
+  signers?: SignerInfo[];
+  threshold?: 'low' | 'medium' | 'high';
+  multiKey?: boolean;
 }
 
 interface ChallengeResponse {
   transaction: string;
   network_passphrase: string;
+  multiKeyChallenge?: MultiKeyChallenge;
 }
 
 interface TokenRequest {
   transaction: string;
+  signatures?: SignatureInfo[];
+  threshold?: 'low' | 'medium' | 'high';
 }
 
 interface TokenResponse {
   token: string;
   type: 'bearer';
   expires_in: number;
+  authLevel?: 'partial' | 'medium' | 'full';
+  signers?: string[];
 }
 
 /**
@@ -37,7 +51,7 @@ export const getChallenge = async (
   res: Response,
   redisService: RedisService
 ): Promise<Response> => {
-  const { account }: ChallengeRequest = req.body;
+  const { account, signers, threshold, multiKey }: ChallengeRequest = req.body;
 
   if (!account) {
     return res.status(400).json({
@@ -49,6 +63,12 @@ export const getChallenge = async (
     // Generate a new challenge
     const challenge = generateChallenge();
     
+    // Handle multi-key authentication
+    let multiKeyChallenge: MultiKeyChallenge | undefined;
+    if (multiKey && signers && signers.length > 0) {
+      multiKeyChallenge = generateMultiKeyChallenge(signers, threshold || 'medium');
+    }
+    
     // Store the challenge in Redis with TTL
     await storeChallenge(redisService, account, challenge);
 
@@ -56,7 +76,8 @@ export const getChallenge = async (
     // with the challenge as a manage_data operation
     const response: ChallengeResponse = {
       transaction: challenge, // Simplified - should be a base64 encoded transaction
-      network_passphrase: process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015'
+      network_passphrase: process.env?.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+      multiKeyChallenge
     };
 
     return res.json(response);
@@ -77,7 +98,7 @@ export const getToken = async (
   res: Response,
   redisService: RedisService
 ): Promise<Response> => {
-  const { transaction }: TokenRequest = req.body;
+  const { transaction, signatures, threshold }: TokenRequest = req.body;
 
   if (!transaction) {
     return res.status(400).json({
@@ -86,14 +107,52 @@ export const getToken = async (
   }
 
   try {
-    // In a real implementation, you would:
-    // 1. Parse the signed transaction
-    // 2. Verify the signature
-    // 3. Extract the account and challenge from the transaction
-    // 4. Verify the challenge matches what's stored in Redis
+    // Handle multi-key authentication
+    if (signatures && signatures.length > 0) {
+      const validation = validateMultiKeySignatures(signatures, threshold || 'medium');
+      
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: 'Insufficient signature weight for required threshold'
+        });
+      }
+
+      // For multi-key, extract the primary account from first signature
+      const mockAccount = signatures[0].publicKey;
+      const storedChallenge = await getChallengeFromRedis(redisService, mockAccount);
+
+      if (!storedChallenge || storedChallenge.challenge !== transaction) {
+        return res.status(400).json({
+          error: 'Invalid or expired challenge'
+        });
+      }
+
+      // Remove the challenge to prevent replay attacks
+      await removeChallenge(redisService, mockAccount);
+
+      // Create multi-key verified token data
+      const multiKeyData: MultiKeyVerifiedToken = {
+        sub: mockAccount,
+        signers: validation.signers,
+        threshold: threshold || 'medium',
+        authLevel: validation.authLevel
+      };
+
+      // Generate JWT token with multi-key data
+      const token = signToken(mockAccount, multiKeyData);
+
+      const response: TokenResponse = {
+        token,
+        type: 'bearer',
+        expires_in: 3600, // 1 hour
+        authLevel: validation.authLevel,
+        signers: validation.signers
+      };
+
+      return res.json(response);
+    }
     
-    // For this example, we'll use the transaction as the challenge
-    // and assume a fixed account for demonstration
+    // Single-key authentication (existing logic)
     const mockAccount = 'GBAD_PUBLIC_KEY'; // In real implementation, extract from transaction
     const storedChallenge = await getChallengeFromRedis(redisService, mockAccount);
 
