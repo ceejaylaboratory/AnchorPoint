@@ -18,6 +18,23 @@ pub enum DataKey {
     StakeLockTime(u64),           // NFT ID -> Lock expiration timestamp
     NftRewardPerTokenPaid(u64),   // NFT ID -> Snapshot
     NftRewards(u64),              // NFT ID -> Accrued rewards
+    /// Branding / project metadata (description, icon_url, website)
+    ContractMeta,
+}
+
+/// On-chain branding metadata for the contract.
+///
+/// Stored independently of staking logic so it can be updated at any time
+/// by the admin without touching the core contract state.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContractMetadata {
+    /// Human-readable description of the contract.
+    pub description: String,
+    /// URL pointing to the project icon / logo.
+    pub icon_url: String,
+    /// Project or protocol website URL.
+    pub website: String,
 }
 
 #[contracttype]
@@ -50,6 +67,13 @@ impl LiquidStaking {
         env.storage().instance().set(&DataKey::NftContract, &nft_contract);
         env.storage().instance().set(&DataKey::TotalStaked, &0_i128);
         env.storage().instance().set(&DataKey::RewardPerTokenStored, &0_i128);
+
+        // Initialise branding metadata with empty strings.
+        env.storage().instance().set(&DataKey::ContractMeta, &ContractMetadata {
+            description: String::from_str(&env, ""),
+            icon_url: String::from_str(&env, ""),
+            website: String::from_str(&env, ""),
+        });
     }
 
     pub fn deposit_rewards(env: Env, from: Address, amount: i128) {
@@ -233,6 +257,48 @@ impl LiquidStaking {
         }
     }
 
+    // ── Contract Metadata ─────────────────────────────────────────────────────
+
+    /// Update the contract's branding metadata (admin only).
+    ///
+    /// All three fields are replaced atomically. Pass the current value for
+    /// any field you do not want to change.
+    ///
+    /// # Arguments
+    /// * `caller`      – Must be the contract admin
+    /// * `description` – New human-readable description
+    /// * `icon_url`    – New icon / logo URL
+    /// * `website`     – New project website URL
+    pub fn update_contract_meta(
+        env: Env,
+        caller: Address,
+        description: String,
+        icon_url: String,
+        website: String,
+    ) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+        assert!(caller == admin, "only admin can update contract metadata");
+
+        let meta = ContractMetadata { description, icon_url, website };
+        env.storage().instance().set(&DataKey::ContractMeta, &meta);
+
+        env.events().publish((symbol_short!("meta_upd"),), meta);
+    }
+
+    /// Return the current contract branding metadata.
+    pub fn get_contract_meta(env: Env) -> ContractMetadata {
+        env.storage()
+            .instance()
+            .get(&DataKey::ContractMeta)
+            .expect("contract metadata not initialised")
+    }
+
     fn _update_reward(env: &Env, token_id: u64) {
         let rpt: i128 = env.storage().instance().get(&DataKey::RewardPerTokenStored).unwrap_or(0);
         let nft_rpt: i128 = env.storage().persistent().get(&DataKey::NftRewardPerTokenPaid(token_id)).unwrap_or(0);
@@ -354,4 +420,43 @@ mod tests {
         // Should panic because 3600 seconds haven't passed
         client.unstake(&alice, &token_id);
     }
-}
+
+    #[test]
+    fn test_update_contract_meta() {
+        let (env, ls_id, _, admin, _, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Initial metadata should be empty strings.
+        let initial = client.get_contract_meta();
+        assert_eq!(initial.description, String::from_str(&env, ""));
+        assert_eq!(initial.icon_url, String::from_str(&env, ""));
+        assert_eq!(initial.website, String::from_str(&env, ""));
+
+        // Admin updates branding.
+        client.update_contract_meta(
+            &admin,
+            &String::from_str(&env, "Liquid staking protocol on Stellar"),
+            &String::from_str(&env, "https://example.com/icon.png"),
+            &String::from_str(&env, "https://example.com"),
+        );
+
+        let updated = client.get_contract_meta();
+        assert_eq!(updated.description, String::from_str(&env, "Liquid staking protocol on Stellar"));
+        assert_eq!(updated.icon_url, String::from_str(&env, "https://example.com/icon.png"));
+        assert_eq!(updated.website, String::from_str(&env, "https://example.com"));
+    }
+
+    #[test]
+    #[should_panic(expected = "only admin can update contract metadata")]
+    fn test_update_contract_meta_non_admin() {
+        let (env, ls_id, _, _, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Non-admin should be rejected.
+        client.update_contract_meta(
+            &alice,
+            &String::from_str(&env, "Hacked"),
+            &String::from_str(&env, ""),
+            &String::from_str(&env, ""),
+        );
+    }
