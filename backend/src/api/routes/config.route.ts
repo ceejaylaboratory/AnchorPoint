@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { getConfig, getHistory, updateConfig, rollbackConfig } from '../controllers/config.controller';
+import { auditLog } from '../middleware/audit-log.middleware';
+import configService from '../../services/config.service';
 
 const router = Router();
 
@@ -61,7 +63,11 @@ router.get('/history', getHistory);
  *       401:
  *         description: Unauthorized
  */
-router.post('/', updateConfig);
+router.post('/', auditLog({
+  action: 'CONFIG_UPDATE',
+  resourceType: 'config',
+  getBefore: () => configService.getConfig(),
+}), updateConfig);
 
 /**
  * @swagger
@@ -89,6 +95,11 @@ router.post('/', updateConfig);
  *       404:
  *         description: Version not found
  */
-router.post('/rollback/:version', rollbackConfig);
+router.post('/rollback/:version', auditLog({
+  action: 'CONFIG_ROLLBACK',
+  resourceType: 'config',
+  getResourceId: (req) => req.params.version,
+  getBefore: () => configService.getConfig(),
+}), rollbackConfig);
 
 export default router;
