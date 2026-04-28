@@ -50,9 +50,9 @@ router.get('/price', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /sep38/price
+ * POST /quote
  * 
- * Get a price quote for exchanging one asset for another (POST method).
+ * Get a firm price quote for exchanging one asset for another and persist it.
  * 
  * Request Body:
  * - source_asset: The asset code to sell (e.g., "USDC")
@@ -60,7 +60,7 @@ router.get('/price', async (req: Request, res: Response) => {
  * - destination_asset: The asset code to buy (e.g., "XLM")
  * - context: Optional context for the price request
  */
-router.post('/price', async (req: Request, res: Response) => {
+router.post('/quote', async (req: Request, res: Response) => {
   try {
     const { source_asset, source_amount, destination_asset, context } = req.body;
 
@@ -72,7 +72,7 @@ router.post('/price', async (req: Request, res: Response) => {
       });
     }
 
-    const priceQuote = await sep38Controller.getPriceQuote(
+    const priceQuote = await sep38Controller.createQuote(
       source_asset,
       parseFloat(source_amount),
       destination_asset,

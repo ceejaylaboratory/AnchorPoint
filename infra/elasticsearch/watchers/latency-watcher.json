@@ -1,0 +1,107 @@
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1m"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["anchorpoint-logs-*"],
+        "body": {
+          "size": 0,
+          "query": {
+            "bool": {
+              "must": [
+                {
+                  "range": {
+                    "@timestamp": {
+                      "gte": "now-5m",
+                      "lte": "now"
+                    }
+                  }
+                },
+                {
+                  "exists": { "field": "durationMs" }
+                }
+              ]
+            }
+          },
+          "aggs": {
+            "latency_percentiles": {
+              "percentiles": {
+                "field": "durationMs",
+                "percents": [50, 95, 99]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "script": {
+      "source": "def p99 = ctx.payload.aggregations.latency_percentiles.values['99.0']; if (p99 == null) { return false; } ctx.vars.p99 = p99; ctx.vars.severity = p99 > 5000 ? 'critical' : (p99 > 2000 ? 'warning' : 'ok'); return p99 > 2000;",
+      "lang": "painless"
+    }
+  },
+  "transform": {
+    "script": {
+      "source": "def p50 = ctx.payload.aggregations.latency_percentiles.values['50.0']; def p95 = ctx.payload.aggregations.latency_percentiles.values['95.0']; def p99 = ctx.vars.p99; def severity = ctx.vars.severity; def threshold = severity == 'critical' ? 5000 : 2000; def msg = severity.toUpperCase() + ': p99 API latency is ' + Math.round(p99) + 'ms (threshold: ' + threshold + 'ms) over the last 5 minutes. p50=' + Math.round(p50) + 'ms, p95=' + Math.round(p95) + 'ms.'; return ['severity': severity, 'metric': 'API_Latency', 'p50': Math.round(p50), 'p95': Math.round(p95), 'p99': Math.round(p99), 'threshold': threshold, 'window': '5m', 'message': msg];",
+      "lang": "painless"
+    }
+  },
+  "actions": {
+    "notify_webhook": {
+      "condition": {
+        "script": {
+          "source": "return params.ALERT_WEBHOOK_URL != null && params.ALERT_WEBHOOK_URL != '';",
+          "lang": "painless",
+          "params": {
+            "ALERT_WEBHOOK_URL": "{{ctx.metadata.ALERT_WEBHOOK_URL}}"
+          }
+        }
+      },
+      "webhook": {
+        "method": "POST",
+        "url": "{{ctx.metadata.ALERT_WEBHOOK_URL}}",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"severity\":\"{{ctx.payload.severity}}\",\"metric\":\"{{ctx.payload.metric}}\",\"p50\":{{ctx.payload.p50}},\"p95\":{{ctx.payload.p95}},\"p99\":{{ctx.payload.p99}},\"threshold\":{{ctx.payload.threshold}},\"window\":\"{{ctx.payload.window}}\",\"message\":\"{{ctx.payload.message}}\",\"timestamp\":\"{{ctx.execution_time}}\"}"
+      }
+    },
+    "notify_email": {
+      "condition": {
+        "script": {
+          "source": "return params.ALERT_EMAIL_RECIPIENTS != null && params.ALERT_EMAIL_RECIPIENTS != '';",
+          "lang": "painless",
+          "params": {
+            "ALERT_EMAIL_RECIPIENTS": "{{ctx.metadata.ALERT_EMAIL_RECIPIENTS}}"
+          }
+        }
+      },
+      "email": {
+        "to": "{{ctx.metadata.ALERT_EMAIL_RECIPIENTS}}",
+        "subject": "[{{ctx.payload.severity | upper}}] AnchorPoint API Latency Alert — p99 {{ctx.payload.p99}}ms",
+        "body": {
+          "text": "{{ctx.payload.message}}\n\nWatcher: {{ctx.watch_id}}\nExecution time: {{ctx.execution_time}}\n\nThis is an automated alert from the AnchorPoint ELK monitoring stack."
+        }
+      }
+    }
+  },
+  "metadata": {
+    "ALERT_WEBHOOK_URL": "{{ALERT_WEBHOOK_URL}}",
+    "ALERT_EMAIL_RECIPIENTS": "{{ALERT_EMAIL_RECIPIENTS}}",
+    "description": "Fires a warning alert when p99 API latency exceeds 2000ms, and a critical alert when it exceeds 5000ms. Evaluates every 1 minute over a 5-minute rolling window.",
+    "thresholds": {
+      "warning_ms": 2000,
+      "critical_ms": 5000
+    },
+    "recovery": {
+      "enabled": true,
+      "message": "RESOLVED: p99 API latency has returned below threshold."
+    }
+  },
+  "throttle_period": "5m"
+}

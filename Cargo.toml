@@ -1,27 +1,38 @@
 [workspace]
 members = [
-    "src/upgradeable",
-    "src/token",
-    "src/escrow_multisig",
-    "src/governance",
-    "src/auth",
     "src/amm",
-    "src/oracle_consumer",
+    "src/auth",
     "src/batch",
-    "src/utils",
+    "src/bridge",
+    "src/circuit_breaker",
+    "src/escrow_multisig",
+    "src/escrow_timelock",
     "src/flash_loan",
+    "src/governance",
+    "src/indexing",
     "src/kyc",
+    "src/liquidation",
+    "src/oracle_consumer",
+    "src/oracle_medianizer",
+    "src/random",
+    "src/security_registry",
     "src/staking",
-    "src/escrow_timelock"
+    "src/token",
+    "src/upgradeable",
+    "src/utils",
+    "src/vesting",
+    "src/proxy",
+    "src/yield_farming",
+    "src/benchmarks"
 ]
 resolver = "2"
 
 [profile.release]
 opt-level = "z"
-overflow-checks = true
+overflow-checks = false
 debug = 0
-strip = "symbols"
+strip = true
 debug-assertions = false
 panic = "abort"
 codegen-units = 1
-lto = true
+lto = "fat"

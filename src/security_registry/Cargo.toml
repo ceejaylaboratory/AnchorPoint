@@ -1,0 +1,17 @@
+[package]
+name = "anchorpoint-security-registry"
+version = "0.1.0"
+edition = "2021"
+description = "Global security registry for AnchorPoint"
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[lib]
+name = "anchorpoint_security_registry"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+doctest = false
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }

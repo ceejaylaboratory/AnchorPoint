@@ -1,8 +1,8 @@
 export interface RedisClient {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
+  set(key: string, value: string): Promise<unknown>;
   del(key: string): Promise<number>;
-  expire(key: string, seconds: number): Promise<void>;
+  expire(key: string, seconds: number): Promise<unknown>;
 }
 
 export class RedisService {
@@ -16,7 +16,7 @@ export class RedisService {
 
   async setJSON<T>(key: string, value: T, ttlSeconds?: number): Promise<void> {
     await this.client.set(key, JSON.stringify(value));
-    if (typeof ttlSeconds === 'number') {
+    if (typeof ttlSeconds === "number") {
       await this.client.expire(key, ttlSeconds);
     }
   }
@@ -25,4 +25,3 @@ export class RedisService {
     return this.client.del(key);
   }
 }
-

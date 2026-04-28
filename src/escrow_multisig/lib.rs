@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Vec, token};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Vec};
 
 #[contracttype]
 #[derive(Clone)]
@@ -23,25 +23,37 @@ impl EscrowMultisig {
         if threshold == 0 || threshold > signers.len() {
             panic!("invalid threshold");
         }
-        
+
         e.storage().instance().set(&DataKey::Signers, &signers);
         e.storage().instance().set(&DataKey::Threshold, &threshold);
         e.storage().instance().set(&DataKey::Recipient, &recipient);
         e.storage().instance().set(&DataKey::Initialized, &true);
     }
-    
+
     /// Release funds to the recipient.
     /// Requires authorization from M-of-N signers.
     /// The `signers` parameter specifies which M signers are authorizing the release.
     pub fn release(e: Env, signers: Vec<Address>, token: Address) {
-        let stored_signers: Vec<Address> = e.storage().instance().get(&DataKey::Signers).expect("not initialized");
-        let threshold: u32 = e.storage().instance().get(&DataKey::Threshold).expect("not initialized");
-        let recipient: Address = e.storage().instance().get(&DataKey::Recipient).expect("not initialized");
-        
+        let stored_signers: Vec<Address> = e
+            .storage()
+            .instance()
+            .get(&DataKey::Signers)
+            .expect("not initialized");
+        let threshold: u32 = e
+            .storage()
+            .instance()
+            .get(&DataKey::Threshold)
+            .expect("not initialized");
+        let recipient: Address = e
+            .storage()
+            .instance()
+            .get(&DataKey::Recipient)
+            .expect("not initialized");
+
         if signers.len() < threshold {
             panic!("not enough signers provided");
         }
-        
+
         // Verify all provided signers are valid and have authorized the call
         for signer in signers.iter() {
             let mut is_valid = false;
@@ -54,15 +66,15 @@ impl EscrowMultisig {
             if !is_valid {
                 panic!("invalid signer provided");
             }
-            
+
             // This will fail the entire transaction if the signer hasn't authorized this call.
             signer.require_auth();
         }
-        
+
         // Get the current balance of the contract for the specified token.
         let token_client = token::Client::new(&e, &token);
         let balance = token_client.balance(&e.current_contract_address());
-        
+
         if balance > 0 {
             token_client.transfer(&e.current_contract_address(), &recipient, &balance);
         }
@@ -70,7 +82,10 @@ impl EscrowMultisig {
 
     /// Get the list of signers.
     pub fn get_signers(e: Env) -> Vec<Address> {
-        e.storage().instance().get(&DataKey::Signers).unwrap_or(Vec::new(&e))
+        e.storage()
+            .instance()
+            .get(&DataKey::Signers)
+            .unwrap_or(Vec::new(&e))
     }
 
     /// Get the threshold.
@@ -80,7 +95,10 @@ impl EscrowMultisig {
 
     /// Get the recipient.
     pub fn get_recipient(e: Env) -> Address {
-        e.storage().instance().get(&DataKey::Recipient).expect("recipient not set")
+        e.storage()
+            .instance()
+            .get(&DataKey::Recipient)
+            .expect("recipient not set")
     }
 }
 
@@ -94,13 +112,16 @@ mod tests {
         let e = Env::default();
         e.mock_all_auths();
 
-        let signers = Vec::from_array(&e, [
-            Address::generate(&e),
-            Address::generate(&e),
-            Address::generate(&e),
-            Address::generate(&e),
-            Address::generate(&e),
-        ]);
+        let signers = Vec::from_array(
+            &e,
+            [
+                Address::generate(&e),
+                Address::generate(&e),
+                Address::generate(&e),
+                Address::generate(&e),
+                Address::generate(&e),
+            ],
+        );
         let threshold = 3;
         let recipient = Address::generate(&e);
 
@@ -125,11 +146,14 @@ mod tests {
         assert_eq!(token_client.balance(&contract_id), deposit_amount);
 
         // Prepare signers list (M-of-N)
-        let m_signers = Vec::from_array(&e, [
-            signers.get(0).unwrap(),
-            signers.get(2).unwrap(),
-            signers.get(4).unwrap(),
-        ]);
+        let m_signers = Vec::from_array(
+            &e,
+            [
+                signers.get(0).unwrap(),
+                signers.get(2).unwrap(),
+                signers.get(4).unwrap(),
+            ],
+        );
 
         // Release tokens
         client.release(&m_signers, &token_id);
@@ -145,11 +169,14 @@ mod tests {
         let e = Env::default();
         e.mock_all_auths();
 
-        let signers = Vec::from_array(&e, [
-            Address::generate(&e),
-            Address::generate(&e),
-            Address::generate(&e),
-        ]);
+        let signers = Vec::from_array(
+            &e,
+            [
+                Address::generate(&e),
+                Address::generate(&e),
+                Address::generate(&e),
+            ],
+        );
         let threshold = 2;
         let recipient = Address::generate(&e);
 
@@ -169,10 +196,7 @@ mod tests {
         let e = Env::default();
         e.mock_all_auths();
 
-        let signers = Vec::from_array(&e, [
-            Address::generate(&e),
-            Address::generate(&e),
-        ]);
+        let signers = Vec::from_array(&e, [Address::generate(&e), Address::generate(&e)]);
         let threshold = 1;
         let recipient = Address::generate(&e);
 

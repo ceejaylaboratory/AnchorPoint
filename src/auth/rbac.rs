@@ -1,8 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env};
 
 /// Defined roles for the RBAC module.
 /// Values are ordered such that lower values have more permissions.
@@ -52,44 +50,48 @@ impl RBAC {
     pub fn set_role(env: &Env, admin: &Address, target: &Address, role: AccessRole) {
         admin.require_auth();
         Self::require_role(env, admin, AccessRole::Admin);
-        
+
         let key = AccessDataKey::Role(target.clone());
         env.storage().instance().set(&key, &role);
-        
+
         // Emit role change event
-        env.events().publish(
-            (symbol_short!("role_set"), target.clone()),
-            role
-        );
+        env.events()
+            .publish((symbol_short!("role_set"), target.clone()), role);
     }
 
     /// Revokes any role from a target address. Only an Admin can call this.
     pub fn revoke_role(env: &Env, admin: &Address, target: &Address) {
         admin.require_auth();
         Self::require_role(env, admin, AccessRole::Admin);
-        
+
         let key = AccessDataKey::Role(target.clone());
         env.storage().instance().remove(&key);
-        
+
         // Emit role revocation event
-        env.events().publish(
-            (symbol_short!("role_rev"), target.clone()),
-            ()
-        );
+        env.events()
+            .publish((symbol_short!("role_rev"), target.clone()), ());
     }
 
     /// Inits the first admin. This can only be called once.
     pub fn init_admin(env: &Env, admin: &Address) {
-        if env.storage().instance().has(&AccessDataKey::AdminInitialized) {
+        if env
+            .storage()
+            .instance()
+            .has(&AccessDataKey::AdminInitialized)
+        {
             panic!("rbac: admin already initialized");
         }
-        
-        env.storage().instance().set(&AccessDataKey::Role(admin.clone()), &AccessRole::Admin);
-        env.storage().instance().set(&AccessDataKey::AdminInitialized, &true);
-        
+
+        env.storage()
+            .instance()
+            .set(&AccessDataKey::Role(admin.clone()), &AccessRole::Admin);
+        env.storage()
+            .instance()
+            .set(&AccessDataKey::AdminInitialized, &true);
+
         env.events().publish(
             (symbol_short!("role_set"), admin.clone()),
-            AccessRole::Admin
+            AccessRole::Admin,
         );
     }
 }
@@ -101,6 +103,14 @@ pub struct RBACContract;
 
 #[contractimpl]
 impl RBACContract {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initializes the RBAC contract with an initial administrator.
     pub fn initialize(env: Env, admin: Address) {
         RBAC::init_admin(&env, &admin);
@@ -113,6 +123,14 @@ impl RBACContract {
 
     /// Revokes any role from a target address. Only the admin can call this.
     pub fn revoke_role(env: Env, from: Address, target: Address) {
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         RBAC::revoke_role(&env, &from, &target);
     }
 

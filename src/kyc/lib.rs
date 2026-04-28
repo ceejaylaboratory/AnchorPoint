@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Bytes, BytesN, xdr::ToXdr};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env,
+};
 
 #[contracttype]
 pub enum DataKey {
@@ -19,7 +21,9 @@ impl KycVerifier {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::VerifierPubKey, &verifier_pubkey);
+        env.storage()
+            .instance()
+            .set(&DataKey::VerifierPubKey, &verifier_pubkey);
     }
 
     pub fn set_kyc_status(env: Env, user: Address, signature: BytesN<64>, expires_at: u64) {
@@ -29,21 +33,35 @@ impl KycVerifier {
 
         let mut data = Bytes::new(&env);
         data.append(&user.clone().to_xdr(&env));
-        data.append(&Bytes::from_slice(&env, &(expires_at as u128).to_be_bytes())); // Example message data
+        data.append(&Bytes::from_slice(
+            &env,
+            &(expires_at as u128).to_be_bytes(),
+        )); // Example message data
 
         // In real cases, we'd hash the data or use a specific format.
         // For simplicity, let's verify ed25519 signature.
-        let pubkey: BytesN<32> = env.storage().instance().get(&DataKey::VerifierPubKey).unwrap();
-        
+        let pubkey: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::VerifierPubKey)
+            .unwrap();
+
         env.crypto().ed25519_verify(&pubkey, &data, &signature);
 
-        env.storage().persistent().set(&DataKey::UserKyc(user.clone()), &expires_at);
-        env.events().publish((symbol_short!("kyc_set"), user), expires_at);
+        env.storage()
+            .persistent()
+            .set(&DataKey::UserKyc(user.clone()), &expires_at);
+        env.events()
+            .publish((symbol_short!("kyc_set"), user), expires_at);
     }
 
     pub fn is_kyc_valid(env: Env, user: Address) -> bool {
         let current_time = env.ledger().timestamp();
-        match env.storage().persistent().get::<_, u64>(&DataKey::UserKyc(user)) {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, u64>(&DataKey::UserKyc(user))
+        {
             Some(expiry) => expiry > current_time,
             None => false,
         }
@@ -52,6 +70,8 @@ impl KycVerifier {
     pub fn update_verifier(env: Env, new_pubkey: BytesN<32>) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
-        env.storage().instance().set(&DataKey::VerifierPubKey, &new_pubkey);
+        env.storage()
+            .instance()
+            .set(&DataKey::VerifierPubKey, &new_pubkey);
     }
 }

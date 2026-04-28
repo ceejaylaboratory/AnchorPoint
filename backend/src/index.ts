@@ -5,6 +5,7 @@ import { config } from './config/env';
 import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
+import adminRouter from './api/routes/admin.route';
 import sep24Router from './api/routes/sep24.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
@@ -98,6 +99,7 @@ app.use(connectionTracker);
 app.use(metricsMiddleware);
 
 app.use('/api/transactions', transactionsRouter);
+app.use('/api/admin', adminRouter);
 
 // Prometheus metrics endpoint
 app.use('/metrics', metricsRouter);

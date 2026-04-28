@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, token};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
 
 #[contracttype]
 #[derive(Clone)]
@@ -25,18 +25,26 @@ pub struct EscrowTimelock;
 
 #[contractimpl]
 impl EscrowTimelock {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initialize a time-locked escrow contract
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `sender` - The address sending the funds into escrow
     /// * `recipient` - The address that will receive the funds when unlocked
     /// * `token` - The token contract address
     /// * `amount` - The amount of tokens to escrow
     /// * `unlock_time` - The timestamp (in seconds since epoch) when funds can be claimed
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// * If the contract is already initialized
     /// * If the unlock_time is in the past
     /// * If the amount is zero or negative
@@ -71,8 +79,12 @@ impl EscrowTimelock {
             conditions_met: false,
         };
 
-        e.storage().instance().set(&DataKey::EscrowDetails, &details);
-        e.storage().instance().set(&DataKey::EscrowInitialized, &true);
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowDetails, &details);
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowInitialized, &true);
         e.storage().instance().set(&DataKey::RefundClaimed, &false);
 
         // Transfer tokens from sender to this contract
@@ -91,11 +103,21 @@ impl EscrowTimelock {
         details.sender.require_auth();
         details.conditions_met = true;
 
-        e.storage().instance().set(&DataKey::EscrowDetails, &details);
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowDetails, &details);
     }
 
     /// Claim funds as the recipient (only after unlock_time or if conditions are met)
     pub fn claim(e: Env) {
+
+        if let Some(registry) = e.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = e.invoke_contract(&registry, &soroban_sdk::Symbol::new(&e, "is_paused"), soroban_sdk::vec![&e]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         let details: EscrowDetails = e
             .storage()
             .instance()
@@ -127,12 +149,24 @@ impl EscrowTimelock {
         let contract_balance = token_client.balance(&e.current_contract_address());
 
         if contract_balance > 0 {
-            token_client.transfer(&e.current_contract_address(), &details.recipient, &contract_balance);
+            token_client.transfer(
+                &e.current_contract_address(),
+                &details.recipient,
+                &contract_balance,
+            );
         }
     }
 
     /// Request refund as sender (only if unlock_time has passed and recipient hasn't claimed)
     pub fn refund(e: Env) {
+
+        if let Some(registry) = e.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = e.invoke_contract(&registry, &soroban_sdk::Symbol::new(&e, "is_paused"), soroban_sdk::vec![&e]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         let details: EscrowDetails = e
             .storage()
             .instance()
@@ -164,7 +198,11 @@ impl EscrowTimelock {
         let contract_balance = token_client.balance(&e.current_contract_address());
 
         if contract_balance > 0 {
-            token_client.transfer(&e.current_contract_address(), &details.sender, &contract_balance);
+            token_client.transfer(
+                &e.current_contract_address(),
+                &details.sender,
+                &contract_balance,
+            );
         }
     }
 

@@ -7,6 +7,7 @@ import {
   normalizeAssetCode,
   SUPPORTED_ASSETS,
 } from '../../services/kyc.service';
+import prisma from '../../lib/prisma';
 
 const router = Router();
 
@@ -15,6 +16,7 @@ interface InteractiveRequest {
   account?: string;
   amount?: string;
   lang?: string;
+  quote_id?: string;
 }
 
 interface InteractiveResponse {
@@ -79,8 +81,8 @@ const getBaseInteractiveUrl = (): string => process.env.INTERACTIVE_URL || 'http
  *       400:
  *         description: Invalid request parameters
  */
-router.post('/transactions/deposit/interactive', (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en' }: InteractiveRequest = req.body;
+router.post('/transactions/deposit/interactive', async (req: Request, res: Response) => {
+  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
 
   if (!asset_code) {
     return res.status(400).json({
@@ -91,6 +93,16 @@ router.post('/transactions/deposit/interactive', (req: Request, res: Response) =
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
     return res.status(400).json(unsupportedAssetResponse(asset_code));
+  }
+
+  if (quote_id) {
+    const quote = await prisma.quote.findUnique({ where: { id: quote_id } });
+    if (!quote) {
+      return res.status(400).json({ error: 'Quote not found' });
+    }
+    if (new Date() > quote.expiresAt) {
+      return res.status(400).json({ error: 'Quote has expired' });
+    }
   }
 
   const transactionId = randomUUID();
@@ -160,8 +172,8 @@ router.post('/transactions/deposit/interactive', (req: Request, res: Response) =
  *       400:
  *         description: Invalid request parameters
  */
-router.post('/transactions/withdraw/interactive', (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en' }: InteractiveRequest = req.body;
+router.post('/transactions/withdraw/interactive', async (req: Request, res: Response) => {
+  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
 
   if (!asset_code) {
     return res.status(400).json({
@@ -172,6 +184,16 @@ router.post('/transactions/withdraw/interactive', (req: Request, res: Response) 
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
     return res.status(400).json(unsupportedAssetResponse(asset_code));
+  }
+
+  if (quote_id) {
+    const quote = await prisma.quote.findUnique({ where: { id: quote_id } });
+    if (!quote) {
+      return res.status(400).json({ error: 'Quote not found' });
+    }
+    if (new Date() > quote.expiresAt) {
+      return res.status(400).json({ error: 'Quote has expired' });
+    }
   }
 
   const transactionId = randomUUID();

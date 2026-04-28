@@ -1,0 +1,11 @@
+[package]
+name = "liquid_staking"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+soroban-sdk.workspace = true
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+nft-metadata = { path = "../nft_metadata" }

@@ -115,15 +115,15 @@ pub struct CollectionMetadata {
 #[contracttype]
 pub enum NftEvent {
     /// Emitted when an NFT is minted
-    Minted { token_id: u64, to: Address },
+    Minted(u64, Address),
     /// Emitted when an NFT is transferred
-    Transferred { token_id: u64, from: Address, to: Address },
+    Transferred(u64, Address, Address),
     /// Emitted when metadata is updated
-    MetadataUpdated { token_id: u64 },
+    MetadataUpdated(u64),
     /// Emitted when approval is granted
-    Approved { token_id: u64, owner: Address, approved: Address },
+    Approved(u64, Address, Address),
     /// Emitted when operator approval is set
-    OperatorApprovalSet { owner: Address, operator: Address, approved: bool },
+    OperatorApprovalSet(Address, Address, bool),
 }
 
 // ============================================================================
@@ -514,6 +514,38 @@ impl NftMetadataContract {
         );
     }
 
+    /// Burn an NFT (destroy it)
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `caller` - Address calling the burn (must be owner or admin)
+    /// * `token_id` - Token to burn
+    pub fn burn(env: Env, caller: Address, token_id: u64) {
+        caller.require_auth();
+
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenOwner(token_id))
+            .expect("token not found");
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to burn");
+
+        env.storage().instance().remove(&DataKey::TokenOwner(token_id));
+        env.storage().instance().remove(&DataKey::NftMetadata(token_id));
+        env.storage().instance().remove(&DataKey::TokenApproval(token_id, owner));
+
+        env.events().publish(
+            (symbol_short!("burn"), token_id),
+            caller,
+        );
+    }
     // ========================================================================
     // Approvals
     // ========================================================================
@@ -571,7 +603,7 @@ impl NftMetadataContract {
         }
 
         env.events().publish(
-            (symbol_short!("approval_all"), owner.clone()),
+            (symbol_short!("appr_all"), owner.clone()),
             (operator, approved),
         );
     }

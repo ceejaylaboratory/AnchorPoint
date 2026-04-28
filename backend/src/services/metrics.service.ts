@@ -147,7 +147,7 @@ export class MetricsService {
    * Reset all metrics (useful for testing)
    */
   reset(): void {
-    this.registry.clear();
+    this.registry.resetMetrics();
   }
 }
 

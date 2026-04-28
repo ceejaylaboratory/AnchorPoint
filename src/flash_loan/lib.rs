@@ -1,8 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractclient, contractimpl, symbol_short, token, Address, Env,
-};
+use soroban_sdk::{contract, contractclient, contractimpl, symbol_short, token, Address, Env};
 
 /// Interface that a flash loan receiver must implement.
 #[contractclient(name = "FlashLoanReceiverClient")]
@@ -15,8 +13,16 @@ pub struct FlashLoanProvider;
 
 #[contractimpl]
 impl FlashLoanProvider {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Executes a flash loan.
-    /// 
+    ///
     /// # Arguments
     /// * `receiver` - The address of the contract that will receive the loan and execute the logic.
     /// * `token` - The address of the token to be lent.
@@ -29,14 +35,14 @@ impl FlashLoanProvider {
         // 2. Initial balance check
         let token_client = token::Client::new(&env, &token);
         let balance_before = token_client.balance(&env.current_contract_address());
-        
+
         // 3. Transfer tokens to the receiver
         token_client.transfer(&env.current_contract_address(), &receiver, &amount);
-        
+
         // 4. Invoke the receiver's execution logic
         let receiver_client = FlashLoanReceiverClient::new(&env, &receiver);
         receiver_client.execute_loan(&token, &amount, &fee);
-        
+
         // 5. Verify repayment
         // This ensures atomic repayment enforcement. If the balance check fails, the 
         // whole transaction reverts, ensuring the loan is only successful if repaid.
@@ -50,10 +56,8 @@ impl FlashLoanProvider {
         }
 
         // 6. Emit event
-        env.events().publish(
-            (symbol_short!("flash_ln"), receiver, token),
-            (amount, fee),
-        );
+        env.events()
+            .publish((symbol_short!("flash_ln"), receiver, token), (amount, fee));
     }
 }
 

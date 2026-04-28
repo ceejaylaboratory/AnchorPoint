@@ -13,6 +13,12 @@ jest.mock('../../lib/prisma', () => ({
   },
 }));
 
+// Mock Rate Limiting
+jest.mock('../middleware/rate-limit.middleware', () => ({
+  submissionLimiter: (req: any, res: any, next: any) => next(),
+}));
+
+
 const app = express();
 app.use(express.json());
 app.use('/api/transactions', transactionsRouter);

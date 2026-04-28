@@ -4,7 +4,10 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-soroban-sdk = { version = "21.0.0", features = ["alloc", "testutils"] }
+soroban-sdk = "22.0.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
 
 [lib]
 name = "governance"

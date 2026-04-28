@@ -1,0 +1,47 @@
+name: Backend CI/CD
+  
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - 'backend/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+jobs:
+  validate:
+    name: Validate Migration Integrity
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'backend/package-lock.json'
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Run Migration Integrity Checker
+        env:
+          DATABASE_URL: "file:./ci.db"
+          SHADOW_DATABASE_URL: "file:./shadow.db"
+        run: node scripts/check-migrations.js
+        
+      - name: Run Lint
+        run: npm run lint
+        
+      - name: Run Tests
+        env:
+          DATABASE_URL: "file:./test.db"
+        run: npm test

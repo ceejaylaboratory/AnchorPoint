@@ -1,20 +1,24 @@
-jest.mock('@prisma/client', () => ({
-  PrismaClient: jest.fn(() => ({}))
+jest.mock("@prisma/client", () => ({
+  PrismaClient: jest.fn(() => ({
+    $extends: jest.fn().mockReturnValue({}),
+  })),
 }));
 
-describe('Prisma Clients', () => {
-  it('instantiates PrismaClient for both prisma and db.service modules', () => {
+describe("Prisma Clients", () => {
+  it("instantiates PrismaClient for both prisma and db.service modules", () => {
     jest.resetModules();
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { PrismaClient } = require('@prisma/client');
+    const { PrismaClient } = require("@prisma/client");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const prisma = require('./prisma').default;
+    const prisma = require("./prisma").default;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const db = require('./db.service').default;
+    const db = require("./db.service").default;
 
     expect(PrismaClient).toHaveBeenCalledTimes(2);
+    // prisma.ts wraps with withTracingExtension which calls $extends → returns {}
     expect(prisma).toEqual({});
-    expect(db).toEqual({});
+    // db.service.ts uses raw PrismaClient (no extension)
+    expect(db).toBeDefined();
+    expect(typeof db.$extends).toBe("function");
   });
 });
-

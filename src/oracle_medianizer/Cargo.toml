@@ -1,0 +1,17 @@
+[package]
+name = "anchorpoint-oracle-medianizer"
+version = "0.1.0"
+edition = "2021"
+description = "Oracle medianizer with outlier detection for robust price aggregation"
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[lib]
+name = "anchorpoint_oracle_medianizer"
+path = "lib.rs"
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }

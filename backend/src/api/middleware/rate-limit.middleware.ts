@@ -3,6 +3,8 @@ import RedisStore from 'rate-limit-redis';
 import { redis } from '../../lib/redis';
 import logger from '../../utils/logger';
 import { Request, Response, NextFunction } from 'express';
+import * as StellarSdk from '@stellar/stellar-sdk';
+
 
 /**
  * Interface for rate limit options
@@ -35,10 +37,10 @@ export const createRateLimiter = (options: RateLimitOptions = {}) => {
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
     // Redis store configuration
     store: new RedisStore({
-      // @ts-expect-error - ioredis call signature mismatch with rate-limit-redis expectation
       sendCommand: (...args: string[]) => redis.call(...args),
       prefix: keyPrefix,
     }),
+
     handler: (req: Request, res: Response, _next: NextFunction, options: any) => {
       logger.warn(`Rate limit exceeded for IP: ${req.ip}`);
       res.status(options.statusCode).send(options.message);
@@ -66,3 +68,39 @@ export const sensitiveApiLimiter = createRateLimiter({
   message: 'Too many requests to this sensitive endpoint, please try again later.',
   keyPrefix: 'rl:sensitive:',
 });
+
+/**
+ * Configuration for the submission rate limiter
+ */
+export const submissionLimiterOptions = {
+  windowMs: 60 * 1000, // 1 minute window
+  max: 5, // 5 requests per window
+  message: { error: 'Rate limit exceeded for this Stellar account. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisStore({
+    sendCommand: (...args: string[]) => redis.call(...args),
+    prefix: 'rl:submit:',
+  }),
+  keyGenerator: (req: Request) => {
+    try {
+      if (req.body && req.body.xdr) {
+        const tx = StellarSdk.TransactionBuilder.fromXDR(req.body.xdr, StellarSdk.Networks.TESTNET);
+        if (tx instanceof StellarSdk.FeeBumpTransaction) {
+          return tx.innerTransaction.source;
+        }
+        return tx.source;
+      }
+    } catch (e) {
+      // Fallback to IP if XDR is invalid
+    }
+    return req.ip || 'unknown';
+  },
+};
+
+/**
+ * Rate limiter for transaction submission, keyed by Stellar source account
+ */
+export const submissionLimiter = rateLimit(submissionLimiterOptions);
+
+

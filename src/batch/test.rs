@@ -1,6 +1,6 @@
 #![cfg(test)]
 use super::{BatchExecutor, BatchExecutorClient, Call};
-use soroban_sdk::{contract, contractimpl, symbol_short, Env, Vec, IntoVal};
+use soroban_sdk::{contract, contractimpl, symbol_short, Env, IntoVal, Vec};
 
 #[contract]
 pub struct MockContract;

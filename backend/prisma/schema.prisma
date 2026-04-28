@@ -10,6 +10,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Tier {
+  Free
+  Pro
+  Enterprise
+}
+
 model User {
   id            String        @id @default(uuid())
   publicKey     String        @unique
@@ -18,22 +24,45 @@ model User {
   updatedAt     DateTime      @updatedAt
   transactions  Transaction[]
   kycCustomer   KycCustomer?
+  apiKeys       ApiKey[]
 
   @@index([publicKey])
 }
 
+model ApiKey {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  tier      Tier     @default(Free)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([key])
+  @@index([userId])
+}
+
 model Transaction {
-  id            String    @id @default(uuid())
-  userId        String
-  user          User      @relation(fields: [userId], references: [id])
-  assetCode     String
-  amount        String
-  type          String    // DEPOSIT or WITHDRAW
-  status        String    // PENDING, COMPLETED, FAILED
-  externalId    String?   @unique
-  stellarTxId   String?   @unique
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                  String    @id @default(uuid())
+  userId              String
+  user                User      @relation(fields: [userId], references: [id])
+  assetCode           String
+  amount              String
+  type                String    // DEPOSIT | WITHDRAW | SEP31
+  status              String    // PENDING, COMPLETED, FAILED
+  externalId          String?   @unique
+  stellarTxId         String?   @unique
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // SEP-31 specific fields (nullable for backward compatibility)
+  senderInfo          Json?
+  receiverInfo        Json?
+  callbackUrl         String?
+  sep31Status         String?
+  requiredInfoMessage String?
+  completedAt         DateTime?
+  refunded            Boolean   @default(false)
 
   @@index([userId])
 }

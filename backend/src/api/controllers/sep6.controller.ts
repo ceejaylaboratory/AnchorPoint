@@ -71,17 +71,18 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
   }
 
   try {
-    // Upsert user by public key
-    const user = await prisma.user.upsert({
-      where: { publicKey },
-      update: {},
-      create: { publicKey, email: email_address },
-    });
-
     const tx = await prisma.transaction.create({
       data: {
         id: randomUUID(),
-        userId: user.id,
+        user: {
+          connectOrCreate: {
+            where: { publicKey },
+            create: {
+              publicKey,
+              ...(email_address ? { email: email_address } : {}),
+            },
+          },
+        },
         assetCode: code,
         amount: amount || '0',
         type: 'DEPOSIT',
@@ -139,16 +140,15 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
   }
 
   try {
-    const user = await prisma.user.upsert({
-      where: { publicKey },
-      update: {},
-      create: { publicKey },
-    });
-
     const tx = await prisma.transaction.create({
       data: {
         id: randomUUID(),
-        userId: user.id,
+        user: {
+          connectOrCreate: {
+            where: { publicKey },
+            create: { publicKey },
+          },
+        },
         assetCode: code,
         amount: amount || '0',
         type: 'WITHDRAW',

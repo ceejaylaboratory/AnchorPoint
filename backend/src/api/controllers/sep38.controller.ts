@@ -1,4 +1,4 @@
-
+import prisma from '../../lib/prisma';
 
 /**
  * Interface for price quote response as per SEP-38
@@ -11,6 +11,10 @@ interface PriceQuote {
   price: number;
   expiration_time?: number;
   context?: string;
+}
+
+export interface QuoteResponse extends PriceQuote {
+  id: string;
 }
 
 /**
@@ -26,7 +30,7 @@ interface AssetInfo {
 }
 
 /**
- * Mock price data - In production, this would come from an oracle or external API
+ * Mock price data - fallback if API fails
  */
 const MOCK_PRICES: Record<string, number> = {
   XLM: 0.12, // USD
@@ -66,35 +70,38 @@ const SUPPORTED_ASSETS: AssetInfo[] = [
 ];
 
 class Sep38Controller {
-  /**
-   * Get a price quote for exchanging one asset for another
-   * 
-   * @param sourceAsset - The asset to sell
-   * @param sourceAmount - Amount of source asset to sell
-   * @param destinationAsset - The asset to buy
-   * @param context - Optional context (e.g., "SEP-24")
-   * @returns Price quote object
-   */
+  private async getLivePrice(assetCode: string): Promise<number> {
+    const mapping: Record<string, string> = {
+      'XLM': 'stellar',
+      'USDC': 'usd-coin',
+      'USDT': 'tether',
+      'BTC': 'bitcoin',
+      'ETH': 'ethereum'
+    };
+    
+    const id = mapping[assetCode.toUpperCase()];
+    if (!id) return MOCK_PRICES[assetCode.toUpperCase()] || 1.0;
+
+    try {
+      const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`);
+      if (!response.ok) throw new Error('API limit or error');
+      const data = await response.json();
+      return data[id]?.usd || MOCK_PRICES[assetCode.toUpperCase()];
+    } catch (error) {
+      console.warn(`Failed to fetch live price for ${assetCode}, using fallback.`);
+      return MOCK_PRICES[assetCode.toUpperCase()];
+    }
+  }
+
   async getPriceQuote(
     sourceAsset: string,
     sourceAmount: number,
     destinationAsset: string,
     context?: string,
   ): Promise<PriceQuote> {
-    // Validate assets are supported
-    if (!MOCK_PRICES[sourceAsset.toUpperCase()]) {
-      throw new Error(`Unsupported source asset: ${sourceAsset}`);
-    }
+    const sourcePriceUSD = await this.getLivePrice(sourceAsset);
+    const destPriceUSD = await this.getLivePrice(destinationAsset);
 
-    if (!MOCK_PRICES[destinationAsset.toUpperCase()]) {
-      throw new Error(`Unsupported destination asset: ${destinationAsset}`);
-    }
-
-    // Calculate price based on USD conversion rates
-    const sourcePriceUSD = MOCK_PRICES[sourceAsset.toUpperCase()];
-    const destPriceUSD = MOCK_PRICES[destinationAsset.toUpperCase()];
-
-    // Cross rate calculation
     const crossRate = sourcePriceUSD / destPriceUSD;
     const destinationAmount = sourceAmount * crossRate;
 
@@ -104,7 +111,6 @@ class Sep38Controller {
       destination_asset: destinationAsset.toUpperCase(),
       destination_amount: parseFloat(destinationAmount.toFixed(7)),
       price: parseFloat(crossRate.toFixed(7)),
-      expiration_time: Math.floor(Date.now() / 1000) + 60, // Quote valid for 60 seconds
     };
 
     if (context) {
@@ -114,37 +120,50 @@ class Sep38Controller {
     return quote;
   }
 
-  /**
-   * Get list of supported assets
-   * 
-   * @returns Array of supported asset information
-   */
+  async createQuote(
+    sourceAsset: string,
+    sourceAmount: number,
+    destinationAsset: string,
+    context?: string,
+  ): Promise<QuoteResponse> {
+    const indicativeQuote = await this.getPriceQuote(sourceAsset, sourceAmount, destinationAsset, context);
+    
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes validity
+
+    const dbQuote = await prisma.quote.create({
+      data: {
+        sellAsset: sourceAsset.toUpperCase(),
+        buyAsset: destinationAsset.toUpperCase(),
+        sellAmount: sourceAmount.toString(),
+        buyAmount: indicativeQuote.destination_amount.toString(),
+        price: indicativeQuote.price.toString(),
+        expiresAt: expiresAt,
+      }
+    });
+
+    return {
+      id: dbQuote.id,
+      ...indicativeQuote,
+      expiration_time: Math.floor(expiresAt.getTime() / 1000),
+    };
+  }
+
   async getSupportedAssets(): Promise<AssetInfo[]> {
     return SUPPORTED_ASSETS;
   }
 
-  /**
-   * Add a new supported asset (for testing/admin purposes)
-   * This would typically be protected by authentication in production
-   */
   addSupportedAsset(asset: AssetInfo): void {
-    // Check if asset already exists
     const existingIndex = SUPPORTED_ASSETS.findIndex(
       (a) => a.code === asset.code && a.issuer === asset.issuer
     );
 
     if (existingIndex !== -1) {
-      // Update existing asset
       SUPPORTED_ASSETS[existingIndex] = asset;
     } else {
-      // Add new asset
       SUPPORTED_ASSETS.push(asset);
     }
   }
 
-  /**
-   * Update mock price (for testing purposes)
-   */
   updateMockPrice(assetCode: string, priceUSD: number): void {
     MOCK_PRICES[assetCode.toUpperCase()] = priceUSD;
   }

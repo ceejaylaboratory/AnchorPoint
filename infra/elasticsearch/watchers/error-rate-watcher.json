@@ -1,0 +1,98 @@
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1m"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["anchorpoint-logs-*"],
+        "body": {
+          "size": 0,
+          "query": {
+            "range": {
+              "@timestamp": {
+                "gte": "now-5m",
+                "lte": "now"
+              }
+            }
+          },
+          "aggs": {
+            "total_requests": {
+              "filter": {
+                "exists": { "field": "httpStatusCode" }
+              }
+            },
+            "error_requests": {
+              "filter": {
+                "range": { "httpStatusCode": { "gte": 500 } }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "script": {
+      "source": "def total = ctx.payload.aggregations.total_requests.doc_count; if (total == 0) { return false; } def errors = ctx.payload.aggregations.error_requests.doc_count; def rate = errors / (double) total; ctx.vars.error_rate = rate; ctx.vars.error_rate_pct = Math.round(rate * 10000) / 100.0; return rate > 0.05;",
+      "lang": "painless"
+    }
+  },
+  "transform": {
+    "script": {
+      "source": "return ['severity': 'critical', 'metric': 'Error_Rate', 'value': ctx.vars.error_rate_pct, 'threshold': 5.0, 'window': '5m', 'message': 'CRITICAL: Error rate is ' + ctx.vars.error_rate_pct + '% (threshold: 5%) over the last 5 minutes.'];",
+      "lang": "painless"
+    }
+  },
+  "actions": {
+    "notify_webhook": {
+      "condition": {
+        "script": {
+          "source": "return params.ALERT_WEBHOOK_URL != null && params.ALERT_WEBHOOK_URL != '';",
+          "lang": "painless",
+          "params": {
+            "ALERT_WEBHOOK_URL": "{{ctx.metadata.ALERT_WEBHOOK_URL}}"
+          }
+        }
+      },
+      "webhook": {
+        "method": "POST",
+        "url": "{{ctx.metadata.ALERT_WEBHOOK_URL}}",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"severity\":\"{{ctx.payload.severity}}\",\"metric\":\"{{ctx.payload.metric}}\",\"value\":{{ctx.payload.value}},\"threshold\":{{ctx.payload.threshold}},\"window\":\"{{ctx.payload.window}}\",\"message\":\"{{ctx.payload.message}}\",\"timestamp\":\"{{ctx.execution_time}}\"}"
+      }
+    },
+    "notify_email": {
+      "condition": {
+        "script": {
+          "source": "return params.ALERT_EMAIL_RECIPIENTS != null && params.ALERT_EMAIL_RECIPIENTS != '';",
+          "lang": "painless",
+          "params": {
+            "ALERT_EMAIL_RECIPIENTS": "{{ctx.metadata.ALERT_EMAIL_RECIPIENTS}}"
+          }
+        }
+      },
+      "email": {
+        "to": "{{ctx.metadata.ALERT_EMAIL_RECIPIENTS}}",
+        "subject": "[CRITICAL] AnchorPoint Error Rate Alert — {{ctx.payload.value}}%",
+        "body": {
+          "text": "{{ctx.payload.message}}\n\nWatcher: {{ctx.watch_id}}\nExecution time: {{ctx.execution_time}}\n\nThis is an automated alert from the AnchorPoint ELK monitoring stack."
+        }
+      }
+    }
+  },
+  "metadata": {
+    "ALERT_WEBHOOK_URL": "{{ALERT_WEBHOOK_URL}}",
+    "ALERT_EMAIL_RECIPIENTS": "{{ALERT_EMAIL_RECIPIENTS}}",
+    "description": "Fires a critical alert when the 5-minute rolling error rate exceeds 5%. Evaluates every 1 minute.",
+    "recovery": {
+      "enabled": true,
+      "message": "RESOLVED: Error rate has returned below 5% threshold."
+    }
+  },
+  "throttle_period": "5m"
+}

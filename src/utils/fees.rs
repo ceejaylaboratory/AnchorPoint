@@ -1,4 +1,3 @@
-
 use soroban_sdk::{contracttype, Vec};
 
 #[contracttype]
@@ -15,7 +14,7 @@ pub struct FeeTier {
 pub fn calculate_dynamic_fee(amount: i128, volume: i128, tiers: Vec<FeeTier>) -> i128 {
     // Default fee if no tiers match or list is empty
     let mut selected_bps = 30; // 0.3% default
-    
+
     for tier in tiers.iter() {
         if volume >= tier.volume_threshold {
             selected_bps = tier.fee_bps;
@@ -38,7 +37,7 @@ pub fn calculate_simple_fee(amount: i128, fee_bps: i128) -> i128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{Env, vec};
+    use soroban_sdk::{vec, Env};
 
     #[test]
     fn test_calculate_simple_fee() {
@@ -49,10 +48,20 @@ mod tests {
     #[test]
     fn test_calculate_dynamic_fee() {
         let env = Env::default();
-        let tiers = vec![&env, 
-            FeeTier { volume_threshold: 0, fee_bps: 30 },
-            FeeTier { volume_threshold: 1000, fee_bps: 20 },
-            FeeTier { volume_threshold: 5000, fee_bps: 10 },
+        let tiers = vec![
+            &env,
+            FeeTier {
+                volume_threshold: 0,
+                fee_bps: 30,
+            },
+            FeeTier {
+                volume_threshold: 1000,
+                fee_bps: 20,
+            },
+            FeeTier {
+                volume_threshold: 5000,
+                fee_bps: 10,
+            },
         ];
 
         // Tier 0

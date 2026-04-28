@@ -32,6 +32,10 @@ const envSchema = z.object({
     .default('500')
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(0)),
+  STELLAR_NETWORK: z.enum(['testnet', 'public']).default('testnet'),
+  STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
+  STELLAR_FEE_BUMP_SECRET: z.string().optional(),
+  STELLAR_BASE_FEE: z.string().default('100'),
 });
 
 const parsed = envSchema.safeParse({
