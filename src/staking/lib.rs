@@ -108,9 +108,10 @@ impl StakingContract {
         info.accumulated_rewards += Self::calc_new_rewards(base_rate, &info, current_time);
         info.amount += amount;
         info.last_updated = current_time;
-        info.lock_end = current_time + tier.lock_seconds;
-        // If adding to existing stake, keep the higher multiplier
-        if tier.rate_multiplier > info.rate_multiplier {
+        // Always extend lock from now; take the furthest end date
+        let new_lock_end = current_time + tier.lock_seconds;
+        if new_lock_end > info.lock_end {
+            info.lock_end = new_lock_end;
             info.rate_multiplier = tier.rate_multiplier;
         }
 
