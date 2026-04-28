@@ -74,4 +74,23 @@ impl KycVerifier {
             .instance()
             .set(&DataKey::VerifierPubKey, &new_pubkey);
     }
+
+    pub fn revoke_kyc(env: Env, user: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let key = DataKey::UserKyc(user.clone());
+
+        if !env.storage().persistent().has(&key) {
+            panic!("no KYC record found for user");
+        }
+
+        env.storage().persistent().remove(&key);
+
+        env.events()
+            .publish((symbol_short!("kyc_rev"), user), ());
+    }
 }
+
+#[cfg(test)]
+mod tests;
