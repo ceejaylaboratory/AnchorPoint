@@ -6,7 +6,7 @@ publish = false
 
 [lib]
 crate-type = ["cdylib"]
-path = "src/lib.rs"
+path = "lib.rs"
 doctest = false
 
 [dependencies]
