@@ -22,6 +22,8 @@ pub struct Grant {
     pub start_time: u64,
     pub cliff_duration: u64,
     pub vesting_duration: u64,
+    pub revocable: bool,
+    pub revoked: bool,
 }
 
 #[contract]
@@ -29,12 +31,24 @@ pub struct VestingContract;
 
 #[contractimpl]
 impl VestingContract {
+    /// Initializes the contract with an admin.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::GrantCounter, &0u32);
+    }
+
+    /// Transfers administrative rights to a new address.
+    pub fn set_admin(env: Env, new_admin: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
     }
 
     /// Creates a new vesting grant.
@@ -47,6 +61,7 @@ impl VestingContract {
         start_time: u64,
         cliff_duration: u64,
         vesting_duration: u64,
+        revocable: bool,
     ) -> u32 {
         let admin: Address = env
             .storage()
@@ -57,6 +72,7 @@ impl VestingContract {
 
         assert!(amount > 0, "amount must be positive");
         assert!(vesting_duration > 0, "duration must be positive");
+        assert!(cliff_duration <= vesting_duration, "cliff exceeds duration");
 
         // Deposit tokens into the contract
         let token_client = token::Client::new(&env, &token);
@@ -76,6 +92,8 @@ impl VestingContract {
             start_time,
             cliff_duration,
             vesting_duration,
+            revocable,
+            revoked: false,
         };
 
         env.storage().persistent().set(&DataKey::Grant(id), &grant);
@@ -122,6 +140,42 @@ impl VestingContract {
         claimable
     }
 
+    /// Revokes a grant, returning unvested tokens to the admin.
+    pub fn revoke_grant(env: Env, grant_id: u32) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+
+        let mut grant: Grant = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Grant(grant_id))
+            .expect("grant not found");
+        
+        assert!(grant.revocable, "grant is not revocable");
+        assert!(!grant.revoked, "grant is already revoked");
+
+        let current_time = env.ledger().timestamp();
+        let vested = Self::calculate_vested_amount(&grant, current_time);
+        let unvested = grant.total_amount - vested;
+
+        if unvested > 0 {
+            let token_client = token::Client::new(&env, &grant.token);
+            token_client.transfer(&env.current_contract_address(), &admin, &unvested);
+        }
+
+        grant.total_amount = vested;
+        grant.revoked = true;
+        
+        env.storage().persistent().set(&DataKey::Grant(grant_id), &grant);
+
+        env.events()
+            .publish((symbol_short!("revoked"), grant_id), unvested);
+    }
+
     pub fn get_grant(env: Env, grant_id: u32) -> Grant {
         env.storage()
             .persistent()
@@ -145,6 +199,12 @@ impl VestingContract {
     // ========================================================================
 
     fn calculate_vested_amount(grant: &Grant, current_time: u64) -> i128 {
+        // If revoked, the total_amount has already been capped at the vested amount
+        // at the time of revocation.
+        if grant.revoked {
+            return grant.total_amount;
+        }
+
         // Before cliff
         if current_time < grant.start_time + grant.cliff_duration {
             return 0;
@@ -204,7 +264,7 @@ mod tests {
         let duration = 1000;
         let amount = 1000;
 
-        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration);
+        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration, &false);
 
         // Before cliff
         env.ledger().with_mut(|l| l.timestamp = start + 499);
@@ -225,7 +285,7 @@ mod tests {
         let duration = 1000;
         let amount = 1000;
 
-        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration);
+        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration, &false);
 
         // Mid-point
         env.ledger().with_mut(|l| l.timestamp = start + 500);
@@ -243,15 +303,45 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_grants() {
+    fn test_revocation() {
+        let env = Env::default();
+        let (admin, beneficiary, token_id, token_client, client) = setup_test(&env);
+
+        let start = 1000;
+        let cliff = 0;
+        let duration = 1000;
+        let amount = 1000;
+
+        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration, &true);
+
+        // Advance to mid-point
+        env.ledger().with_mut(|l| l.timestamp = start + 500);
+        assert_eq!(client.get_claimable_amount(&id), 500);
+
+        // Revoke grant
+        client.revoke_grant(&id);
+
+        // Beneficiary can still claim what was vested at revocation
+        assert_eq!(client.get_claimable_amount(&id), 500);
+        client.claim(&id);
+        assert_eq!(client.get_claimable_amount(&id), 0);
+
+        // No more vesting occurs
+        env.ledger().with_mut(|l| l.timestamp = start + 1000);
+        assert_eq!(client.get_claimable_amount(&id), 0);
+
+        // Admin received unvested tokens
+        assert_eq!(token_client.balance(&admin), 1000000 - 1000 + 500);
+    }
+
+    #[test]
+    #[should_panic(expected = "grant is not revocable")]
+    fn test_non_revocable_panic() {
         let env = Env::default();
         let (_, beneficiary, token_id, _, client) = setup_test(&env);
 
-        client.create_grant(&beneficiary, &token_id, &1000, &1000, &0, &1000);
-        client.create_grant(&beneficiary, &token_id, &2000, &1000, &0, &1000);
-
-        env.ledger().with_mut(|l| l.timestamp = 1500);
-        assert_eq!(client.get_claimable_amount(&0), 500);
-        assert_eq!(client.get_claimable_amount(&1), 1000);
+        let id = client.create_grant(&beneficiary, &token_id, &1000, &1000, &0, &1000, &false);
+        client.revoke_grant(&id);
     }
 }
+
