@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, IntoVal
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, IntoVal, Map, Symbol
 };
 
 const PRECISION: i128 = 1_000_000_000_000_000_000;
@@ -18,6 +18,14 @@ pub enum DataKey {
     StakeLockTime(u64),           // NFT ID -> Lock expiration timestamp
     NftRewardPerTokenPaid(u64),   // NFT ID -> Snapshot
     NftRewards(u64),              // NFT ID -> Accrued rewards
+}
+
+#[contracttype]
+pub struct NftAttribute {
+    pub display_type: String,
+    pub trait_type: String,
+    pub value: String,
+    pub max_value: String,
 }
 
 #[contracttype]
@@ -108,16 +116,44 @@ impl LiquidStaking {
             (
                 env.current_contract_address(),
                 user.clone(),
-                name,
-                description,
-                image,
+                String::from_str(&env, "Liquid Stake Receipt"),
+                String::from_str(&env, "Represents a staked position."),
+                String::from_str(&env, ""),
                 0_u32, // royalty
                 true,  // mutable
             ).into_val(&env),
         );
 
-        env.storage().persistent().set(&DataKey::StakeAmount(token_id), &amount);
         let lock_time = env.ledger().timestamp() + lock_duration;
+        
+        // Populate attributes
+        let mut attributes = Vec::new(&env);
+        attributes.push_back(NftAttribute {
+            trait_type: String::from_str(&env, "Stake Amount"),
+            value: i128_to_string(&env, amount),
+            display_type: String::from_str(&env, "number"),
+            max_value: String::from_str(&env, ""),
+        });
+        attributes.push_back(NftAttribute {
+            trait_type: String::from_str(&env, "Lock Expiration"),
+            value: u64_to_string(&env, lock_time),
+            display_type: String::from_str(&env, "date"),
+            max_value: String::from_str(&env, ""),
+        });
+        attributes.push_back(NftAttribute {
+            trait_type: String::from_str(&env, "Accrued Rewards"),
+            value: String::from_str(&env, "0"),
+            display_type: String::from_str(&env, "number"),
+            max_value: String::from_str(&env, ""),
+        });
+
+        env.invoke_contract::<()>(
+            &nft_contract,
+            &symbol_short!("set_attrs"),
+            (env.current_contract_address(), token_id, attributes).into_val(&env),
+        );
+
+        env.storage().persistent().set(&DataKey::StakeAmount(token_id), &amount);
         env.storage().persistent().set(&DataKey::StakeLockTime(token_id), &lock_time);
 
         let rpt: i128 = env.storage().instance().get(&DataKey::RewardPerTokenStored).unwrap_or(0);
@@ -220,7 +256,13 @@ impl LiquidStaking {
             env.events().publish((symbol_short!("claimed"), user, token_id), reward);
         }
 
+        Self::_sync_nft_metadata(&env, token_id);
+
         reward
+    }
+
+    pub fn sync_nft(env: Env, token_id: u64) {
+        Self::_sync_nft_metadata(&env, token_id);
     }
 
     pub fn get_stake_info(env: Env, token_id: u64) -> StakeInfo {
@@ -253,6 +295,73 @@ impl LiquidStaking {
 
         env.storage().persistent().set(&DataKey::NftRewardPerTokenPaid(token_id), &rpt);
     }
+
+    fn _sync_nft_metadata(env: &Env, token_id: u64) {
+        let nft_contract: Address = env.storage().instance().get(&DataKey::NftContract).unwrap();
+        let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
+        let lock_time: u64 = env.storage().persistent().get(&DataKey::StakeLockTime(token_id)).unwrap_or(0);
+        let info = Self::get_stake_info(env.clone(), token_id);
+
+        let mut attributes = Vec::new(env);
+        attributes.push_back(NftAttribute {
+            trait_type: String::from_str(env, "Stake Amount"),
+            value: i128_to_string(env, amount),
+            display_type: String::from_str(env, "number"),
+            max_value: String::from_str(env, ""),
+        });
+        attributes.push_back(NftAttribute {
+            trait_type: String::from_str(env, "Lock Expiration"),
+            value: u64_to_string(env, lock_time),
+            display_type: String::from_str(env, "date"),
+            max_value: String::from_str(env, ""),
+        });
+        attributes.push_back(NftAttribute {
+            trait_type: String::from_str(env, "Accrued Rewards"),
+            value: i128_to_string(env, info.pending_rewards),
+            display_type: String::from_str(env, "number"),
+            max_value: String::from_str(env, ""),
+        });
+
+        env.invoke_contract::<()>(
+            &nft_contract,
+            &symbol_short!("set_attrs"),
+            (env.current_contract_address(), token_id, attributes).into_val(env),
+        );
+    }
+}
+
+fn i128_to_string(env: &Env, mut n: i128) -> String {
+    if n == 0 {
+        return String::from_str(env, "0");
+    }
+    let mut buf = [0u8; 40];
+    let mut i = 40;
+    let neg = n < 0;
+    if neg { n = -n; }
+    while n > 0 {
+        i -= 1;
+        buf[i] = (n % 10) as u8 + 48;
+        n /= 10;
+    }
+    if neg {
+        i -= 1;
+        buf[i] = b'-';
+    }
+    String::from_str(env, core::str::from_utf8(&buf[i..]).unwrap())
+}
+
+fn u64_to_string(env: &Env, mut n: u64) -> String {
+    if n == 0 {
+        return String::from_str(env, "0");
+    }
+    let mut buf = [0u8; 20];
+    let mut i = 20;
+    while n > 0 {
+        i -= 1;
+        buf[i] = (n % 10) as u8 + 48;
+        n /= 10;
+    }
+    String::from_str(env, core::str::from_utf8(&buf[i..]).unwrap())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -360,5 +469,38 @@ mod tests {
         
         // Should panic because 3600 seconds haven't passed
         client.unstake(&alice, &token_id);
+    }
+
+    #[test]
+    fn test_nft_attributes() {
+        let (env, ls_id, nft_id, admin, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+        let nft_client = nft_metadata::NftMetadataContractClient::new(&env, &nft_id);
+
+        let token_id = client.stake(&alice, &500_000, &3600);
+        
+        let metadata = nft_client.get_metadata(&token_id);
+        assert_eq!(metadata.attributes.len(), 3);
+        
+        // Stake Amount
+        assert_eq!(metadata.attributes.get(0).unwrap().trait_type, String::from_str(&env, "Stake Amount"));
+        assert_eq!(metadata.attributes.get(0).unwrap().value, String::from_str(&env, "500000"));
+        
+        // Accrued Rewards (initially 0)
+        assert_eq!(metadata.attributes.get(2).unwrap().trait_type, String::from_str(&env, "Accrued Rewards"));
+        assert_eq!(metadata.attributes.get(2).unwrap().value, String::from_str(&env, "0"));
+        
+        // Add rewards and sync manually
+        client.deposit_rewards(&admin, &1000);
+        client.sync_nft(&token_id);
+        
+        let metadata_sync = nft_client.get_metadata(&token_id);
+        assert_eq!(metadata_sync.attributes.get(2).unwrap().value, String::from_str(&env, "1000"));
+        
+        client.claim(&alice, &token_id);
+        
+        // After claim, sync is called, but rewards were just claimed, so it should be "0" again
+        let metadata_after = nft_client.get_metadata(&token_id);
+        assert_eq!(metadata_after.attributes.get(2).unwrap().value, String::from_str(&env, "0"));
     }
 }
