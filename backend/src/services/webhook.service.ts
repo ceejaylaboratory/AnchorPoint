@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import logger from '../utils/logger';
 import { traceAsync, SpanKind } from '../utils/tracing';
 import configService from './config.service';
+import { notificationService } from './notification.service';
 
 export interface TransactionWebhookRecord {
   id: string;
@@ -19,6 +20,7 @@ export interface TransactionWebhookRecord {
   } | null;
 }
 
+// ... (rest of types)
 export interface TransactionStatusChangedPayload {
   event: 'transaction.status_changed';
   occurredAt: string;
@@ -173,11 +175,8 @@ export const verifyWebhookSignature = (
 
 export class WebhookService {
   private readonly httpClient: WebhookHttpClient;
-
   private readonly sleepFn: (ms: number) => Promise<void>;
-
   private readonly log: WebhookLogger;
-
   private readonly injectedConfig?: WebhookConfig;
 
   constructor(
@@ -198,9 +197,9 @@ export class WebhookService {
     return {
       url: cfg.WEBHOOK_URL,
       secret: cfg.WEBHOOK_SECRET,
-      timeoutMs: cfg.WEBHOOK_TIMEOUT_MS,
-      maxRetries: cfg.WEBHOOK_MAX_RETRIES,
-      retryDelayMs: cfg.WEBHOOK_RETRY_DELAY_MS,
+      timeoutMs: cfg.WEBHOOK_TIMEOUT_MS ?? 5000,
+      maxRetries: cfg.WEBHOOK_MAX_RETRIES ?? 3,
+      retryDelayMs: cfg.WEBHOOK_RETRY_DELAY_MS ?? 1000,
     };
   }
 
@@ -240,6 +239,8 @@ export class WebhookService {
     payload: TransactionStatusChangedPayload,
     transactionId: string
   ): Promise<WebhookDeliveryResult> {
+    const config = this.getConfig();
+    
     return traceAsync(
       'webhook.deliver',
       async (span) => {
@@ -247,6 +248,9 @@ export class WebhookService {
         span.setAttribute('webhook.event_type', payload.event);
 
         const config = configService.getConfig();
+        span.setAttribute('webhook.url', config.url || 'unknown');
+        
+        const config = this.getConfig();
         const requestBody = JSON.stringify(payload);
         let lastStatusCode: number | undefined;
         let lastResponseBody: string | undefined;
@@ -341,6 +345,96 @@ export class WebhookService {
     'webhook.max_retries': config.WEBHOOK_MAX_RETRIES,
   }
   );
+        for (let attempt = 1; attempt <= config.maxRetries + 1; attempt += 1) {
+          const timestamp = new Date().toISOString();
+          const signature = signWebhookPayload(requestBody, config.secret!, timestamp);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+
+          try {
+            const response = await this.httpClient(config.url!, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-anchorpoint-event': payload.event,
+                'x-anchorpoint-signature': signature,
+                'x-anchorpoint-timestamp': timestamp,
+                'x-anchorpoint-delivery-attempt': String(attempt),
+              },
+              body: requestBody,
+              signal: controller.signal,
+            });
+
+            clearTimeout(timeout);
+            lastStatusCode = response.status;
+            lastResponseBody = await response.text();
+
+            if (response.ok) {
+              this.log.info('Webhook delivered successfully', {
+                transactionId,
+                attempts: attempt,
+                statusCode: response.status,
+              });
+              return {
+                delivered: true,
+                attempts: attempt,
+                statusCode: response.status,
+                responseBody: lastResponseBody,
+              };
+            }
+
+            if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt > config.maxRetries) {
+              this.log.warn('Webhook delivery failed without further retries', {
+                transactionId,
+                attempts: attempt,
+                statusCode: response.status,
+              });
+              return {
+                delivered: false,
+                attempts: attempt,
+                statusCode: response.status,
+                responseBody: lastResponseBody,
+                error: `Webhook responded with status ${response.status}`,
+              };
+            }
+          } catch (error) {
+            clearTimeout(timeout);
+            lastError = error;
+
+            if (attempt > config.maxRetries) {
+              this.log.error('Webhook delivery exhausted retries after request error', {
+                transactionId,
+                attempts: attempt,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return {
+                delivered: false,
+                attempts: attempt,
+                statusCode: lastStatusCode,
+                responseBody: lastResponseBody,
+                error: error instanceof Error ? error.message : 'Unknown webhook error',
+              };
+            }
+          }
+
+          await this.sleepFn(this.getRetryDelay(attempt));
+        }
+
+        return {
+          delivered: false,
+          attempts: config.maxRetries + 1,
+          statusCode: lastStatusCode,
+          responseBody: lastResponseBody,
+          error: lastError instanceof Error ? lastError.message : 'Webhook delivery failed',
+        };
+      },
+      SpanKind.CLIENT,
+      {
+        'webhook.url': configService.getConfig().webhook?.url,
+        'webhook.max_retries': configService.getConfig().webhook?.maxRetries,
+      }
+      SpanKind.CLIENT
+    );
   }
 
   private getRetryDelay(attempt: number): number {
@@ -367,74 +461,84 @@ export const updateTransactionStatusAndNotify = async ({
       span.setAttribute('transaction.next_status', nextStatus);
       
       const existingTransaction = await prisma.transaction.findUnique({
-    where: { id: transactionId },
-    include: {
-      user: {
-        select: {
-          publicKey: true,
+        where: { id: transactionId },
+        include: {
+          user: {
+            select: {
+              publicKey: true,
+            },
+          },
         },
-      },
+      });
+
+      if (!existingTransaction) {
+        throw new Error(`Transaction ${transactionId} not found`);
+      }
+
+      if (existingTransaction.status === nextStatus) {
+        return {
+          transaction: existingTransaction,
+          webhookDelivery: {
+            delivered: false,
+            attempts: 0,
+            skipped: true,
+          },
+        };
+      }
+
+      const updatedTransaction = await prisma.transaction.update({
+        where: { id: transactionId },
+        data: { status: nextStatus },
+        include: {
+          user: {
+            select: {
+              publicKey: true,
+            },
+          },
+        },
+      });
+
+      // Trigger Notification Engine
+      const notificationMessage = `Your transaction ${transactionId} status updated to: ${nextStatus.replace('_', ' ')}`;
+      notificationService.notify(updatedTransaction.userId, notificationMessage, transactionId).catch((err) => {
+        logger.error('Notification engine failed in webhook service', {
+          transactionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+
+      try {
+        const webhookDelivery = await webhookService.sendTransactionStatusChanged(
+          updatedTransaction,
+          existingTransaction.status
+        );
+
+        return {
+          transaction: updatedTransaction,
+          webhookDelivery,
+        };
+      } catch (error) {
+        logger.error('Transaction status updated but webhook delivery threw unexpectedly', {
+          transactionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        return {
+          transaction: updatedTransaction,
+          webhookDelivery: {
+            delivered: false,
+            attempts: 1,
+            error: error instanceof Error ? error.message : 'Unknown webhook error',
+          },
+        };
+      }
     },
-  });
-
-  if (!existingTransaction) {
-    throw new Error(`Transaction ${transactionId} not found`);
-  }
-
-  if (existingTransaction.status === nextStatus) {
-    return {
-      transaction: existingTransaction,
-      webhookDelivery: {
-        delivered: false,
-        attempts: 0,
-        skipped: true,
-      },
-    };
-  }
-
-  const updatedTransaction = await prisma.transaction.update({
-    where: { id: transactionId },
-    data: { status: nextStatus },
-    include: {
-      user: {
-        select: {
-          publicKey: true,
-        },
-      },
-    },
-  });
-
-  try {
-    const webhookDelivery = await webhookService.sendTransactionStatusChanged(
-      updatedTransaction,
-      existingTransaction.status
-    );
-
-    return {
-      transaction: updatedTransaction,
-      webhookDelivery,
-    };
-  } catch (error) {
-    logger.error('Transaction status updated but webhook delivery threw unexpectedly', {
-      transactionId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    return {
-        transaction: updatedTransaction,
-        webhookDelivery: {
-          delivered: false,
-          attempts: 1,
-          error: error instanceof Error ? error.message : 'Unknown webhook error',
-        },
-      };
+    SpanKind.INTERNAL,
+    {
+      'transaction.operation': 'update_status_and_notify',
     }
-  },
-  SpanKind.INTERNAL,
-  {
-    'transaction.operation': 'update_status_and_notify',
-  }
   );
 };
 
 export default defaultWebhookService;
+

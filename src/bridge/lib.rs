@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN, Env,
+    contract, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env, IntoVal,
 };
 
 /// Supported bridge operations.
@@ -29,7 +29,7 @@ pub struct BridgeMessage {
     /// Keccak-256 / SHA-256 hash of the originating tx on the source chain.
     pub message_hash: BytesN<32>,
     /// ECDSA / ed25519 signature over `message_hash` by the trusted relayer.
-    pub signature: Bytes,
+    pub signature: BytesN<64>,
 }
 
 /// Storage keys.
@@ -85,8 +85,11 @@ impl Bridge {
             .get(&DataKey::RelayerKey)
             .expect("not initialized");
 
-        env.crypto()
-            .ed25519_verify(&relayer_key, &msg.message_hash.clone().into(), &msg.signature);
+        env.crypto().ed25519_verify(
+            &relayer_key,
+            &msg.message_hash.clone().into(),
+            &msg.signature,
+        );
 
         // 2. Replay protection
         let processed_key = DataKey::Processed(msg.message_hash.clone());
@@ -96,14 +99,19 @@ impl Bridge {
         env.storage().persistent().set(&processed_key, &true);
 
         // 3. Mint / Burn
-        let token_client = token::Client::new(&env, &msg.token);
+        let _token_client = token::Client::new(&env, &msg.token);
         match msg.op {
             BridgeOp::Mint => {
                 // Inbound: tokens locked on source chain → mint wrapped tokens here.
-                token_client.mint(&msg.recipient, &msg.amount);
+                env.invoke_contract::<()>(
+                    &msg.token,
+                    &symbol_short!("mint"),
+                    soroban_sdk::vec![&env, msg.recipient.to_val(), msg.amount.into_val(&env)],
+                );
 
+                // Topic: op symbol only; all details in data. source_chain (u32) is small.
                 env.events().publish(
-                    (symbol_short!("bridge"), symbol_short!("mint")),
+                    symbol_short!("bridge_mn"),
                     (
                         msg.source_chain,
                         msg.recipient.clone(),
@@ -115,10 +123,15 @@ impl Bridge {
             }
             BridgeOp::Burn => {
                 // Outbound: burn wrapped tokens here → unlock on source chain.
-                token_client.burn(&msg.recipient, &msg.amount);
+                env.invoke_contract::<()>(
+                    &msg.token,
+                    &symbol_short!("burn"),
+                    soroban_sdk::vec![&env, msg.recipient.to_val(), msg.amount.into_val(&env)],
+                );
 
+                // Topic: op symbol only; all details in data.
                 env.events().publish(
-                    (symbol_short!("bridge"), symbol_short!("burn")),
+                    symbol_short!("bridge_bn"),
                     (
                         msg.source_chain,
                         msg.recipient.clone(),

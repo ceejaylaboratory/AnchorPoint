@@ -5,6 +5,15 @@ import { NetworkType } from './networks';
  * Add or remove assets here to dynamically update all SEP endpoints.
  */
 
+/**
+ * Determines how the anchor calculates fees for a given asset.
+ *
+ *  - `flat`       – only `feeFixed` is charged, regardless of amount.
+ *  - `percentage`  – only `feePercent` is applied (subject to `feeMinimum`).
+ *  - `tiered`      – both `feeFixed` and `feePercent` apply (subject to `feeMinimum`).
+ */
+export type FeeType = 'flat' | 'percentage' | 'tiered';
+
 export interface AssetConfig {
   code: string;
   issuers: Partial<Record<NetworkType, string>>; // Network-specific issuer addresses
@@ -12,6 +21,8 @@ export interface AssetConfig {
   desc: string;
   minAmount: string;
   maxAmount: string;
+  /** Strategy used to compute fees for this asset. */
+  feeType: FeeType;
   feeFixed: number;
   feePercent: number;
   feeMinimum: number;
@@ -31,9 +42,10 @@ export const ASSETS: AssetConfig[] = [
     desc: 'USD Coin - a fully collateralized US dollar stablecoin',
     minAmount: '0.01',
     maxAmount: '1000000',
+    feeType: 'flat',
     feeFixed: 0.5,
-    feePercent: 0.005,
-    feeMinimum: 0.5,
+    feePercent: 0,
+    feeMinimum: 0,
     depositEnabled: true,
     withdrawEnabled: true,
   },
@@ -44,6 +56,7 @@ export const ASSETS: AssetConfig[] = [
     desc: 'US Dollar - traditional currency',
     minAmount: '0.01',
     maxAmount: '1000000',
+    feeType: 'tiered',
     feeFixed: 0.5,
     feePercent: 0.005,
     feeMinimum: 0.5,

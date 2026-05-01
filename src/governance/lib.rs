@@ -7,7 +7,9 @@
 //! - Proposals require quorum to pass
 //! - Mathematical accuracy is ensured through careful integer operations
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, String,
+};
 
 /// Default voting credits allocated to each user
 const DEFAULT_VOTING_CREDITS: i128 = 10_000;
@@ -80,6 +82,8 @@ pub struct Proposal {
     pub status: ProposalStatus,
     /// Required quorum (absolute number of votes)
     pub quorum: i128,
+    /// Ledger sequence when the proposal was created for token snapshotting
+    pub created_at_ledger: u32,
 }
 
 /// Vote record for a user on a proposal
@@ -174,9 +178,10 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::TotalCreditsIssued, &(total_issued + credits));
 
+        // Topic: event name only; user + amounts in data to avoid indexing large Address.
         env.events().publish(
-            (symbol_short!("credits"), user),
-            (caller, credits, new_credits),
+            symbol_short!("credits"),
+            (user, caller, credits, new_credits),
         );
     }
 
@@ -223,8 +228,9 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::QuorumPercentage, &percentage);
 
+        // Topic: event name only; caller + percentage in data.
         env.events()
-            .publish((symbol_short!("quorum"), caller), percentage);
+            .publish(symbol_short!("quorum"), (caller, percentage));
     }
 
     /// Create a new proposal
@@ -287,6 +293,7 @@ impl GovernanceContract {
             deadline: env.ledger().timestamp() + voting_period,
             status: ProposalStatus::OPEN,
             quorum,
+            created_at_ledger: env.ledger().sequence(),
         };
 
         env.storage()
@@ -299,6 +306,7 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::ProposalQuadraticCost(new_id), &0i128);
 
+        // Topic: only the scalar proposal id; creator + title in data.
         env.events()
             .publish((symbol_short!("created"), new_id), (creator, title));
 
@@ -369,6 +377,27 @@ impl GovernanceContract {
             "insufficient voting credits"
         );
 
+        let token_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap();
+        let past_token_balance: i128 = env.invoke_contract(
+            &token_contract,
+            &soroban_sdk::Symbol::new(&env, "get_past_balance"),
+            soroban_sdk::vec![
+                &env,
+                voter.to_val(),
+                1u64.into_val(&env),
+                proposal.created_at_ledger.into()
+            ],
+        );
+
+        assert!(
+            past_token_balance >= quadratic_cost,
+            "insufficient snapshot token balance"
+        );
+
         // Deduct credits from user
         env.storage().instance().set(
             &DataKey::VotingCredits(voter.clone()),
@@ -408,10 +437,10 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
-        // Emit vote event
+        // Emit vote event — topic uses only small scalar (proposal_id: u32); voter + details in data.
         env.events().publish(
-            (symbol_short!("voted"), proposal_id, voter.clone()),
-            (support, votes, quadratic_cost),
+            (symbol_short!("voted"), proposal_id),
+            (voter, support, votes, quadratic_cost),
         );
     }
 
@@ -577,6 +606,7 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
+        // Topic: only scalar proposal_id; executor Address in data.
         env.events()
             .publish((symbol_short!("executed"), proposal_id), executor);
     }

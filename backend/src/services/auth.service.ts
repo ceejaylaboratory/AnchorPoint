@@ -23,6 +23,7 @@ export interface Challenge {
 }
 
 const CHALLENGE_TTL_SECONDS = 300; // 5 minutes
+const JWT_SECRET = configService.getConfig().JWT_SECRET;
 
 export const extractBearerToken = (authorization?: string): string | null => {
   if (!authorization || !authorization.startsWith('Bearer ')) return null;

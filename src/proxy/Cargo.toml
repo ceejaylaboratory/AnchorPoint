@@ -1,0 +1,11 @@
+[package]
+name = "soroban-proxy-contract"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[lib]
+path = "lib.rs"
+crate-type = ["cdylib", "rlib"]

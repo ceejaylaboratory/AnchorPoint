@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Vec,
 };
 
 // Constants for tick math
@@ -9,6 +9,7 @@ const MIN_TICK: i32 = -887272;
 const MAX_TICK: i32 = 887272;
 const TICK_SPACING: i32 = 60; // Default tick spacing
 const FEE_TIER: u32 = 3000; // 0.3% fee tier (3000 basis points)
+const PRECISION: i128 = 1_000_000_000_000_000_000;
 
 // Tick data structure
 #[contracttype]
@@ -38,11 +39,12 @@ pub struct Position {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SwapEvent {
-    pub sender: Address,
+    /// The address that initiated and received the swap (sender == recipient in this contract).
     pub recipient: Address,
     pub amount_0: i128,
     pub amount_1: i128,
-    pub sqrt_price_x96: u128,
+    /// Packed as u64 to halve storage vs u128; full precision not needed for event indexing.
+    pub sqrt_price_x96: u64,
     pub liquidity: i128,
     pub tick: i32,
 }
@@ -100,11 +102,11 @@ impl MultiAssetSwap {
         let base = 10001; // 1.0001 * 10000 for integer math
         let result = if tick >= 0 {
             // For positive ticks: (base^tick)^(1/2) * 2^96
-            let power = self::pow(base, tick_i128);
+            let power = Self::pow(base, tick_i128);
             (power as u128).checked_mul(1u128 << 96).unwrap_or(u128::MAX)
         } else {
             // For negative ticks: 2^96 / sqrt(base^abs(tick))
-            let power = self::pow(base, -tick_i128);
+            let power = Self::pow(base, -tick_i128);
             (1u128 << 96).checked_div(power as u128).unwrap_or(0)
         };
         
@@ -267,7 +269,7 @@ impl MultiAssetSwap {
             // Current price within range: both tokens needed
             let liquidity0 = Self::get_liquidity_for_amount0(sqrt_price_lower_x96, current_sqrt_price_x96, amount0_desired);
             let liquidity1 = Self::get_liquidity_for_amount1(current_sqrt_price_x96, sqrt_price_upper_x96, amount1_desired);
-            std::cmp::min(liquidity0, liquidity1)
+            core::cmp::min(liquidity0, liquidity1)
         } else {
             // Current price above range: only token1 needed
             Self::get_liquidity_for_amount1(sqrt_price_lower_x96, sqrt_price_upper_x96, amount1_desired)
@@ -320,9 +322,9 @@ impl MultiAssetSwap {
         
         // Add to user positions list if new
         if position.liquidity == liquidity {
-            let mut positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(recipient.clone())).unwrap_or_default();
-            positions.push((tick_lower, tick_upper));
-            env.storage().instance().set(&DataKey::UserPositions(recipient), &positions);
+            let mut positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(recipient.clone())).unwrap_or_else(|| Vec::new(&env));
+            positions.push_back((tick_lower, tick_upper));
+            env.storage().instance().set(&DataKey::UserPositions(recipient.clone()), &positions);
         }
         
         // Update ticks
@@ -336,7 +338,8 @@ impl MultiAssetSwap {
             env.storage().instance().set(&DataKey::CurrentLiquidity, &(current_liquidity + liquidity));
         }
         
-        env.events().publish((symbol_short!("mint"), recipient), (tick_lower, tick_upper, liquidity, amount0, amount1));
+        // Topic: event name only; recipient + tick range + amounts in data.
+        env.events().publish(symbol_short!("mint"), (recipient, tick_lower, tick_upper, liquidity, amount0, amount1));
         
         (liquidity, amount0, amount1)
     }
@@ -369,7 +372,7 @@ impl MultiAssetSwap {
     /// Cross a tick boundary and update liquidity
     fn cross_tick(env: &Env, tick: i32, liquidity: i128) -> i128 {
         let tick_key = DataKey::Tick(tick);
-        if let Some(tick_data) = env.storage().instance().get(&tick_key) {
+        if let Some(tick_data) = env.storage().instance().get::<_, Tick>(&tick_key) {
             return liquidity + tick_data.liquidity_net;
         }
         liquidity
@@ -441,7 +444,7 @@ impl MultiAssetSwap {
                 break;
             }
             
-            let actual_amount = std::cmp::min(amount_calculated, amount_remaining);
+            let actual_amount = core::cmp::min(amount_calculated, amount_remaining);
             amount_out += actual_amount;
             amount_remaining -= actual_amount;
             
@@ -469,11 +472,11 @@ impl MultiAssetSwap {
         let fee_amount = amount_in - amount_in_less_fee / 997;
         if zero_for_one {
             let fee_growth_global: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal0X128).unwrap_or(0);
-            let new_fee_growth = fee_growth_global + (fee_amount << 128) / current_liquidity.max(1);
+            let new_fee_growth = fee_growth_global + (fee_amount * PRECISION) / current_liquidity.max(1);
             env.storage().instance().set(&DataKey::FeeGrowthGlobal0X128, &new_fee_growth);
         } else {
             let fee_growth_global: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal1X128).unwrap_or(0);
-            let new_fee_growth = fee_growth_global + (fee_amount << 128) / current_liquidity.max(1);
+            let new_fee_growth = fee_growth_global + (fee_amount * PRECISION) / current_liquidity.max(1);
             env.storage().instance().set(&DataKey::FeeGrowthGlobal1X128, &new_fee_growth);
         }
         
@@ -484,14 +487,17 @@ impl MultiAssetSwap {
         current_tick = if zero_for_one { current_tick - 1 } else { current_tick + 1 };
         env.storage().instance().set(&DataKey::CurrentTick, &current_tick);
         
+        // Topic: event name only; all swap details in data.
         env.events().publish(
-            (symbol_short!("swap"), recipient),
+            symbol_short!("swap"),
             SwapEvent {
-                sender: recipient,
+            (symbol_short!("swap"), recipient.clone()),
+            SwapEvent {
+                sender: recipient.clone(),
                 recipient,
                 amount_0: if zero_for_one { amount_in } else { -amount_out },
                 amount_1: if zero_for_one { -amount_out } else { amount_in },
-                sqrt_price_x96: current_sqrt_price_x96,
+                sqrt_price_x96: current_sqrt_price_x96 as u64,
                 liquidity: current_liquidity,
                 tick: current_tick,
             },
@@ -519,12 +525,12 @@ impl MultiAssetSwap {
         let fee_growth_global_1: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal1X128).unwrap_or(0);
         
         let tokens_owed_0 = position.tokens_owed_0 + 
-            ((fee_growth_global_0 - position.fee_growth_inside_0_last_x128) * position.liquidity) >> 128;
+            ((fee_growth_global_0 - position.fee_growth_inside_0_last_x128) * position.liquidity) / PRECISION;
         let tokens_owed_1 = position.tokens_owed_1 + 
-            ((fee_growth_global_1 - position.fee_growth_inside_1_last_x128) * position.liquidity) >> 128;
+            ((fee_growth_global_1 - position.fee_growth_inside_1_last_x128) * position.liquidity) / PRECISION;
         
-        let amount0 = std::cmp::min(amount0_requested, tokens_owed_0);
-        let amount1 = std::cmp::min(amount1_requested, tokens_owed_1);
+        let amount0 = core::cmp::min(amount0_requested, tokens_owed_0);
+        let amount1 = core::cmp::min(amount1_requested, tokens_owed_1);
         
         // Transfer tokens to recipient
         let token_a: Address = env.storage().instance().get(&DataKey::TokenA).expect("not initialized");
@@ -546,7 +552,8 @@ impl MultiAssetSwap {
         updated_position.fee_growth_inside_1_last_x128 = fee_growth_global_1;
         env.storage().instance().set(&position_key, &updated_position);
         
-        env.events().publish((symbol_short!("collect"), recipient), (tick_lower, tick_upper, amount0, amount1));
+        // Topic: event name only; recipient + tick range + amounts in data.
+        env.events().publish(symbol_short!("collect"), (recipient, tick_lower, tick_upper, amount0, amount1));
         
         (amount0, amount1)
     }
@@ -594,9 +601,14 @@ impl MultiAssetSwap {
         if position.liquidity == 0 {
             env.storage().instance().remove(&position_key);
             // Remove from user positions list
-            let mut positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(owner.clone())).unwrap_or_default();
-            positions.retain(|(tl, tu)| !(*tl == tick_lower && *tu == tick_upper));
-            env.storage().instance().set(&DataKey::UserPositions(owner), &positions);
+            let positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(owner.clone())).unwrap_or_else(|| Vec::new(&env));
+            let mut new_positions = Vec::new(&env);
+            for p in positions.iter() {
+                if !(p.0 == tick_lower && p.1 == tick_upper) {
+                    new_positions.push_back(p);
+                }
+            }
+            env.storage().instance().set(&DataKey::UserPositions(owner.clone()), &new_positions);
         } else {
             env.storage().instance().set(&position_key, &position);
         }
@@ -611,7 +623,8 @@ impl MultiAssetSwap {
             env.storage().instance().set(&DataKey::CurrentLiquidity, &(current_liquidity - amount));
         }
         
-        env.events().publish((symbol_short!("burn"), owner), (tick_lower, tick_upper, amount, amount0, amount1));
+        // Topic: event name only; owner + tick range + amounts in data.
+        env.events().publish(symbol_short!("burn"), (owner, tick_lower, tick_upper, amount, amount0, amount1));
         
         (amount0, amount1)
     }

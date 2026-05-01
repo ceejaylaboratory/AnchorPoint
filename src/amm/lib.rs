@@ -123,9 +123,10 @@ impl AMM {
             .persistent()
             .set(&DataKey::Shares(from.clone()), &(old_shares + shares));
 
+        // Topic: event name only; from + amounts in data.
         env.events().publish(
-            (symbol_short!("deposit"), from),
-            (amount_a, amount_b, shares),
+            symbol_short!("deposit"),
+            (from, amount_a, amount_b, shares),
         );
         shares
     }
@@ -201,8 +202,9 @@ impl AMM {
             amount_out,
         );
 
+        // Topic: event name only; from + amounts in data.
         env.events()
-            .publish((symbol_short!("swap"), from), (amount_in, amount_out));
+            .publish(symbol_short!("swap"), (from, amount_in, amount_out));
         amount_out
     }
 
@@ -266,9 +268,10 @@ impl AMM {
             amount_b,
         );
 
+        // Topic: event name only; from + amounts in data.
         env.events().publish(
-            (symbol_short!("withdraw"), from),
-            (amount_a, amount_b, shares),
+            symbol_short!("withdraw"),
+            (from, amount_a, amount_b, shares),
         );
         (amount_a, amount_b)
     }
@@ -284,6 +287,20 @@ impl AMM {
                 .get(&DataKey::ReserveB)
                 .unwrap_or(0),
         )
+    }
+
+    pub fn get_shares(env: Env, user: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Shares(user))
+            .unwrap_or(0)
+    }
+
+    pub fn get_total_shares(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalShares)
+            .unwrap_or(0)
     }
 }
 
