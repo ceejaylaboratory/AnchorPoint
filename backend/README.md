@@ -57,6 +57,27 @@ To run the linter:
 npm run lint
 ```
 
+## External KYC Providers (SEP-12)
+AnchorPoint supports pluggable third-party KYC providers for SEP-12 flows.
+
+Supported providers:
+- `mock` (default)
+- `persona`
+- `shufti`
+
+Configuration:
+- `KYC_PROVIDER=mock|persona|shufti`
+- `KYC_WEBHOOK_SECRET=<shared secret for webhook signature validation>`
+- `PERSONA_API_KEY=<persona api key>`
+- `PERSONA_API_URL=<optional, defaults to https://withpersona.com/api/v1>`
+- `SHUFTI_CLIENT_ID=<shufti client id>`
+- `SHUFTI_SECRET_KEY=<shufti secret key>`
+- `SHUFTI_API_URL=<optional, defaults to https://api.shuftipro.com>`
+
+Webhook endpoint:
+- `POST /sep12/webhook`
+
+Provider webhook updates are validated by signature and then reconciled against either provider reference or account.
 ## Admin Password Reset
 AnchorPoint backend includes a secure password reset flow for admin users.
 

@@ -173,6 +173,8 @@ model KycCustomer {
   id          String    @id @default(uuid())
   userId      String    @unique
   user        User      @relation(fields: [userId], references: [id])
+  provider    String?
+  providerRef String?
   firstName   String?
   lastName    String?
   email       String?
@@ -181,6 +183,7 @@ model KycCustomer {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  @@index([provider, providerRef])
   @@index([userId])
 }
 
