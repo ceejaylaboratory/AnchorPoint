@@ -5,9 +5,17 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
 const isTest = process.env.NODE_ENV === 'test';
 
+const createNoop = <T extends (...args: any[]) => any>(result?: ReturnType<T>) => {
+  return (..._args: Parameters<T>) => result;
+};
+
 export const redis = isTest 
   ? ({
-      call: jest.fn().mockImplementation((command: string, ...args: any[]) => {
+      duplicate: () => ({
+        subscribe: createNoop<(channel: string, callback?: (err: Error | null) => void) => void>(undefined),
+        on: createNoop<(event: string, handler: (...args: any[]) => void) => void>(undefined),
+      }),
+      call: (command: string, ...args: any[]) => {
         const cmd = command.toLowerCase();
         if (cmd === 'eval' || cmd === 'evalsha') {
           return [1, 60];
@@ -16,11 +24,12 @@ export const redis = isTest
           return 'mock-sha-1234567890';
         }
         return 1;
-      }),
-      on: jest.fn(),
-      get: jest.fn(),
-      set: jest.fn(),
-      del: jest.fn(),
+      },
+      on: createNoop<(event: string, handler: (...args: any[]) => void) => void>(undefined),
+      get: createNoop<(key: string) => Promise<string | null>>(null),
+      set: createNoop<(key: string, value: string) => Promise<'OK'>>('OK'),
+      del: createNoop<(key: string) => Promise<number>>(1),
+      publish: createNoop<(channel: string, message: string) => Promise<number>>(1),
     } as any)
 
 

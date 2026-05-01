@@ -7,5 +7,5 @@ edition = "2021"
 soroban-sdk = "22.0.0"
 
 [dev-dependencies]
-soroban-amm = { path = "../../src/amm" }
-soroban-token = { path = "../../src/token" }
+anchorpoint-amm = { path = "../../src/amm" }
+sep41-token = { path = "../../src/token" }

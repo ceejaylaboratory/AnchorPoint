@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::Address as _, Address, Env, String};
     use soroban_amm::{AMMClient, AMM};
-    use soroban_token::{TokenContractClient, TokenContract};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+    use soroban_token::{TokenContract, TokenContractClient};
 
     // Fails CI if gas increases beyond baseline + ~10% (adjust baseline as needed)
     const MAX_CPU: u64 = 50_000_000;
@@ -34,7 +34,7 @@ mod tests {
         assert!(mem_used < MAX_MEM, "AMM initialize MEM regression!");
 
         let _shares = amm_client.deposit(&Address::generate(&env), &1000, &1000);
-        
+
         let deposit_cpu_used = env.budget().cpu_instruction_cost() - cpu_used - start_cpu;
         assert!(deposit_cpu_used < MAX_CPU, "AMM deposit CPU regression!");
     }
@@ -47,7 +47,7 @@ mod tests {
         let id = env.register(TokenContract, ());
         let client = TokenContractClient::new(&env, &id);
         let admin = Address::generate(&env);
-        
+
         client.initialize(
             &admin,
             &7u32,

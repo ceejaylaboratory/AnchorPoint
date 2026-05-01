@@ -7,6 +7,7 @@ members = [
     "src/circuit_breaker",
     "src/escrow_multisig",
     "src/escrow_timelock",
+    "src/event_hub",
     "src/flash_loan",
     "src/governance",
     "src/indexing",

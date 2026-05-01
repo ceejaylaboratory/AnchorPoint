@@ -1,4 +1,5 @@
 import { RedisService } from './redis.service';
+import { getAsset, AssetConfig, FeeType } from '../config/assets';
 import logger from '../utils/logger';
 
 const HORIZON_URL = process.env.HORIZON_URL || 'https://horizon.stellar.org';
@@ -104,6 +105,49 @@ function buildFeeStats(raw: HorizonFeeStats): FeeStats {
   };
 }
 
+export interface AssetFeeResult {
+  assetCode: string;
+  feeType: FeeType;
+  inputAmount: number;
+  feeAmount: number;
+  feeFixed: number;
+  feePercent: number;
+  feeMinimum: number;
+}
+
+/**
+ * Computes the fee for a given asset config and amount according to its `feeType`.
+ *
+ *  - flat:        feeFixed only.
+ *  - percentage:  amount * feePercent, floored to feeMinimum.
+ *  - tiered:      feeFixed + (amount * feePercent), floored to feeMinimum.
+ */
+export function computeAssetFee(asset: AssetConfig, amount: number): number {
+  let fee: number;
+  switch (asset.feeType) {
+    case 'flat':
+      fee = asset.feeFixed;
+      break;
+    case 'percentage':
+      fee = amount * asset.feePercent;
+      break;
+    case 'tiered':
+      fee = asset.feeFixed + amount * asset.feePercent;
+      break;
+    default:
+      // Fallback: treat unknown feeType as tiered
+      fee = asset.feeFixed + amount * asset.feePercent;
+  }
+
+  // Enforce the per-asset minimum fee
+  if (asset.feeMinimum > 0 && fee < asset.feeMinimum) {
+    fee = asset.feeMinimum;
+  }
+
+  // Round to 7 decimal places to avoid floating-point dust
+  return parseFloat(fee.toFixed(7));
+}
+
 export class FeeService {
   constructor(private readonly redis: RedisService) {}
 
@@ -148,6 +192,31 @@ export class FeeService {
       surgeActive: stats.surgeActive,
       surgeMultiplier: stats.surgeMultiplier,
       operationCount,
+    };
+  }
+
+  /**
+   * Calculates the fee for a specific asset and amount using the asset's
+   * configured fee strategy (flat / percentage / tiered).
+   *
+   * Throws if the asset code is unknown.
+   */
+  calculateAssetFee(assetCode: string, amount: number): AssetFeeResult {
+    const asset = getAsset(assetCode);
+    if (!asset) {
+      throw new Error(`Unknown asset: ${assetCode}`);
+    }
+
+    const feeAmount = computeAssetFee(asset, amount);
+
+    return {
+      assetCode: asset.code,
+      feeType: asset.feeType,
+      inputAmount: amount,
+      feeAmount,
+      feeFixed: asset.feeFixed,
+      feePercent: asset.feePercent,
+      feeMinimum: asset.feeMinimum,
     };
   }
 }

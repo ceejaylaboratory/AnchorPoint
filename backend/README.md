@@ -56,3 +56,46 @@ To run the linter:
 ```bash
 npm run lint
 ```
+
+## External KYC Providers (SEP-12)
+AnchorPoint supports pluggable third-party KYC providers for SEP-12 flows.
+
+Supported providers:
+- `mock` (default)
+- `persona`
+- `shufti`
+
+Configuration:
+- `KYC_PROVIDER=mock|persona|shufti`
+- `KYC_WEBHOOK_SECRET=<shared secret for webhook signature validation>`
+- `PERSONA_API_KEY=<persona api key>`
+- `PERSONA_API_URL=<optional, defaults to https://withpersona.com/api/v1>`
+- `SHUFTI_CLIENT_ID=<shufti client id>`
+- `SHUFTI_SECRET_KEY=<shufti secret key>`
+- `SHUFTI_API_URL=<optional, defaults to https://api.shuftipro.com>`
+
+Webhook endpoint:
+- `POST /sep12/webhook`
+
+Provider webhook updates are validated by signature and then reconciled against either provider reference or account.
+## Admin Password Reset
+AnchorPoint backend includes a secure password reset flow for admin users.
+
+Endpoints:
+- `POST /api/admin/password-reset/request`
+- `POST /api/admin/password-reset/confirm`
+
+Security behavior:
+- Email-based verification token delivery
+- Tokens are random 256-bit values and only a hashed token is stored
+- Tokens expire after `PASSWORD_RESET_TTL_MINUTES` (default: 15)
+- Tokens are single-use and outstanding tokens are invalidated on new requests
+- Request endpoint returns a non-enumerating success message even for unknown emails
+
+Optional SMTP environment variables:
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM`
+- `ADMIN_PASSWORD_RESET_URL_BASE`

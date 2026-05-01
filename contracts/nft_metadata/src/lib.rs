@@ -246,8 +246,8 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::TokenCounter, &token_id);
 
         env.events().publish(
-            (symbol_short!("mint"), token_id),
-            to,
+            (symbol_short!("mint"), to, token_id),
+            (),
         );
 
         token_id
@@ -296,8 +296,8 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::TokenCounter, &token_id);
 
         env.events().publish(
-            (symbol_short!("mint"), token_id),
-            to,
+            (symbol_short!("mint"), to, token_id),
+            (),
         );
 
         token_id
@@ -377,8 +377,8 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::NftMetadata(token_id), &metadata);
 
         env.events().publish(
-            (symbol_short!("updated"), token_id),
-            caller,
+            (symbol_short!("updated"), caller, token_id),
+            (),
         );
     }
 
@@ -403,7 +403,13 @@ impl NftMetadataContract {
             .get(&DataKey::TokenOwner(token_id))
             .expect("token not found");
 
-        assert!(caller == owner, "only owner can update");
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to update");
 
         let mut metadata: NftMetadata = env
             .storage()
@@ -413,12 +419,53 @@ impl NftMetadataContract {
 
         assert!(metadata.is_mutable, "metadata is not mutable");
 
-        metadata.attributes.push_back(attribute);
+        metadata.attributes.push_back(attribute.clone());
 
         env.storage().instance().set(&DataKey::NftMetadata(token_id), &metadata);
 
         env.events().publish(
-            (symbol_short!("attr_add"), token_id),
+            (symbol_short!("attr_add"), caller, token_id),
+            attribute,
+        );
+    }
+
+    /// Set all attributes for an NFT (replaces existing ones)
+    pub fn set_attrs(
+        env: Env,
+        caller: Address,
+        token_id: u64,
+        attributes: Vec<NftAttribute>,
+    ) {
+        caller.require_auth();
+
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenOwner(token_id))
+            .expect("token not found");
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to update");
+
+        let mut metadata: NftMetadata = env
+            .storage()
+            .instance()
+            .get(&DataKey::NftMetadata(token_id))
+            .expect("token not found");
+
+        assert!(metadata.is_mutable, "metadata is not mutable");
+
+        metadata.attributes = attributes;
+
+        env.storage().instance().set(&DataKey::NftMetadata(token_id), &metadata);
+
+        env.events().publish(
+            (symbol_short!("set_attrs"), token_id),
             caller,
         );
     }
@@ -509,8 +556,8 @@ impl NftMetadataContract {
         env.storage().instance().remove(&DataKey::TokenApproval(token_id, from.clone()));
 
         env.events().publish(
-            (symbol_short!("transfer"), token_id),
-            (from, to),
+            (symbol_short!("transfer"), from, to, token_id),
+            (),
         );
     }
 
@@ -542,8 +589,8 @@ impl NftMetadataContract {
         env.storage().instance().remove(&DataKey::TokenApproval(token_id, owner));
 
         env.events().publish(
-            (symbol_short!("burn"), token_id),
-            caller,
+            (symbol_short!("burn"), caller, token_id),
+            (),
         );
     }
     // ========================================================================
@@ -576,8 +623,8 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::TokenApproval(token_id, owner.clone()), &approved);
 
         env.events().publish(
-            (symbol_short!("approved"), token_id),
-            (owner, approved),
+            (symbol_short!("approved"), owner, approved, token_id),
+            (),
         );
     }
 
@@ -602,9 +649,12 @@ impl NftMetadataContract {
             env.storage().instance().remove(&DataKey::OperatorApproval(owner.clone(), operator.clone()));
         }
 
+        // Topic: event name only; owner + operator + approved in data.
         env.events().publish(
-            (symbol_short!("appr_all"), owner.clone()),
-            (operator, approved),
+            symbol_short!("appr_all"),
+            (owner, operator, approved),
+            (symbol_short!("appr_all"), owner.clone(), operator),
+            approved,
         );
     }
 
