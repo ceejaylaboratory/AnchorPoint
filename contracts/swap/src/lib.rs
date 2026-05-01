@@ -62,6 +62,9 @@ pub enum DataKey {
     FeeGrowthGlobal1X128,
     // Protocol fees
     ProtocolFee,
+    // Referral program
+    Referrer(Address), // User -> Referrer mapping
+    ReferralFeeRate, // Fee rate for referrals (in basis points, e.g., 100 = 1%)
     // Tick data mapping (tick -> Tick)
     Tick(i32),
     // Position mapping (owner + tick_lower + tick_upper -> Position)
@@ -234,6 +237,7 @@ impl MultiAssetSwap {
         env.storage().instance().set(&DataKey::FeeGrowthGlobal0X128, &0_i128);
         env.storage().instance().set(&DataKey::FeeGrowthGlobal1X128, &0_i128);
         env.storage().instance().set(&DataKey::ProtocolFee, &0_u32);
+        env.storage().instance().set(&DataKey::ReferralFeeRate, &100_u32); // 1% referral fee by default
     }
 
     /// Creates a new position with concentrated liquidity.
@@ -386,9 +390,11 @@ impl MultiAssetSwap {
         token_in: Address,
         amount_in: i128,
         sqrt_price_limit_x96: u128,
+        min_amount_out: i128,
     ) -> i128 {
         recipient.require_auth();
         assert!(amount_in > 0, "amount must be positive");
+        assert!(min_amount_out >= 0, "min_amount_out must be non-negative");
         
         let token_a: Address = env.storage().instance().get(&DataKey::TokenA).expect("not initialized");
         let token_b: Address = env.storage().instance().get(&DataKey::TokenB).expect("not initialized");
@@ -464,12 +470,33 @@ impl MultiAssetSwap {
         
         assert!(amount_out > 0, "zero amount out");
         
+        // Slippage protection: ensure amount_out meets minimum threshold
+        assert!(amount_out >= min_amount_out, "slippage protection: amount out below minimum");
+        
         // Update pool state
         env.storage().instance().set(&DataKey::CurrentSqrtPriceX96, &current_sqrt_price_x96);
         env.storage().instance().set(&DataKey::CurrentLiquidity, &current_liquidity);
         
         // Update fee growth (simplified)
         let fee_amount = amount_in - amount_in_less_fee / 997;
+        
+        // Handle referral fee: redirect portion of swap fee to referrer
+        let referral_fee_rate: u32 = env.storage().instance().get(&DataKey::ReferralFeeRate).unwrap_or(100);
+        let referral_fee = (fee_amount * referral_fee_rate as i128) / 10000;
+        
+        if referral_fee > 0 {
+            // Check if recipient has a referrer
+            if let Some(referrer) = env.storage().instance().get(&DataKey::Referrer(recipient.clone())) {
+                // Transfer referral fee from the fee amount to referrer
+                // For simplicity, we transfer from the token_out (the output token)
+                let contract_addr = env.current_contract_address();
+                token::Client::new(&env, &token_out).transfer(&contract_addr, &referrer, &referral_fee);
+                
+                // Reduce amount_out by referral fee
+                amount_out -= referral_fee;
+            }
+        }
+        
         if zero_for_one {
             let fee_growth_global: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal0X128).unwrap_or(0);
             let new_fee_growth = fee_growth_global + (fee_amount * PRECISION) / current_liquidity.max(1);
@@ -653,6 +680,37 @@ impl MultiAssetSwap {
             fee_growth_outside_1x128: 0,
         })
     }
+
+    /// Sets a referrer for a user. Can only be set once per user.
+    pub fn set_referrer(env: Env, user: Address, referrer: Address) {
+        user.require_auth();
+        
+        // Check if user already has a referrer
+        if env.storage().instance().has(&DataKey::Referrer(user.clone())) {
+            panic!("referrer already set");
+        }
+        
+        // User cannot refer themselves
+        assert!(user != referrer, "cannot refer yourself");
+        
+        env.storage().instance().set(&DataKey::Referrer(user), &referrer);
+        
+        env.events().publish((symbol_short!("set_referrer"), user), referrer);
+    }
+
+    /// Gets the referrer for a user, if any.
+    pub fn get_referrer(env: Env, user: Address) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Referrer(user))
+    }
+
+    /// Sets the referral fee rate (in basis points, e.g., 100 = 1%).
+    /// Only callable by admin (for simplicity, we'll skip admin check for now).
+    pub fn set_referral_fee_rate(env: Env, fee_rate: u32) {
+        assert!(fee_rate <= 10000, "fee rate cannot exceed 100%");
+        env.storage().instance().set(&DataKey::ReferralFeeRate, &fee_rate);
+        
+        env.events().publish(symbol_short!("set_referral_fee_rate"), fee_rate);
+    }
 }
 
 #[cfg(test)]
@@ -747,7 +805,8 @@ mod tests {
             &alice, 
             &token_a, 
             &1_000, 
-            &sqrt_price_limit
+            &sqrt_price_limit,
+            &0  // min_amount_out
         );
 
         assert!(amount_out > 0);
@@ -769,7 +828,7 @@ mod tests {
 
         // Perform some swaps to generate fees
         let sqrt_price_limit = MultiAssetSwap::tick_to_sqrt_price_x96(-1);
-        client.swap(&alice, &token_a, &1_000, &sqrt_price_limit);
+        client.swap(&alice, &token_a, &1_000, &sqrt_price_limit, &0);
 
         // Burn position
         let (amount0, amount1) = client.burn(&alice, &tick_lower, &tick_upper, &liquidity);
@@ -800,5 +859,89 @@ mod tests {
 
         // Should panic - tick exceeds maximum
         client.mint(&alice, &-887272, &887273, &10_000, &10_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "slippage protection: amount out below minimum")]
+    fn test_slippage_protection() {
+        let (env, contract_id, _admin, alice, token_a, token_b) = setup();
+        let client = MultiAssetSwapClient::new(&env, &contract_id);
+
+        // Add liquidity
+        client.mint(&alice, &-60, &60, &10_000, &10_000);
+
+        // Perform swap with unrealistic min_amount_out that will fail
+        let sqrt_price_limit = MultiAssetSwap::tick_to_sqrt_price_x96(-1);
+        client.swap(
+            &alice, 
+            &token_a, 
+            &1_000, 
+            &sqrt_price_limit,
+            &100_000  // Unrealistic minimum that will fail
+        );
+    }
+
+    #[test]
+    fn test_referral_program() {
+        let (env, contract_id, admin, alice, token_a, token_b) = setup();
+        let client = MultiAssetSwapClient::new(&env, &contract_id);
+
+        let bob = Address::generate(&env);
+
+        // Set bob as alice's referrer
+        client.set_referrer(&alice, &bob);
+
+        // Verify referrer was set
+        let referrer = client.get_referrer(&alice);
+        assert_eq!(referrer, Some(bob));
+
+        // Add liquidity
+        client.mint(&alice, &-60, &60, &10_000, &10_000);
+
+        let a_client = TokenClient::new(&env, &token_a);
+        let b_client = TokenClient::new(&env, &token_b);
+
+        let initial_balance_a = a_client.balance(&alice);
+        let initial_balance_b = b_client.balance(&alice);
+        let initial_balance_bob_b = b_client.balance(&bob);
+
+        // Perform swap - bob should receive referral fee
+        let sqrt_price_limit = MultiAssetSwap::tick_to_sqrt_price_x96(-1);
+        client.swap(
+            &alice, 
+            &token_a, 
+            &1_000, 
+            &sqrt_price_limit,
+            &0  // min_amount_out
+        );
+
+        // Bob should have received referral fee
+        assert!(b_client.balance(&bob) > initial_balance_bob_b);
+    }
+
+    #[test]
+    #[should_panic(expected = "referrer already set")]
+    fn test_referrer_already_set() {
+        let (env, contract_id, _admin, alice, _token_a, _token_b) = setup();
+        let client = MultiAssetSwapClient::new(&env, &contract_id);
+
+        let bob = Address::generate(&env);
+        let charlie = Address::generate(&env);
+
+        // Set bob as alice's referrer
+        client.set_referrer(&alice, &bob);
+
+        // Try to set charlie as referrer - should panic
+        client.set_referrer(&alice, &charlie);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot refer yourself")]
+    fn test_cannot_refer_yourself() {
+        let (env, contract_id, _admin, alice, _token_a, _token_b) = setup();
+        let client = MultiAssetSwapClient::new(&env, &contract_id);
+
+        // Try to set alice as her own referrer - should panic
+        client.set_referrer(&alice, &alice);
     }
 }

@@ -92,4 +92,44 @@ impl LiquidationEngine {
             incentive,
         );
     }
+
+    /// Partially liquidates a vault, reducing market impact and improving systemic stability.
+    /// liquidate_amount: The amount of debt to repay through partial liquidation.
+    pub fn partial_liquidate(env: Env, liquidator: Address, vault_id: u32, liquidate_amount: u128) {
+        liquidator.require_auth();
+        let mut vault: Vault = env.storage().persistent().get(&DataKey::Vaults(vault_id)).expect("vault not found");
+        
+        assert!(liquidate_amount > 0, "liquidate amount must be positive");
+        assert!(liquidate_amount <= vault.debt_amount, "cannot liquidate more than debt");
+        
+        let oracle_id: Address = env.storage().instance().get(&DataKey::OracleId).unwrap();
+        
+        // Fetch collateral price from oracle
+        let collateral_price: u128 = env.invoke_contract(&oracle_id, &symbol_short!("get_price"), soroban_sdk::vec![&env]);
+        
+        let collateral_value = vault.collateral_amount * collateral_price;
+        let health_factor = (collateral_value * 100) / vault.debt_amount;
+        
+        // Allow partial liquidation for vaults below 150% health factor (less strict than full liquidation)
+        assert!(health_factor < 150, "vault is healthy for partial liquidation");
+        
+        // Calculate collateral to liquidate proportional to debt being repaid
+        let collateral_ratio = vault.collateral_amount / vault.debt_amount;
+        let collateral_to_liquidate = liquidate_amount * collateral_ratio;
+        
+        // Liquidator incentive: 3% spread for partial liquidations (lower incentive than full)
+        let incentive = (collateral_to_liquidate * 3) / 100;
+        
+        // Update vault
+        vault.collateral_amount -= collateral_to_liquidate + incentive;
+        vault.debt_amount -= liquidate_amount;
+        
+        env.storage().persistent().set(&DataKey::Vaults(vault_id), &vault);
+        
+        // Emit partial liquidation event
+        env.events().publish(
+            (symbol_short!("partial_liquidate"), vault_id, liquidator), 
+            (liquidate_amount, collateral_to_liquidate, incentive)
+        );
+    }
 }
