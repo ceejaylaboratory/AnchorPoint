@@ -25,8 +25,43 @@ model User {
   transactions  Transaction[]
   kycCustomer   KycCustomer?
   apiKeys       ApiKey[]
+  recurringPaymentSchedules RecurringPaymentSchedule[]
+  id                    String                 @id @default(uuid())
+  publicKey             String                 @unique
+  email                 String?
+  phone                 String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  transactions          Transaction[]
+  kycCustomer           KycCustomer?
+  apiKeys               ApiKey[]
+  notificationPreference NotificationPreference?
 
   @@index([publicKey])
+}
+
+model AdminUser {
+  id                  String                    @id @default(uuid())
+  email               String                    @unique
+  passwordHash        String
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  passwordResetTokens AdminPasswordResetToken[]
+
+  @@index([email])
+}
+
+model AdminPasswordResetToken {
+  id          String    @id @default(uuid())
+  adminUserId String
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([adminUserId, usedAt])
+  @@index([expiresAt])
 }
 
 model ApiKey {
@@ -42,18 +77,79 @@ model ApiKey {
   @@index([userId])
 }
 
+enum RecurringPaymentScheduleStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum RecurringPaymentRunStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+model RecurringPaymentSchedule {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  destination String
+  assetCode   String
+  amount      String
+  cron        String
+  status      RecurringPaymentScheduleStatus @default(ACTIVE)
+  nextRunAt   DateTime
+  lastRunAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  runs        RecurringPaymentRun[]
+
+  @@index([userId])
+  @@index([status, nextRunAt])
+}
+
+model RecurringPaymentRun {
+  id          String   @id @default(uuid())
+  scheduleId  String
+  schedule    RecurringPaymentSchedule @relation(fields: [scheduleId], references: [id])
+  status      RecurringPaymentRunStatus @default(PENDING)
+  attempt     Int      @default(0)
+  stellarTxId String?  @unique
+  error       String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([scheduleId])
+  @@index([status])
+}
+
 model Transaction {
-  id                  String    @id @default(uuid())
+  id                  String         @id @default(uuid())
   userId              String
-  user                User      @relation(fields: [userId], references: [id])
+  user                User           @relation(fields: [userId], references: [id])
   assetCode           String
   amount              String
-  type                String    // DEPOSIT | WITHDRAW | SEP31
+  type                String    // DEPOSIT | WITHDRAW | SEP31 | SWAP
   status              String    // PENDING, COMPLETED, FAILED
   externalId          String?   @unique
   stellarTxId         String?   @unique
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+  type                String         // DEPOSIT | WITHDRAW | SEP31
+  status              String         // PENDING, COMPLETED, FAILED
+  externalId          String?        @unique
+  stellarTxId         String?        @unique
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  notifications       Notification[]
+
+  // Fee tracking
+  feeAmount           String?   @default("0")  // Fee amount in asset units
+  feeAssetCode        String?   // Asset code for fee (e.g., XLM, USDC)
+  feeType             String?   // FLAT, PERCENTAGE, TIERED
 
   // SEP-31 specific fields (nullable for backward compatibility)
   senderInfo          Json?
@@ -62,9 +158,67 @@ model Transaction {
   sep31Status         String?
   requiredInfoMessage String?
   completedAt         DateTime?
-  refunded            Boolean   @default(false)
+  refunded            Boolean        @default(false)
 
   @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model FeeReport {
+  id              String    @id @default(uuid())
+  reportType      String    // DAILY, MONTHLY
+  startDate       DateTime
+  endDate         DateTime
+  totalFees       String    // Total fees collected in base asset
+  totalFeesXLM    String    // Total fees converted to XLM
+  operationCounts Json      // { DEPOSIT: 10, WITHDRAW: 5, SWAP: 3, SEP31: 2 }
+  feeBreakdown    Json      // Detailed breakdown by operation type
+  generatedAt     DateTime  @default(now())
+  filePath        String?   // Path to generated report file
+  fileType        String?   // JSON, PDF
+
+  @@index([reportType])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+model NotificationPreference {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  user         User    @relation(fields: [userId], references: [id])
+  emailEnabled Boolean @default(true)
+  smsEnabled   Boolean @default(false)
+  pushEnabled  Boolean @default(false)
+
+  @@index([userId])
+}
+
+enum NotificationType {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model Notification {
+  id            String             @id @default(uuid())
+  userId        String
+  transactionId String?
+  transaction   Transaction?       @relation(fields: [transactionId], references: [id])
+  type          NotificationType
+  status        NotificationStatus @default(PENDING)
+  message       String
+  createdAt     DateTime           @default(now())
+
+  @@index([userId])
+  @@index([transactionId])
 }
 
 enum KYCStatus {
@@ -77,6 +231,8 @@ model KycCustomer {
   id          String    @id @default(uuid())
   userId      String    @unique
   user        User      @relation(fields: [userId], references: [id])
+  provider    String?
+  providerRef String?
   firstName   String?
   lastName    String?
   email       String?
@@ -85,5 +241,63 @@ model KycCustomer {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  @@index([provider, providerRef])
   @@index([userId])
+}
+
+model SystemConfig {
+  id        String   @id @default(uuid())
+  version   Int      @unique
+  settings  String
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isActive])
+  @@index([createdAt])
+enum JobStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+enum JobPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model ContractJob {
+  id          String      @id @default(uuid())
+  jobId       String      @unique
+  type        String
+  priority    JobPriority @default(NORMAL)
+  status      JobStatus   @default(PENDING)
+  contractId  String?
+  functionName String?
+  parameters   Json?
+  result      Json?
+  error       String?
+  errorCategory String?
+  errorSeverity String?
+  errorCode   String?
+  userMessage String?
+  suggestedAction String?
+  retryable   Boolean     @default(false)
+  attempts    Int         @default(0)
+  maxAttempts Int         @default(3)
+  createdBy   String?
+  metadata    Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  failedAt    DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([jobId])
+  @@index([status])
+  @@index([createdBy])
+  @@index([type])
 }
