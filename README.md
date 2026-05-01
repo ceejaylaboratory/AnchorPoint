@@ -25,8 +25,10 @@ The entry point for any anchor. It defines the supported assets and the URLs for
 ### 2. SEP-10: Stellar Web Authentication
 Before initiating transactions, the dashboard must authenticate the user's wallet.
 - The dashboard requests a challenge transaction from the anchor.
-- The user signs it with their wallet (e.g., Freight, Albedo, or Rabe).
+- The user signs it with their wallet (e.g., Freight, Albedo, Rabe, **Trezor, or Ledger**).
 - The dashboard submits the signed transaction to get a JWT.
+
+**Hardware Wallet Support**: AnchorPoint now supports hardware wallets (Trezor, Ledger) for SEP-10 authentication. The backend generates proper Stellar transactions with manage_data operations containing the challenge, which hardware wallets can sign using their secure elements. This ensures compatibility with hardware wallets that require specific transaction structures and signature algorithms.
 
 ### 3. SEP-24: Interactive Flows
 The core of AnchorPoint. 

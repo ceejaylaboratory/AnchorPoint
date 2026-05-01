@@ -1,7 +1,9 @@
 #![no_std]
 //! SEP-41 Compatible Token Wrapper
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, String,
+};
 
 #[contracttype]
 pub enum DataKey {
@@ -14,6 +16,9 @@ pub enum DataKey {
     Name,
     Symbol,
     Decimals,
+    PermitNonce(u64, Address, Address),
+    UserLastLedger(u64, Address),
+    BalanceSnapshot(u64, Address, u32),
 }
 
 #[contract]
@@ -44,7 +49,7 @@ impl TokenContract {
         let bal = Self::balance_of(env.clone(), to.clone(), token_id);
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(token_id, to.clone()), &(bal + amount));
+            .set(&DataKey::Balance(token_id, to.clone()), &bal.checked_add(amount).expect("balance overflow"));
 
         let supply: i128 = env
             .storage()
@@ -53,10 +58,11 @@ impl TokenContract {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalSupply(token_id), &(supply + amount));
+            .set(&DataKey::TotalSupply(token_id), &supply.checked_add(amount).expect("supply overflow"));
 
+        // Topic: event name + token_id (u64 scalar); to + amount in data.
         env.events()
-            .publish((symbol_short!("mint"), to, token_id), amount);
+            .publish((symbol_short!("mint"), token_id), (to, amount));
     }
 
     pub fn transfer(env: Env, from: Address, to: Address, token_id: u64, amount: i128) {
@@ -80,8 +86,9 @@ impl TokenContract {
             Self::do_transfer(&env, from.clone(), to.clone(), token_id, amount);
         }
 
+        // Topic: event name only; from + to + token_ids in data.
         env.events()
-            .publish((symbol_short!("batch_xf"), from, to), token_ids);
+            .publish(symbol_short!("batch_xf"), (from, to, token_ids));
     }
 
     pub fn approve(env: Env, owner: Address, spender: Address, token_id: u64, amount: i128) {
@@ -91,8 +98,9 @@ impl TokenContract {
             &DataKey::Allowance(token_id, owner.clone(), spender.clone()),
             &amount,
         );
+        // Topic: event name + token_id (u64 scalar); owner + spender + amount in data.
         env.events()
-            .publish((symbol_short!("approve"), owner, spender, token_id), amount);
+            .publish((symbol_short!("approve"), token_id), (owner, spender, amount));
     }
 
     pub fn set_approval_for_all(env: Env, owner: Address, operator: Address, approved: bool) {
@@ -107,8 +115,53 @@ impl TokenContract {
                 .persistent()
                 .remove(&DataKey::OperatorApproval(owner.clone(), operator.clone()));
         }
+        // Topic: event name only; owner + operator + approved in data.
         env.events()
-            .publish((symbol_short!("app_all"), owner, operator), approved);
+            .publish(symbol_short!("app_all"), (owner, operator, approved));
+    }
+
+    /// Gasless approval using Soroban's signed auth entries.
+    ///
+    /// The owner signs this payload off-chain and a relayer can submit it on-chain.
+    /// Replay protection is enforced via nonce and expiry via deadline timestamp.
+    pub fn permit(
+        env: Env,
+        owner: Address,
+        spender: Address,
+        token_id: u64,
+        amount: i128,
+        nonce: u64,
+        deadline: u64,
+    ) {
+        assert!(amount >= 0, "amount must be non-negative");
+        assert!(env.ledger().timestamp() <= deadline, "permit expired");
+
+        let current_nonce = Self::permit_nonce(env.clone(), owner.clone(), spender.clone(), token_id);
+        assert!(nonce == current_nonce, "invalid nonce");
+
+        owner.require_auth_for_args(
+            (
+                symbol_short!("permit"),
+                spender.clone(),
+                token_id,
+                amount,
+                nonce,
+                deadline,
+            )
+                .into_val(&env),
+        );
+
+        env.storage().persistent().set(
+            &DataKey::Allowance(token_id, owner.clone(), spender.clone()),
+            &amount,
+        );
+        env.storage().persistent().set(
+            &DataKey::PermitNonce(token_id, owner.clone(), spender.clone()),
+            &(current_nonce + 1),
+        );
+
+        env.events()
+            .publish((symbol_short!("permit"), owner, spender, token_id), (amount, nonce));
     }
 
     pub fn transfer_from(
@@ -138,8 +191,9 @@ impl TokenContract {
         }
 
         Self::do_transfer(&env, from, to, token_id, amount);
+        // Topic: event name + token_id (u64 scalar); spender + amount in data.
         env.events()
-            .publish((symbol_short!("xfer_from"), spender, token_id), amount);
+            .publish((symbol_short!("xfer_from"), token_id), (spender, amount));
     }
 
     pub fn burn(env: Env, from: Address, token_id: u64, amount: i128) {
@@ -160,8 +214,9 @@ impl TokenContract {
             .instance()
             .set(&DataKey::TotalSupply(token_id), &(supply - amount));
 
+        // Topic: event name + token_id (u64 scalar); from + amount in data.
         env.events()
-            .publish((symbol_short!("burn"), from, token_id), amount);
+            .publish((symbol_short!("burn"), token_id), (from, amount));
     }
 
     pub fn set_token_metadata(env: Env, token_id: u64, uri: String) {
@@ -199,6 +254,13 @@ impl TokenContract {
             .unwrap_or(0)
     }
 
+    pub fn permit_nonce(env: Env, owner: Address, spender: Address, token_id: u64) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PermitNonce(token_id, owner, spender))
+            .unwrap_or(0)
+    }
+
     pub fn is_approved_for_all(env: Env, owner: Address, operator: Address) -> bool {
         env.storage()
             .persistent()
@@ -228,6 +290,21 @@ impl TokenContract {
         env.storage().instance().get(&DataKey::Symbol).unwrap()
     }
 
+    pub fn get_past_balance(env: Env, owner: Address, token_id: u64, ledger: u32) -> i128 {
+        let last_ledger: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserLastLedger(token_id, owner.clone()))
+            .unwrap_or(0);
+        if ledger >= last_ledger {
+            return Self::balance_of(env.clone(), owner, token_id);
+        }
+        env.storage()
+            .persistent()
+            .get(&DataKey::BalanceSnapshot(token_id, owner, ledger))
+            .unwrap_or(0)
+    }
+
     fn do_transfer(env: &Env, from: Address, to: Address, token_id: u64, amount: i128) {
         assert!(amount > 0, "amount must be positive");
         let from_bal = env
@@ -237,21 +314,52 @@ impl TokenContract {
             .unwrap_or(0);
         assert!(from_bal >= amount, "insufficient balance");
 
+        let current_ledger = env.ledger().sequence();
+        Self::_write_checkpoint(env, from.clone(), token_id, current_ledger, from_bal);
+
         env.storage().persistent().set(
             &DataKey::Balance(token_id, from.clone()),
-            &(from_bal - amount),
+            &from_bal.checked_sub(amount).expect("balance underflow"),
         );
         let to_bal = env
             .storage()
             .persistent()
             .get::<_, i128>(&DataKey::Balance(token_id, to.clone()))
             .unwrap_or(0);
+
+        Self::_write_checkpoint(env, to.clone(), token_id, current_ledger, to_bal);
+
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(token_id, to.clone()), &(to_bal + amount));
+            .set(&DataKey::Balance(token_id, to.clone()), &to_bal.checked_add(amount).expect("balance overflow"));
 
+        // Topic: event name + token_id (u64 scalar); from + to + amount in data.
         env.events()
-            .publish((symbol_short!("transfer"), from, to, token_id), amount);
+            .publish((symbol_short!("transfer"), token_id), (from, to, amount));
+    }
+
+    fn _write_checkpoint(
+        env: &Env,
+        user: Address,
+        token_id: u64,
+        current_ledger: u32,
+        current_balance: i128,
+    ) {
+        let last_ledger: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserLastLedger(token_id, user.clone()))
+            .unwrap_or(0);
+        if last_ledger != current_ledger {
+            env.storage().persistent().set(
+                &DataKey::BalanceSnapshot(token_id, user.clone(), last_ledger),
+                &current_balance,
+            );
+            env.storage().persistent().set(
+                &DataKey::UserLastLedger(token_id, user.clone()),
+                &current_ledger,
+            );
+        }
     }
 }
 
@@ -376,7 +484,109 @@ mod tests {
         assert_eq!(client.balance_of(&alice, &token_id), 300);
         assert_eq!(client.total_supply(&token_id), 300);
     }
+
+    #[test]
+    fn test_permit_sets_allowance_and_increments_nonce() {
+        let (env, client, _) = setup();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let token_id = 1u64;
+
+        env.ledger().with_mut(|li| li.timestamp = 100);
+
+        assert_eq!(client.permit_nonce(&owner, &spender, &token_id), 0);
+        client.permit(&owner, &spender, &token_id, &700, &0, &200);
+        assert_eq!(client.allowance(&owner, &spender, &token_id), 700);
+        assert_eq!(client.permit_nonce(&owner, &spender, &token_id), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "permit expired")]
+    fn test_permit_expired_panics() {
+        let (env, client, _) = setup();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let token_id = 1u64;
+
+        env.ledger().with_mut(|li| li.timestamp = 100);
+        client.permit(&owner, &spender, &token_id, &100, &0, &99);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid nonce")]
+    fn test_permit_replay_panics() {
+        let (env, client, _) = setup();
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let token_id = 1u64;
+
+        env.ledger().with_mut(|li| li.timestamp = 100);
+        client.permit(&owner, &spender, &token_id, &100, &0, &200);
+        client.permit(&owner, &spender, &token_id, &100, &0, &200);
+    #[should_panic(expected = "length mismatch")]
+    fn test_batch_transfer_length_mismatch() {
+        let (env, client, _) = setup();
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let ids = soroban_sdk::Vec::from_array(&env, [1, 2]);
+        let amounts = soroban_sdk::Vec::from_array(&env, [100]);
+        client.batch_transfer(&alice, &bob, &ids, &amounts);
+    }
+
+    #[test]
+    #[should_panic(expected = "already initialized")]
+    fn test_initialize_twice_panics() {
+        let (env, client, admin) = setup();
+        client.initialize(
+            &admin,
+            &7u32,
+            &String::from_str(&env, "AnchorToken"),
+            &String::from_str(&env, "ANCT"),
+        );
+    }
+
+    #[test]
+    fn test_operator_does_not_consume_allowance() {
+        let (env, client, _) = setup();
+        let alice = Address::generate(&env);
+        let operator = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.mint(&alice, &1, &1000);
+        client.approve(&alice, &operator, &1, &500);
+        client.set_approval_for_all(&alice, &operator, &true);
+
+        client.transfer_from(&operator, &alice, &bob, &1, &300);
+        
+        // Allowance should still be 500 because operator bypasses it
+        assert_eq!(client.allowance(&alice, &operator, &1), 500);
+    }
+
+    #[test]
+    #[should_panic(expected = "insufficient allowance")]
+    fn test_transfer_from_insufficient_allowance() {
+        let (env, client, _) = setup();
+        let alice = Address::generate(&env);
+        let spender = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.mint(&alice, &1, &1000);
+        client.approve(&alice, &spender, &1, &100);
+        client.transfer_from(&spender, &alice, &bob, &1, &150);
+    }
+
+    #[test]
+    fn test_set_metadata_authorized() {
+        let (env, client, admin) = setup();
+        let token_id = 1u64;
+        let uri = String::from_str(&env, "ipfs://test");
+
+        client.set_token_metadata(&token_id, &uri);
+        assert_eq!(client.get_token_metadata(&token_id), uri);
+    }
 }
+
+
 
 /// ============================================================================
 /// Formal Verification Invariants

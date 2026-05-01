@@ -1,0 +1,11 @@
+[package]
+name = "soroban-gas-benchmarks"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[dev-dependencies]
+anchorpoint-amm = { path = "../../src/amm" }
+sep41-token = { path = "../../src/token" }

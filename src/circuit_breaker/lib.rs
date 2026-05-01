@@ -86,19 +86,35 @@ impl CircuitBreaker {
         }
         admin.require_auth();
 
-        let tl = if timelock_secs == 0 { DEFAULT_TIMELOCK_SECONDS } else { timelock_secs };
-        let vbps = if volatility_bps == 0 { DEFAULT_VOLATILITY_BPS } else { volatility_bps };
+        let tl = if timelock_secs == 0 {
+            DEFAULT_TIMELOCK_SECONDS
+        } else {
+            timelock_secs
+        };
+        let vbps = if volatility_bps == 0 {
+            DEFAULT_VOLATILITY_BPS
+        } else {
+            volatility_bps
+        };
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::OracleContract, &oracle);
-        env.storage().instance().set(&DataKey::PauseTier, &PauseTier::None);
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleContract, &oracle);
+        env.storage()
+            .instance()
+            .set(&DataKey::PauseTier, &PauseTier::None);
         env.storage().instance().set(&DataKey::TimelockSeconds, &tl);
         env.storage().instance().set(&DataKey::VolatilityBps, &vbps);
-        env.storage().instance().set(&DataKey::UnpauseUnlocksAt, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::UnpauseUnlocksAt, &0u64);
         env.storage().instance().set(&DataKey::TripCount, &0u32);
 
         let bots: Vec<Address> = Vec::new(&env);
-        env.storage().instance().set(&DataKey::AuthorizedBots, &bots);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuthorizedBots, &bots);
     }
 
     // ── Bot management ────────────────────────────────────────────────────────
@@ -123,8 +139,14 @@ impl CircuitBreaker {
         }
 
         bots.push_back(bot.clone());
+        // Topic: event name only; bot + caller Addresses in data.
         env.storage().instance().set(&DataKey::AuthorizedBots, &bots);
-        env.events().publish((symbol_short!("bot_add"), bot), caller);
+        env.events().publish(symbol_short!("bot_add"), (bot, caller));
+        env.storage()
+            .instance()
+            .set(&DataKey::AuthorizedBots, &bots);
+        env.events()
+            .publish((symbol_short!("bot_add"), bot), caller);
     }
 
     /// Remove an address from the authorized-bot list (admin only).
@@ -150,6 +172,11 @@ impl CircuitBreaker {
         }
         assert!(found, "bot not found");
         env.storage().instance().set(&DataKey::AuthorizedBots, &new_bots);
+        // Topic: event name only; bot + caller Addresses in data.
+        env.events().publish(symbol_short!("bot_rm"), (bot, caller));
+        env.storage()
+            .instance()
+            .set(&DataKey::AuthorizedBots, &new_bots);
         env.events().publish((symbol_short!("bot_rm"), bot), caller);
     }
 
@@ -217,7 +244,7 @@ impl CircuitBreaker {
             None => {
                 // First observation — store and return without tripping.
                 env.events()
-                    .publish((symbol_short!("ref_set"), asset), current_price);
+                    .publish(symbol_short!("ref_set"), (asset, current_price));
                 return;
             }
             Some(p) => p,
@@ -236,14 +263,15 @@ impl CircuitBreaker {
 
         if deviation_bps >= volatility_bps {
             Self::apply_trip(&env, PauseTier::All, TriggerSource::Oracle, caller.clone());
+            // Topic: event name only; asset + deviation data in payload.
             env.events().publish(
-                (symbol_short!("vol_trip"), asset),
-                (deviation_bps, volatility_bps),
+                symbol_short!("vol_trip"),
+                (asset, deviation_bps, volatility_bps),
             );
         } else {
             env.events().publish(
-                (symbol_short!("vol_ok"), asset),
-                (deviation_bps, volatility_bps),
+                symbol_short!("vol_ok"),
+                (asset, deviation_bps, volatility_bps),
             );
         }
     }
@@ -272,7 +300,7 @@ impl CircuitBreaker {
             .get(&DataKey::TimelockSeconds)
             .unwrap_or(DEFAULT_TIMELOCK_SECONDS);
 
-        let unlocks_at = env.ledger().timestamp() + timelock;
+        let unlocks_at = env.ledger().timestamp().checked_add(timelock).expect("timelock overflow");
 
         env.storage()
             .instance()
@@ -281,9 +309,10 @@ impl CircuitBreaker {
             .instance()
             .set(&DataKey::PendingUnpauseTier, &target_tier);
 
+        // Topic: event name only; caller + unlocks_at + target_tier in data.
         env.events().publish(
-            (symbol_short!("unp_init"), caller),
-            (unlocks_at, target_tier),
+            symbol_short!("unp_init"),
+            (caller, unlocks_at, target_tier),
         );
     }
 
@@ -311,10 +340,14 @@ impl CircuitBreaker {
             .unwrap_or(PauseTier::None);
 
         env.storage().instance().set(&DataKey::PauseTier, &target);
-        env.storage().instance().set(&DataKey::UnpauseUnlocksAt, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::UnpauseUnlocksAt, &0u64);
 
-        env.events()
-            .publish((symbol_short!("unpaused"), target), env.ledger().timestamp());
+        env.events().publish(
+            (symbol_short!("unpaused"), target),
+            env.ledger().timestamp(),
+        );
     }
 
     /// Cancel a pending unpause (admin only).
@@ -333,7 +366,13 @@ impl CircuitBreaker {
         assert!(unlocks_at > 0, "no unpause pending");
 
         env.storage().instance().set(&DataKey::UnpauseUnlocksAt, &0u64);
-        env.events().publish((symbol_short!("unp_cncl"), caller), unlocks_at);
+        // Topic: event name only; caller + unlocks_at in data.
+        env.events().publish(symbol_short!("unp_cncl"), (caller, unlocks_at));
+        env.storage()
+            .instance()
+            .set(&DataKey::UnpauseUnlocksAt, &0u64);
+        env.events()
+            .publish((symbol_short!("unp_cncl"), caller), unlocks_at);
     }
 
     // ── Configuration ─────────────────────────────────────────────────────────
@@ -344,7 +383,13 @@ impl CircuitBreaker {
         Self::assert_admin(&env, &caller);
         assert!(seconds > 0, "timelock must be positive");
         env.storage().instance().set(&DataKey::TimelockSeconds, &seconds);
-        env.events().publish((symbol_short!("tl_set"), caller), seconds);
+        // Topic: event name only; caller + seconds in data.
+        env.events().publish(symbol_short!("tl_set"), (caller, seconds));
+        env.storage()
+            .instance()
+            .set(&DataKey::TimelockSeconds, &seconds);
+        env.events()
+            .publish((symbol_short!("tl_set"), caller), seconds);
     }
 
     /// Update the oracle volatility threshold in basis points (admin only).
@@ -353,7 +398,10 @@ impl CircuitBreaker {
         Self::assert_admin(&env, &caller);
         assert!(bps > 0 && bps <= 10_000, "bps must be 1-10000");
         env.storage().instance().set(&DataKey::VolatilityBps, &bps);
-        env.events().publish((symbol_short!("vbps_set"), caller), bps);
+        // Topic: event name only; caller + bps in data.
+        env.events().publish(symbol_short!("vbps_set"), (caller, bps));
+        env.events()
+            .publish((symbol_short!("vbps_set"), caller), bps);
     }
 
     /// Update the oracle contract address (admin only).
@@ -361,7 +409,13 @@ impl CircuitBreaker {
         caller.require_auth();
         Self::assert_admin(&env, &caller);
         env.storage().instance().set(&DataKey::OracleContract, &oracle);
-        env.events().publish((symbol_short!("ora_set"), oracle), caller);
+        // Topic: event name only; oracle + caller Addresses in data.
+        env.events().publish(symbol_short!("ora_set"), (oracle, caller));
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleContract, &oracle);
+        env.events()
+            .publish((symbol_short!("ora_set"), oracle), caller);
     }
 
     // ── Read-only helpers ─────────────────────────────────────────────────────
@@ -376,12 +430,18 @@ impl CircuitBreaker {
 
     /// Returns true if swap operations are currently halted.
     pub fn is_swap_paused(env: Env) -> bool {
-        matches!(Self::get_pause_tier(env), PauseTier::SwapOnly | PauseTier::All)
+        matches!(
+            Self::get_pause_tier(env),
+            PauseTier::SwapOnly | PauseTier::All
+        )
     }
 
     /// Returns true if withdrawal operations are currently halted.
     pub fn is_withdraw_paused(env: Env) -> bool {
-        matches!(Self::get_pause_tier(env), PauseTier::WithdrawOnly | PauseTier::All)
+        matches!(
+            Self::get_pause_tier(env),
+            PauseTier::WithdrawOnly | PauseTier::All
+        )
     }
 
     /// Returns true if all operations are halted.
@@ -465,7 +525,7 @@ impl CircuitBreaker {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TripCount, &(count + 1));
+            .set(&DataKey::TripCount, &count.checked_add(1).expect("trip count overflow"));
 
         env.events()
             .publish((symbol_short!("tripped"), tier), (caller, source));

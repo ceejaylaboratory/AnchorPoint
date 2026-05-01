@@ -13,6 +13,9 @@ const querySchema = z.object({
   page: z.string().optional().transform(v => parseInt(v || '1', 10)).pipe(z.number().min(1)),
   limit: z.string().optional().transform(v => parseInt(v || '10', 10)).pipe(z.number().min(1).max(50)),
   assetCode: z.string().optional(),
+  sender: z.string().optional(),
+  receiver: z.string().optional(),
+  memo: z.string().optional(),
   cursor: z.string().optional(),
 });
 
@@ -51,6 +54,21 @@ const submitSchema = z.object({
  *         schema:
  *           type: string
  *         description: Filter transactions by asset code (e.g., USDC, BTC)
+ *       - in: query
+ *         name: sender
+ *         schema:
+ *           type: string
+ *         description: Search for transactions with matching sender metadata in indexed events
+ *       - in: query
+ *         name: receiver
+ *         schema:
+ *           type: string
+ *         description: Search for transactions with matching receiver metadata in indexed events
+ *       - in: query
+ *         name: memo
+ *         schema:
+ *           type: string
+ *         description: Search for transactions by memo or indexed event text
  *     responses:
  *       200:
  *         description: Transaction history retrieved successfully
@@ -85,10 +103,13 @@ const submitSchema = z.object({
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/', authMiddleware, validate({ query: querySchema }), async (req: AuthRequest, res: Response) => {
-  const { page, limit, assetCode, cursor } = req.query as unknown as {
+  const { page, limit, assetCode, sender, receiver, memo, cursor } = req.query as unknown as {
     page: number;
     limit: number;
     assetCode?: string;
+    sender?: string;
+    receiver?: string;
+    memo?: string;
     cursor?: string;
   };
   const publicKey = req.user!.publicKey;
@@ -99,9 +120,51 @@ router.get('/', authMiddleware, validate({ query: querySchema }), async (req: Au
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    const whereClause = {
+    const eventSearchClauses: string[] = [];
+    const eventQueryParams: string[] = [];
+
+    if (sender) {
+      const senderPattern = `%${sender}%`;
+      eventSearchClauses.push('(topics LIKE ? OR value LIKE ?)');
+      eventQueryParams.push(senderPattern, senderPattern);
+    }
+
+    if (receiver) {
+      const receiverPattern = `%${receiver}%`;
+      eventSearchClauses.push('(topics LIKE ? OR value LIKE ?)');
+      eventQueryParams.push(receiverPattern, receiverPattern);
+    }
+
+    if (memo) {
+      const memoPattern = `%${memo}%`;
+      eventSearchClauses.push('(topics LIKE ? OR value LIKE ?)');
+      eventQueryParams.push(memoPattern, memoPattern);
+    }
+
+    let matchingTxHashes: string[] | undefined;
+
+    if (eventSearchClauses.length > 0) {
+      const eventRows = await prisma.$queryRaw<Array<{ txHash: string }>>(
+        `SELECT DISTINCT txHash FROM "ContractEvent" WHERE ${eventSearchClauses.join(' AND ')}`,
+        ...eventQueryParams,
+      );
+
+      matchingTxHashes = eventRows.map((row: { txHash: string }) => row.txHash).filter(Boolean);
+      if (matchingTxHashes.length === 0) {
+        return res.json({
+          status: 'success',
+          data: {
+            transactions: [],
+            pagination: { total: 0, page, limit, totalPages: 0 },
+          },
+        });
+      }
+    }
+
+    const whereClause: any = {
       userId: user.id,
       ...(assetCode && { assetCode }),
+      ...(matchingTxHashes ? { stellarTxId: { in: matchingTxHashes } } : {}),
     };
 
     const skip = (page - 1) * limit;

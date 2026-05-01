@@ -85,7 +85,9 @@ export const getInfo = (req: Request, res: Response): Response => {
       fee_percent: a.feePercent,
       fee_minimum: a.feeMinimum,
     })),
-    signing_key: process.env.SIGNING_KEY || 'SB2Q6JYYK7GKXQJYRJLJHZFAP2Y7VJMLMIEUJQGHQFJ2D2K5A4HQKMF',
+    signing_key: process.env.SIGNING_KEY || (() => {
+      throw new Error('SIGNING_KEY environment variable is required');
+    })(),
     horizon_url: networkConfig.horizonUrl,
     url: process.env.BASE_URL || 'http://localhost:3002',
     documentation: process.env.DOCUMENTATION_URL,

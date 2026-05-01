@@ -32,6 +32,11 @@ jobs:
       - name: Install dependencies
         run: npm install
         
+      - name: Verify Migrations Against Temporary Database
+        env:
+          DATABASE_URL: "file:./ci-verify.db"
+        run: npm run migrate:verify
+        
       - name: Run Migration Integrity Checker
         env:
           DATABASE_URL: "file:./ci.db"

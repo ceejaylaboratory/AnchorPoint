@@ -1,5 +1,6 @@
-import { FeeService } from './fee.service';
+import { FeeService, computeAssetFee } from './fee.service';
 import { RedisService } from './redis.service';
+import type { AssetConfig } from '../config/assets';
 
 // p95/p50 ratio = 1.5 (< 2.0 threshold), capacity 50% → no surge
 const mockHorizonStats = {
@@ -84,5 +85,96 @@ describe('FeeService', () => {
     (fetch as jest.Mock).mockResolvedValue({ ok: false, status: 503 });
     const service = new FeeService(makeRedisService(null));
     await expect(service.getFeeStats()).rejects.toThrow('503');
+  });
+});
+
+// ─── Asset-specific fee calculation ───────────────────────────────────────────
+
+function makeAsset(overrides: Partial<AssetConfig>): AssetConfig {
+  return {
+    code: 'TEST',
+    issuers: {},
+    type: 'crypto',
+    desc: 'test asset',
+    minAmount: '0',
+    maxAmount: '1000000',
+    feeType: 'tiered',
+    feeFixed: 0,
+    feePercent: 0,
+    feeMinimum: 0,
+    depositEnabled: true,
+    withdrawEnabled: true,
+    ...overrides,
+  };
+}
+
+describe('computeAssetFee', () => {
+  it('flat: charges only feeFixed regardless of amount', () => {
+    const asset = makeAsset({ feeType: 'flat', feeFixed: 1.5 });
+    expect(computeAssetFee(asset, 0)).toBe(1.5);
+    expect(computeAssetFee(asset, 100)).toBe(1.5);
+    expect(computeAssetFee(asset, 999999)).toBe(1.5);
+  });
+
+  it('percentage: charges amount * feePercent', () => {
+    const asset = makeAsset({ feeType: 'percentage', feePercent: 0.01 });
+    expect(computeAssetFee(asset, 100)).toBe(1);
+    expect(computeAssetFee(asset, 1000)).toBe(10);
+  });
+
+  it('percentage: enforces feeMinimum', () => {
+    const asset = makeAsset({ feeType: 'percentage', feePercent: 0.001, feeMinimum: 0.5 });
+    // 10 * 0.001 = 0.01, which is below the 0.5 minimum
+    expect(computeAssetFee(asset, 10)).toBe(0.5);
+    // 1000 * 0.001 = 1.0, which is above the 0.5 minimum
+    expect(computeAssetFee(asset, 1000)).toBe(1);
+  });
+
+  it('tiered: charges feeFixed + amount * feePercent', () => {
+    const asset = makeAsset({ feeType: 'tiered', feeFixed: 0.5, feePercent: 0.005 });
+    // 0.5 + (100 * 0.005) = 0.5 + 0.5 = 1.0
+    expect(computeAssetFee(asset, 100)).toBe(1);
+    // 0.5 + (1000 * 0.005) = 0.5 + 5 = 5.5
+    expect(computeAssetFee(asset, 1000)).toBe(5.5);
+  });
+
+  it('tiered: enforces feeMinimum', () => {
+    const asset = makeAsset({ feeType: 'tiered', feeFixed: 0.01, feePercent: 0.001, feeMinimum: 1.0 });
+    // 0.01 + (5 * 0.001) = 0.015, below 1.0 minimum
+    expect(computeAssetFee(asset, 5)).toBe(1.0);
+  });
+
+  it('returns 0 when all fee fields are 0', () => {
+    const asset = makeAsset({ feeType: 'percentage', feePercent: 0 });
+    expect(computeAssetFee(asset, 100)).toBe(0);
+  });
+});
+
+describe('FeeService.calculateAssetFee', () => {
+  const service = new FeeService(makeRedisService(null));
+
+  it('returns correct result for a known asset (USDC / flat)', () => {
+    const result = service.calculateAssetFee('USDC', 500);
+    expect(result.assetCode).toBe('USDC');
+    expect(result.feeType).toBe('flat');
+    expect(result.inputAmount).toBe(500);
+    expect(result.feeAmount).toBe(0.5); // flat $0.50
+  });
+
+  it('returns correct result for a known asset (USD / tiered)', () => {
+    const result = service.calculateAssetFee('USD', 1000);
+    expect(result.assetCode).toBe('USD');
+    expect(result.feeType).toBe('tiered');
+    // 0.5 + (1000 * 0.005) = 5.5
+    expect(result.feeAmount).toBe(5.5);
+  });
+
+  it('is case-insensitive for asset codes', () => {
+    const result = service.calculateAssetFee('usdc', 100);
+    expect(result.assetCode).toBe('USDC');
+  });
+
+  it('throws for unknown asset codes', () => {
+    expect(() => service.calculateAssetFee('NOPE', 100)).toThrow('Unknown asset: NOPE');
   });
 });

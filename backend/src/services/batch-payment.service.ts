@@ -4,6 +4,9 @@
  * Handles batching multiple Stellar payments into a single transaction
  * to reduce network fees. Manages sequence numbers, handles partial failures,
  * and provides retry logic.
+ * 
+ * Security Note: This service retrieves provider keys from the key management service.
+ * Keys are never stored in plaintext or logged.
  */
 
 import {
@@ -20,6 +23,8 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
 import { SequenceNumberManager } from './sequence-number.service';
+import { getKeyManagementService } from '../lib/key-management.service';
+import { KeyManagementError } from '../lib/key-management.types';
 import {
   BatchPaymentRequest,
   BatchPaymentResult,
@@ -61,6 +66,9 @@ export class BatchPaymentService {
 
   /**
    * Execute a batch of payments in a single Stellar transaction
+   * 
+   * Security Note: This method retrieves the signing key from the key management service.
+   * The key is held in memory only for the duration of the signing operation.
    */
   async executeBatch(request: BatchPaymentRequest): Promise<BatchPaymentResult> {
     const batchId = uuidv4();
@@ -84,8 +92,39 @@ export class BatchPaymentService {
     // Validate all addresses
     this.validatePayments(request.payments);
 
+    // Retrieve source secret key from key management service or request
+    let sourceSecretKey: string;
+    try {
+      if (request.encryptedKey) {
+        // Decrypt key from encrypted blob
+        const keyManagementService = getKeyManagementService();
+        sourceSecretKey = await keyManagementService.decryptKey(request.encryptedKey);
+      } else if (request.keyId) {
+        // Retrieve key by ID from vault/KMS
+        const keyManagementService = getKeyManagementService();
+        sourceSecretKey = await keyManagementService.getKeyByReference(request.keyId);
+      } else if (request.sourceSecretKey) {
+        // Fallback to plaintext key (deprecated, for backward compatibility)
+        logger.warn('[Batch] Using plaintext sourceSecretKey - consider using encrypted key or keyId');
+        sourceSecretKey = request.sourceSecretKey;
+      } else {
+        throw new BatchPaymentError(
+          BatchErrorType.TRANSACTION_FAILED,
+          'No source secret key provided. Use encryptedKey, keyId, or sourceSecretKey.'
+        );
+      }
+    } catch (error) {
+      if (error instanceof KeyManagementError) {
+        throw new BatchPaymentError(
+          BatchErrorType.TRANSACTION_FAILED,
+          `Failed to retrieve signing key: ${error.message}`
+        );
+      }
+      throw error;
+    }
+
     // Get source account from secret key
-    const sourceKeypair = Keypair.fromSecret(request.sourceSecretKey);
+    const sourceKeypair = Keypair.fromSecret(sourceSecretKey);
     const sourcePublicKey = sourceKeypair.publicKey();
 
     let attempts = 0;
@@ -159,8 +198,10 @@ export class BatchPaymentService {
    */
   async executeBatchInChunks(
     payments: PaymentOperation[],
-    sourceSecretKey: string,
-    chunkSize: number = 100
+    sourceSecretKey?: string,
+    chunkSize: number = 100,
+    encryptedKey?: any,
+    keyId?: string
   ): Promise<BatchPaymentResult[]> {
     const results: BatchPaymentResult[] = [];
     const chunks = this.chunkArray(payments, chunkSize);
@@ -174,6 +215,8 @@ export class BatchPaymentService {
       const result = await this.executeBatch({
         payments: chunk,
         sourceSecretKey,
+        encryptedKey,
+        keyId,
       });
 
       results.push(result);
@@ -187,7 +230,9 @@ export class BatchPaymentService {
    */
   async handlePartialFailure(
     failedPayments: PaymentOperation[],
-    sourceSecretKey: string
+    sourceSecretKey?: string,
+    encryptedKey?: any,
+    keyId?: string
   ): Promise<PartialFailureResult> {
     if (failedPayments.length === 0) {
       return { successful: [], failed: [] };
@@ -199,6 +244,8 @@ export class BatchPaymentService {
       const result = await this.executeBatch({
         payments: failedPayments,
         sourceSecretKey,
+        encryptedKey,
+        keyId,
       });
 
       return {
