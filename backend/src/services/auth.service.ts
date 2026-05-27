@@ -1,16 +1,13 @@
 import jwt from 'jsonwebtoken';
-import { randomBytes } from 'crypto';
+import { randomBytes } from 'node:crypto';
 
 import { RedisService } from './redis.service';
-import { traceAsync, traceSync, SpanKind } from '../utils/tracing';
-import configService from './config.service';
-import { config } from '../config/env';
+
 import { traceAsync, traceSync, SpanKind } from '../utils/tracing';
 import configService from './config.service';
 import {
   generateSep10Challenge,
   verifySep10Challenge,
-  extractAccountFromSep10Transaction,
   type Sep10Challenge
 } from '../utils/sep10-stellar';
 import { NetworkType } from '../config/networks';
@@ -23,12 +20,15 @@ export interface Challenge {
   challenge: string;
   publicKey: string;
   createdAt: number;
+  transactionXdr?: string;
   multiKey?: MultiKeyChallenge;
 }
 
+export type AuthThreshold = 'low' | 'medium' | 'high';
+
 export interface MultiKeyChallenge {
   requiredSigners: number;
-  threshold: 'low' | 'medium' | 'high';
+  threshold: AuthThreshold;
   signers: SignerInfo[];
 }
 
@@ -41,7 +41,7 @@ export interface SignerInfo {
 export interface MultiKeyTokenRequest {
   transaction: string;
   signatures: SignatureInfo[];
-  threshold?: 'low' | 'medium' | 'high';
+  threshold?: AuthThreshold;
 }
 
 export interface SignatureInfo {
@@ -50,11 +50,13 @@ export interface SignatureInfo {
   weight: number;
 }
 
+export type AuthLevel = 'partial' | 'medium' | 'full';
+
 export interface MultiKeyVerifiedToken {
   sub: string;
   signers: string[];
   threshold: string;
-  authLevel: 'partial' | 'medium' | 'full';
+  authLevel: AuthLevel;
   transactionXdr?: string; // For hardware wallet support
 }
 
@@ -62,7 +64,7 @@ const CHALLENGE_TTL_SECONDS = 300; // 5 minutes
 const JWT_SECRET = configService.getConfig().JWT_SECRET;
 
 export const extractBearerToken = (authorization?: string): string | null => {
-  if (!authorization || !authorization.startsWith('Bearer ')) return null;
+  if (!authorization?.startsWith('Bearer ')) return null;
   const token = authorization.split(' ')[1];
   return token || null;
 };
@@ -117,9 +119,9 @@ export const generateChallenge = (): string => {
  */
 export const generateMultiKeyChallenge = (
   signers: SignerInfo[],
-  threshold: 'low' | 'medium' | 'high' = 'medium'
+  threshold: AuthThreshold = 'medium'
 ): MultiKeyChallenge => {
-  const totalWeight = signers.reduce((sum, signer) => sum + signer.weight, 0);
+
   const requiredWeight = getRequiredWeight(threshold);
   
   return {
@@ -132,7 +134,7 @@ export const generateMultiKeyChallenge = (
 /**
  * Gets the required weight for a given threshold level
  */
-const getRequiredWeight = (threshold: 'low' | 'medium' | 'high'): number => {
+const getRequiredWeight = (threshold: AuthThreshold): number => {
   switch (threshold) {
     case 'low': return 1;
     case 'medium': return 2;
@@ -146,12 +148,12 @@ const getRequiredWeight = (threshold: 'low' | 'medium' | 'high'): number => {
  */
 export const validateMultiKeySignatures = (
   signatures: SignatureInfo[],
-  threshold: 'low' | 'medium' | 'high'
-): { valid: boolean; authLevel: 'partial' | 'medium' | 'full'; signers: string[] } => {
+  threshold: AuthThreshold
+): { valid: boolean; authLevel: AuthLevel; signers: string[] } => {
   const requiredWeight = getRequiredWeight(threshold);
   const totalWeight = signatures.reduce((sum, sig) => sum + sig.weight, 0);
   
-  let authLevel: 'partial' | 'medium' | 'full';
+  let authLevel: AuthLevel;
   if (totalWeight >= getRequiredWeight('high')) {
     authLevel = 'full';
   } else if (totalWeight >= getRequiredWeight('medium')) {
