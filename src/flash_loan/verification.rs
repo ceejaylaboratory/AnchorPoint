@@ -1,4 +1,3 @@
-#[cfg(kani)]
 mod verification {
     use kani;
 

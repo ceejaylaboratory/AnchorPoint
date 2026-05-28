@@ -1,6 +1,24 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Env, Vec, Map};
+use soroban_sdk::{
+    contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Env, Map,
+    Vec,
+};
+
+fn calculate_fee(amount: i128, fee_bps: u32) -> i128 {
+    // Fee math is shared by single and batch loans so both paths use identical rounding.
+    amount
+        .checked_mul(i128::from(fee_bps))
+        .and_then(|value| value.checked_div(10_000))
+        .expect("Fee calculation overflow")
+}
+
+fn checked_repayment_amount(balance: i128, fee: i128) -> i128 {
+    // Repayment checks must trap on overflow instead of accepting an invalid balance target.
+    balance
+        .checked_add(fee)
+        .expect("Repayment calculation overflow")
+}
 
 /// Storage keys for the flash loan provider
 #[derive(Clone)]
@@ -77,13 +95,9 @@ impl FlashLoanProvider {
     /// * `token` - The address of the token to be lent.
     /// * `amount` - The amount of tokens to lend.
     pub fn flash_loan(env: Env, receiver: Address, token: Address, amount: i128) {
-        // 1. Calculate the fee (5 basis points = 0.05%)
-        // fee = amount * 5 / 10000
-        let fee = amount.checked_mul(5).and_then(|a| a.checked_div(10000)).expect("Fee calculation overflow");
-        
         // 1. Calculate the fee (default 5 basis points = 0.05%)
         let fee_bps = Self::get_fee_bps(env.clone());
-        let fee = amount * fee_bps as i128 / 10000;
+        let fee = calculate_fee(amount, fee_bps);
 
         // 2. Initial balance check
         let token_client = token::Client::new(&env, &token);
@@ -97,20 +111,20 @@ impl FlashLoanProvider {
         receiver_client.execute_loan(&token, &amount, &fee);
 
         // 5. Verify repayment
-        // This ensures atomic repayment enforcement. If the balance check fails, the 
+        // This ensures atomic repayment enforcement. If the balance check fails, the
         // whole transaction reverts, ensuring the loan is only successful if repaid.
         // Soroban's call stack management and the lack of contract state in this provider
         // make it naturally resistant to reentrancy attacks.
         let balance_after = token_client.balance(&env.current_contract_address());
-        
-        let required_repayment = balance_before.checked_add(fee).expect("Repayment calculation overflow");
+
+        let required_repayment = checked_repayment_amount(balance_before, fee);
         if balance_after < required_repayment {
             panic!("Flash loan not repaid with fee");
         }
 
         // Topic: event name only; receiver + token (Addresses) + amounts in data.
         env.events()
-            .publish(symbol_short!("flash_ln"), (receiver, token, amount, fee));
+            .publish((symbol_short!("flash_ln"),), (receiver, token, amount, fee));
     }
 
     /// Executes a batch flash loan for multiple assets in a single atomic transaction.
@@ -140,19 +154,23 @@ impl FlashLoanProvider {
 
         // 1. Calculate fees and check initial balances for all tokens
         let mut loan_details: Vec<LoanDetail> = Vec::new(&env);
-        let mut balance_checks: Map<Address, i128> = Map::new(&env);
+        let mut required_repayments: Map<Address, i128> = Map::new(&env);
 
         for i in 0..loans.len() {
             let (token, amount) = loans.get(i).unwrap();
-            let fee = amount * fee_bps as i128 / 10000;
+            let fee = calculate_fee(amount, fee_bps);
 
             let token_client = token::Client::new(&env, &token);
-            let balance_before = token_client.balance(&provider_address);
+            let current_required = required_repayments
+                .get(token.clone())
+                .unwrap_or_else(|| token_client.balance(&provider_address));
+            // Aggregate by token so duplicate-token batches must repay every fee.
+            let expected_repayment = checked_repayment_amount(current_required, fee);
 
-            balance_checks.set(token.clone(), balance_before);
+            required_repayments.set(token.clone(), expected_repayment);
             loan_details.push_back(LoanDetail {
                 token: token.clone(),
-                amount: *amount,
+                amount,
                 fee,
             });
         }
@@ -161,7 +179,7 @@ impl FlashLoanProvider {
         for i in 0..loans.len() {
             let (token, amount) = loans.get(i).unwrap();
             let token_client = token::Client::new(&env, &token);
-            token_client.transfer(&provider_address, &receiver, amount);
+            token_client.transfer(&provider_address, &receiver, &amount);
         }
 
         // 3. Invoke the receiver's batch execution logic
@@ -173,9 +191,7 @@ impl FlashLoanProvider {
             let loan = loan_details.get(i).unwrap();
             let token_client = token::Client::new(&env, &loan.token);
             let balance_after = token_client.balance(&provider_address);
-            let balance_before = balance_checks.get(loan.token).unwrap();
-
-            let expected_repayment = balance_before + loan.fee;
+            let expected_repayment = required_repayments.get(loan.token.clone()).unwrap();
             if balance_after < expected_repayment {
                 panic!(
                     "Flash loan not repaid for token {:?}: expected {}, got {}",
@@ -188,9 +204,12 @@ impl FlashLoanProvider {
 
         // 5. Emit batch event
         env.events()
-            .publish((symbol_short!("flash_batch"), receiver), loan_details);
+            .publish((symbol_short!("fl_batch"), receiver), loan_details);
     }
 }
 
 mod tests;
+
+#[allow(unexpected_cfgs)]
+#[cfg(kani)]
 mod verification;
