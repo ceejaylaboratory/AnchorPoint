@@ -1,0 +1,357 @@
+{
+  "info": {
+    "name": "AnchorPoint API",
+    "description": "AnchorPoint Stellar Anchor API — covers SEP-10 authentication, SEP-24 interactive flows, SEP-12 KYC, transactions, and admin endpoints.",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3002",
+      "type": "string"
+    },
+    {
+      "key": "jwtToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stellarAccount",
+      "value": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwtToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/health",
+            "description": "Verify the backend is running."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\"status\":\"ok\",\"timestamp\":\"2024-01-01T00:00:00.000Z\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SEP-10 Authentication",
+      "description": "Stellar Web Authentication (SEP-10). Get a challenge transaction, sign it with your wallet, then exchange it for a JWT.",
+      "item": [
+        {
+          "name": "Get Challenge",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.transaction) {",
+                  "  pm.collectionVariables.set('challengeTx', json.transaction);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account\": \"{{stellarAccount}}\",\n  \"home_domain\": \"localhost\"\n}"
+            },
+            "description": "Generate a SEP-10 challenge transaction. Sign the returned `transaction` XDR with your Stellar keypair, then call POST /auth/token."
+          }
+        },
+        {
+          "name": "Get Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.collectionVariables.set('jwtToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/token",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transaction\": \"{{challengeTx}}\"\n}"
+            },
+            "description": "Exchange a signed SEP-10 challenge for a JWT. The token is saved to `jwtToken` collection variable automatically."
+          }
+        },
+        {
+          "name": "Get Challenge (Multi-Key)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account\": \"{{stellarAccount}}\",\n  \"multiKey\": true,\n  \"threshold\": \"medium\",\n  \"signers\": [\n    { \"publicKey\": \"GABC...\", \"weight\": 1 },\n    { \"publicKey\": \"GDEF...\", \"weight\": 1 }\n  ]\n}"
+            },
+            "description": "Multi-key SEP-10 challenge for accounts requiring multiple signers."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SEP-24 Interactive Flows",
+      "description": "Interactive deposit and withdrawal flows (SEP-24). Returns a URL the user opens in a webview to complete KYC and the transaction.",
+      "item": [
+        {
+          "name": "Interactive Deposit",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/sep24/transactions/deposit/interactive",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"asset_code\": \"USDC\",\n  \"account\": \"{{stellarAccount}}\",\n  \"amount\": \"100.00\",\n  \"lang\": \"en\"\n}"
+            },
+            "description": "Start an interactive deposit. Open the returned `url` in a webview. Supported assets: USDC, USD, BTC, ETH."
+          }
+        },
+        {
+          "name": "Interactive Withdrawal",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/sep24/transactions/withdraw/interactive",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"asset_code\": \"USDC\",\n  \"account\": \"{{stellarAccount}}\",\n  \"amount\": \"50.00\",\n  \"lang\": \"en\"\n}"
+            },
+            "description": "Start an interactive withdrawal. Open the returned `url` in a webview."
+          }
+        },
+        {
+          "name": "Interactive Deposit (with Quote)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/sep24/transactions/deposit/interactive",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"asset_code\": \"USDC\",\n  \"account\": \"{{stellarAccount}}\",\n  \"amount\": \"100.00\",\n  \"quote_id\": \"<quote-id-from-sep38>\"\n}"
+            },
+            "description": "Deposit with a pre-obtained SEP-38 quote."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "description": "Transaction history and submission.",
+      "item": [
+        {
+          "name": "Get Transaction History",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" },
+                { "key": "assetCode", "value": "USDC", "disabled": true },
+                { "key": "sender", "value": "", "disabled": true },
+                { "key": "receiver", "value": "", "disabled": true },
+                { "key": "memo", "value": "", "disabled": true }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "description": "Paginated transaction history for the authenticated user. Filter by assetCode, sender, receiver, or memo."
+          }
+        },
+        {
+          "name": "Submit Transaction",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/transactions/submit",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xdr\": \"<base64-encoded-transaction-xdr>\"\n}"
+            },
+            "description": "Submit a pre-signed Stellar transaction XDR to the network."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SEP-12 KYC",
+      "description": "Customer KYC data management (SEP-12).",
+      "item": [
+        {
+          "name": "Get KYC Status",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/kyc/customer?account={{stellarAccount}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "description": "Retrieve KYC status for a Stellar account."
+          }
+        },
+        {
+          "name": "Submit KYC Data",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/kyc/customer",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account\": \"{{stellarAccount}}\",\n  \"first_name\": \"Jane\",\n  \"last_name\": \"Doe\",\n  \"email_address\": \"jane@example.com\",\n  \"country_code\": \"US\"\n}"
+            },
+            "description": "Submit or update KYC information for a Stellar account."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SEP-38 Quotes",
+      "description": "Anchor RFQ (Request for Quote) — SEP-38.",
+      "item": [
+        {
+          "name": "Get Prices",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/sep38/prices?sell_asset=stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&sell_amount=100",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "description": "Get available prices for a given sell asset and amount."
+          }
+        },
+        {
+          "name": "Get Quote",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/sep38/quote",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sell_asset\": \"stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN\",\n  \"buy_asset\": \"iso4217:USD\",\n  \"sell_amount\": \"100\"\n}"
+            },
+            "description": "Request a firm quote for an asset exchange."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fee Estimation",
+      "item": [
+        {
+          "name": "Get Fee",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/fee?operation=deposit&asset_code=USDC&amount=100",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "description": "Estimate the fee for a deposit or withdrawal."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Admin-only endpoints. Requires admin JWT.",
+      "item": [
+        {
+          "name": "Get Users",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/admin/users",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "description": "List all users (admin only)."
+          }
+        },
+        {
+          "name": "Get Config",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/admin/config",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "description": "Get current anchor configuration (admin only)."
+          }
+        },
+        {
+          "name": "Update Config",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/admin/config",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"feePercent\": 0.5,\n  \"minDepositAmount\": 10,\n  \"maxDepositAmount\": 10000\n}"
+            },
+            "description": "Update anchor configuration (admin only)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Metrics",
+      "item": [
+        {
+          "name": "Prometheus Metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/metrics",
+            "description": "Prometheus-format metrics endpoint."
+          }
+        }
+      ]
+    }
+  ]
+}
