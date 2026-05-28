@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_amm::{AMMClient, AMM};
+    use anchorpoint_amm::{AMMClient, AMM};
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
     use soroban_token::{TokenContract, TokenContractClient};
 
@@ -15,6 +15,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
+        let admin = Address::generate(&env);
         let token_a = Address::generate(&env);
         let token_b = Address::generate(&env);
 
@@ -24,7 +25,7 @@ mod tests {
         let start_cpu = env.budget().cpu_instruction_cost();
         let start_mem = env.budget().memory_bytes_cost();
 
-        amm_client.initialize(&token_a, &token_b);
+        amm_client.initialize(&admin, &token_a, &token_b);
 
         let cpu_used = env.budget().cpu_instruction_cost() - start_cpu;
         let mem_used = env.budget().memory_bytes_cost() - start_mem;
