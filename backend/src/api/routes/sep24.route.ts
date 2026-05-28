@@ -8,6 +8,7 @@ import {
   SUPPORTED_ASSETS,
 } from '../../services/kyc.service';
 import prisma from '../../lib/prisma';
+import { isValidStellarPublicKey } from '../../utils/stellar-address';
 
 const router = Router();
 
@@ -29,7 +30,14 @@ const unsupportedAssetResponse = (assetCode: string) => ({
   error: `Asset ${assetCode} is not supported. Supported assets: ${SUPPORTED_ASSETS.join(', ')}`,
 });
 
+const invalidAccountResponse = () => ({
+  error: 'account must be a valid Stellar public key',
+});
+
 const getBaseInteractiveUrl = (): string => process.env.INTERACTIVE_URL || 'http://localhost:3000';
+
+const hasInvalidAccount = (account: unknown): boolean =>
+  account !== undefined && !isValidStellarPublicKey(account);
 
 /**
  * @swagger
@@ -53,7 +61,7 @@ const getBaseInteractiveUrl = (): string => process.env.INTERACTIVE_URL || 'http
  *                 example: USDC
  *               account:
  *                 type: string
- *                 description: Stellar account address
+ *                 description: Stellar Ed25519 public key (G...)
  *               amount:
  *                 type: string
  *                 description: Amount to deposit
@@ -93,6 +101,10 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
     return res.status(400).json(unsupportedAssetResponse(asset_code));
+  }
+
+  if (hasInvalidAccount(account)) {
+    return res.status(400).json(invalidAccountResponse());
   }
 
   if (quote_id) {
@@ -144,7 +156,7 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
  *                 example: USDC
  *               account:
  *                 type: string
- *                 description: Destination Stellar account address
+ *                 description: Destination Stellar Ed25519 public key (G...)
  *               amount:
  *                 type: string
  *                 description: Amount to withdraw
@@ -184,6 +196,10 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
     return res.status(400).json(unsupportedAssetResponse(asset_code));
+  }
+
+  if (hasInvalidAccount(account)) {
+    return res.status(400).json(invalidAccountResponse());
   }
 
   if (quote_id) {

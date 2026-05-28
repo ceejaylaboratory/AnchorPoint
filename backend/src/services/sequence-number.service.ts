@@ -5,10 +5,17 @@
  * to prevent conflicts across concurrent workers.
  */
 
-import { AccountResponse } from '@stellar/stellar-sdk';
 import { redis } from '../lib/redis';
 import logger from '../utils/logger';
 import { BatchPaymentError, BatchErrorType } from './batch-payment.types';
+
+type SequenceAccount = {
+  sequenceNumber: () => string;
+};
+
+type HorizonSequenceServer = {
+  loadAccount: (accountPublicKey: string) => Promise<SequenceAccount>;
+};
 
 export class SequenceNumberManager {
   private redisPrefix: string;
@@ -113,7 +120,9 @@ export class SequenceNumberManager {
     try {
       // Delete the counter - next request will start from 1
       await redis.del(seqKey);
-      logger.debug(`Sequence counter reset for account: ${accountPublicKey}`);
+      logger.debug(
+        `Sequence counter reset for account: ${accountPublicKey} at base sequence ${newBaseSequence}`
+      );
     } catch (error) {
       logger.error(`Error resetting sequence counter: ${error}`);
     }
@@ -124,7 +133,7 @@ export class SequenceNumberManager {
    */
   async fetchSequenceFromNetwork(
     accountPublicKey: string,
-    horizonServer: any
+    horizonServer: HorizonSequenceServer
   ): Promise<string> {
     try {
       const account = await horizonServer.loadAccount(accountPublicKey);
