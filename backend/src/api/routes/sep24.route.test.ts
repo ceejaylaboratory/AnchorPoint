@@ -45,7 +45,7 @@ describe('SEP-24 Routes', () => {
 
       expect(res.statusCode).toBe(400);
       expect(res.body.error).toContain('Asset DOGE is not supported');
-      expect(res.body.error).toContain('Supported assets: USDC, USD, BTC, ETH');
+      expect(res.body.error).toContain('Supported assets: USDC, USD');
     });
 
     it('returns an interactive URL for supported assets (with optional params)', async () => {
@@ -100,14 +100,14 @@ describe('SEP-24 Routes', () => {
 
       expect(res.statusCode).toBe(400);
       expect(res.body.error).toContain('Asset DOGE is not supported');
-      expect(res.body.error).toContain('Supported assets: USDC, USD, BTC, ETH');
+      expect(res.body.error).toContain('Supported assets: USDC, USD');
     });
 
     it('returns an interactive URL for supported assets', async () => {
       const res = await request(app)
         .post('/transactions/withdraw/interactive')
         .send({
-          asset_code: 'BTC',
+          asset_code: 'USDC',
           account: 'GACCOUNT',
           amount: '1'
         });
@@ -115,7 +115,7 @@ describe('SEP-24 Routes', () => {
       expect(res.statusCode).toBe(200);
       const parsed = new URL(res.body.url);
       expect(parsed.pathname).toBe('/kyc-withdraw');
-      expect(parsed.searchParams.get('asset_code')).toBe('BTC');
+      expect(parsed.searchParams.get('asset_code')).toBe('USDC');
       expect(parsed.searchParams.get('account')).toBe('GACCOUNT');
       expect(parsed.searchParams.get('amount')).toBe('1');
     });

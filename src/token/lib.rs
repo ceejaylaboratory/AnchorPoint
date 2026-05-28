@@ -47,18 +47,20 @@ impl TokenContract {
         admin.require_auth();
 
         let bal = Self::balance_of(env.clone(), to.clone(), token_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(token_id, to.clone()), &bal.checked_add(amount).expect("balance overflow"));
+        env.storage().persistent().set(
+            &DataKey::Balance(token_id, to.clone()),
+            &bal.checked_add(amount).expect("balance overflow"),
+        );
 
         let supply: i128 = env
             .storage()
             .instance()
             .get(&DataKey::TotalSupply(token_id))
             .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalSupply(token_id), &supply.checked_add(amount).expect("supply overflow"));
+        env.storage().instance().set(
+            &DataKey::TotalSupply(token_id),
+            &supply.checked_add(amount).expect("supply overflow"),
+        );
 
         // Topic: event name + token_id (u64 scalar); to + amount in data.
         env.events()
@@ -88,7 +90,7 @@ impl TokenContract {
 
         // Topic: event name only; from + to + token_ids in data.
         env.events()
-            .publish(symbol_short!("batch_xf"), (from, to, token_ids));
+            .publish((symbol_short!("batch_xf"),), (from, to, token_ids));
     }
 
     pub fn approve(env: Env, owner: Address, spender: Address, token_id: u64, amount: i128) {
@@ -99,8 +101,10 @@ impl TokenContract {
             &amount,
         );
         // Topic: event name + token_id (u64 scalar); owner + spender + amount in data.
-        env.events()
-            .publish((symbol_short!("approve"), token_id), (owner, spender, amount));
+        env.events().publish(
+            (symbol_short!("approve"), token_id),
+            (owner, spender, amount),
+        );
     }
 
     pub fn set_approval_for_all(env: Env, owner: Address, operator: Address, approved: bool) {
@@ -117,7 +121,7 @@ impl TokenContract {
         }
         // Topic: event name only; owner + operator + approved in data.
         env.events()
-            .publish(symbol_short!("app_all"), (owner, operator, approved));
+            .publish((symbol_short!("app_all"),), (owner, operator, approved));
     }
 
     /// Gasless approval using Soroban's signed auth entries.
@@ -136,7 +140,8 @@ impl TokenContract {
         assert!(amount >= 0, "amount must be non-negative");
         assert!(env.ledger().timestamp() <= deadline, "permit expired");
 
-        let current_nonce = Self::permit_nonce(env.clone(), owner.clone(), spender.clone(), token_id);
+        let current_nonce =
+            Self::permit_nonce(env.clone(), owner.clone(), spender.clone(), token_id);
         assert!(nonce == current_nonce, "invalid nonce");
 
         owner.require_auth_for_args(
@@ -160,8 +165,10 @@ impl TokenContract {
             &(current_nonce + 1),
         );
 
-        env.events()
-            .publish((symbol_short!("permit"), owner, spender, token_id), (amount, nonce));
+        env.events().publish(
+            (symbol_short!("permit"), owner, spender, token_id),
+            (amount, nonce),
+        );
     }
 
     pub fn transfer_from(
@@ -329,9 +336,10 @@ impl TokenContract {
 
         Self::_write_checkpoint(env, to.clone(), token_id, current_ledger, to_bal);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(token_id, to.clone()), &to_bal.checked_add(amount).expect("balance overflow"));
+        env.storage().persistent().set(
+            &DataKey::Balance(token_id, to.clone()),
+            &to_bal.checked_add(amount).expect("balance overflow"),
+        );
 
         // Topic: event name + token_id (u64 scalar); from + to + amount in data.
         env.events()
@@ -367,7 +375,7 @@ impl TokenContract {
 mod tests {
     extern crate std;
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
 
     fn setup() -> (Env, TokenContractClient<'static>, Address) {
         let env = Env::default();
@@ -523,6 +531,8 @@ mod tests {
         env.ledger().with_mut(|li| li.timestamp = 100);
         client.permit(&owner, &spender, &token_id, &100, &0, &200);
         client.permit(&owner, &spender, &token_id, &100, &0, &200);
+    }
+
     #[should_panic(expected = "length mismatch")]
     fn test_batch_transfer_length_mismatch() {
         let (env, client, _) = setup();
@@ -536,7 +546,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "already initialized")]
     fn test_initialize_twice_panics() {
-        let (env, client, admin) = setup();
+        let (env, client, _admin) = setup();
         client.initialize(
             &admin,
             &7u32,
@@ -557,7 +567,7 @@ mod tests {
         client.set_approval_for_all(&alice, &operator, &true);
 
         client.transfer_from(&operator, &alice, &bob, &1, &300);
-        
+
         // Allowance should still be 500 because operator bypasses it
         assert_eq!(client.allowance(&alice, &operator, &1), 500);
     }
@@ -585,8 +595,6 @@ mod tests {
         assert_eq!(client.get_token_metadata(&token_id), uri);
     }
 }
-
-
 
 /// ============================================================================
 /// Formal Verification Invariants

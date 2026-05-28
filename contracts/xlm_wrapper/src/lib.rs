@@ -239,6 +239,14 @@ impl XLMWrapper {
             .unwrap_or(0)
     }
 
+    /// Standard token-style balance accessor.
+    ///
+    /// This is an alias for `balance_of` so consumers that expect the common
+    /// Soroban token shape can use the wrapper without adapter code.
+    pub fn balance(env: Env, owner: Address) -> i128 {
+        Self::balance_of(env, owner)
+    }
+
     pub fn allowance(env: Env, owner: Address, spender: Address) -> i128 {
         env.storage()
             .persistent()

@@ -1,3 +1,9 @@
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.NODE_ENV === 'test'
+    ? 'file:./prisma/test.db'
+    : 'file:./prisma/dev.db';
+}
+
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
 

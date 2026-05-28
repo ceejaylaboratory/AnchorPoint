@@ -72,6 +72,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/monitoring/prometheus-alerts.yml:/etc/prometheus/rules/prometheus-alerts.yml
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -80,6 +81,35 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - anchorpoint-network
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: anchorpoint-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./infra/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--config.expand-env'
+    environment:
+      - PAGERDUTY_ROUTING_KEY=${PAGERDUTY_ROUTING_KEY}
+    restart: unless-stopped
+    networks:
+      - anchorpoint-network
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: anchorpoint-blackbox-exporter
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./infra/monitoring/blackbox.yml:/etc/blackbox_exporter/config.yml
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
     restart: unless-stopped
     networks:
       - anchorpoint-network

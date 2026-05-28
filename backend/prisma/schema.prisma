@@ -26,15 +26,7 @@ model User {
   kycCustomer   KycCustomer?
   apiKeys       ApiKey[]
   recurringPaymentSchedules RecurringPaymentSchedule[]
-  id                    String                 @id @default(uuid())
-  publicKey             String                 @unique
-  email                 String?
   phone                 String?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  transactions          Transaction[]
-  kycCustomer           KycCustomer?
-  apiKeys               ApiKey[]
   notificationPreference NotificationPreference?
 
   @@index([publicKey])
@@ -138,12 +130,6 @@ model Transaction {
   stellarTxId         String?   @unique
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
-  type                String         // DEPOSIT | WITHDRAW | SEP31
-  status              String         // PENDING, COMPLETED, FAILED
-  externalId          String?        @unique
-  stellarTxId         String?        @unique
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
   notifications       Notification[]
 
   // Fee tracking
@@ -182,6 +168,21 @@ model FeeReport {
   @@index([reportType])
   @@index([startDate])
   @@index([endDate])
+}
+
+model Quote {
+  id                String   @id @default(uuid())
+  sourceAsset       String
+  sourceAmount      String
+  destinationAsset  String
+  destinationAmount String?
+  price             String?
+  expiresAt         DateTime
+  context           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([expiresAt])
 }
 
 model NotificationPreference {
@@ -254,6 +255,8 @@ model SystemConfig {
 
   @@index([isActive])
   @@index([createdAt])
+}
+
 enum JobStatus {
   PENDING
   ACTIVE

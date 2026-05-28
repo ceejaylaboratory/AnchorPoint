@@ -34,13 +34,11 @@ const envSchema = z.object({
     .pipe(z.number().int().min(0)),
   STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
   RECURRING_PAYMENTS_WORKER_CRON: z.string().default('*/1 * * * *'),
-  STELLAR_NETWORK: z.enum(['testnet', 'public']).default('testnet'),
   STELLAR_NETWORK_PASSPHRASE: z
     .string()
     .default('Test SDF Network ; September 2015'),
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
-  STELLAR_NETWORK_PASSPHRASE: z.string().default('Test SDF Network ; September 2015'),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_DISTRIBUTION_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),

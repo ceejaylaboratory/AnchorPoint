@@ -1,0 +1,57 @@
+groups:
+  - name: anchorpoint-api-downtime
+    interval: 30s
+    rules:
+      # Fires when Prometheus can no longer scrape the backend metrics target.
+      # This catches full process outages, networking failures, and container restarts
+      # on the primary API port.
+      - alert: AnchorPointApiTargetDown
+        expr: up{job="anchorpoint-backend-metrics"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: AnchorPoint backend metrics target is down
+          description: >-
+            Prometheus has been unable to scrape the backend metrics endpoint for
+            more than 2 minutes. This usually indicates the API process is down,
+            the container is restarting, or the service is no longer reachable on
+            the network.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Fires when the synthetic health probe fails even if the backend container
+      # is still reachable. This helps catch app-level outages that still return
+      # a TCP connection but fail /health.
+      - alert: AnchorPointApiHealthCheckFailed
+        expr: probe_success{job="anchorpoint-backend-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: AnchorPoint backend /health probe is failing
+          description: >-
+            The blackbox health probe against /health has failed for more than 2
+            minutes. The service may be returning 5xx responses, timing out, or
+            exposing a broken startup path even though the container is present.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Warn earlier when the probe starts flapping so the on-call can act before
+      # the service becomes unavailable to users.
+      - alert: AnchorPointApiHealthCheckFlapping
+        expr: changes(probe_success{job="anchorpoint-backend-health"}[10m]) > 3
+        for: 10m
+        labels:
+          severity: warning
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: AnchorPoint backend health probe is flapping
+          description: >-
+            The /health probe has changed state multiple times in the last 10
+            minutes. This usually means the API is unstable and may be close to a
+            full outage.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md

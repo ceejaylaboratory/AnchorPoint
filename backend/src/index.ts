@@ -22,8 +22,6 @@ import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
-import { errorHandler } from './api/middleware/error.middleware';
-import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { publicLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
 import { ConsoleEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
@@ -141,7 +139,6 @@ app.use('/sep40', sep40Router);
 app.use('/info', infoRouter);
 
 // SEP-24 routes
-app.use('/sep24', sep24Router);
 // Public endpoints with shared Redis-backed rate limit state
 app.use('/sep38', publicLimiter, sep38Router);
 app.use('/info', publicLimiter, infoRouter);
