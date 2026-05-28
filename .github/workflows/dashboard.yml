@@ -60,7 +60,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps ${{ matrix.browser }}
+        run: npm exec --workspace dashboard -- playwright install --with-deps ${{ matrix.browser }}
 
       - name: Run browser smoke test
         run: npm run test:browser -w dashboard -- --project=${{ matrix.browser }}

@@ -90,7 +90,7 @@ impl TokenContract {
 
         // Topic: event name only; from + to + token_ids in data.
         env.events()
-            .publish(symbol_short!("batch_xf"), (from, to, token_ids));
+            .publish((symbol_short!("batch_xf"),), (from, to, token_ids));
     }
 
     pub fn approve(env: Env, owner: Address, spender: Address, token_id: u64, amount: i128) {
@@ -121,7 +121,7 @@ impl TokenContract {
         }
         // Topic: event name only; owner + operator + approved in data.
         env.events()
-            .publish(symbol_short!("app_all"), (owner, operator, approved));
+            .publish((symbol_short!("app_all"),), (owner, operator, approved));
     }
 
     /// Gasless approval using Soroban's signed auth entries.
@@ -375,7 +375,7 @@ impl TokenContract {
 mod tests {
     extern crate std;
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
 
     fn setup() -> (Env, TokenContractClient<'static>, Address) {
         let env = Env::default();
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "already initialized")]
     fn test_initialize_twice_panics() {
-        let (env, client, admin) = setup();
+        let (env, client, _admin) = setup();
         client.initialize(
             &admin,
             &7u32,
