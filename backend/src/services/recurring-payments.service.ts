@@ -1,7 +1,7 @@
 import cronParser from 'cron-parser';
-import { StrKey } from '@stellar/stellar-sdk';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
+import { isValidStellarPublicKey } from '../utils/stellar-address';
 import { BatchPaymentService } from './batch-payment.service';
 import { config } from '../config/env';
 
@@ -33,7 +33,7 @@ export class RecurringPaymentsService {
   }
 
   validateScheduleInput(input: RecurringPaymentScheduleInput): void {
-    if (!StrKey.isValidEd25519PublicKey(input.destination)) {
+    if (!isValidStellarPublicKey(input.destination)) {
       throw new Error('Invalid destination Stellar address');
     }
 
