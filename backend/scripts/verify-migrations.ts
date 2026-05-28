@@ -150,7 +150,7 @@ class MigrationVerifier {
       );
 
       // If there's any diff output, there's inconsistency
-      if (diffOutput.trim() && !diffOutput.includes('No difference')) {
+      if (diffOutput.trim() && !diffOutput.includes('No difference') && !diffOutput.includes('-- This is an empty migration.')) {
         console.error('❌ Schema inconsistency detected:');
         console.error(diffOutput);
         return false;

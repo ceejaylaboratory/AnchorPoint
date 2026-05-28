@@ -111,7 +111,7 @@ pub fn emit_event(env: &Env, event: AnchorEvent) {
         AnchorEvent::Voted(_) => symbol_short!("voted"),
         AnchorEvent::ProposalExecuted(_) => symbol_short!("prop_exe"),
         AnchorEvent::FundsReleased(_) => symbol_short!("release"),
-        AnchorEvent::CrossContractEvent(_) => symbol_short!("x_contract"),
+        AnchorEvent::CrossContractEvent(_) => symbol_short!("xcontract"),
     };
 
     env.events()
@@ -121,6 +121,7 @@ pub fn emit_event(env: &Env, event: AnchorEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::Val;
     use soroban_sdk::{
         contract, contractimpl, testutils::Address as _, testutils::Events, vec, FromVal, IntoVal,
     };

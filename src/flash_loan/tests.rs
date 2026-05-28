@@ -1,126 +1,147 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    extern crate std;
+    use crate::*;
     use soroban_sdk::{
+        contract, contractimpl, symbol_short,
         testutils::Address as _,
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env, Vec,
     };
 
     /// A mock receiver contract for testing successful flash loans.
-    #[contract]
-    pub struct MockReceiverSuccess;
+    pub mod mod_mockreceiversuccess {
+        use super::*;
+        #[contract]
+        pub struct MockReceiverSuccess;
 
-    #[contractimpl]
-    impl MockReceiverSuccess {
-        pub fn execute_loan(env: Env, token: Address, amount: i128, fee: i128) {
-            let token_client = TokenClient::new(&env, &token);
-            let total_due = amount + fee;
-
-            // Transfer back the amount + fee to the provider
-            token_client.transfer(
-                &env.current_contract_address(),
-                &env.storage()
-                    .instance()
-                    .get::<_, Address>(&symbol_short!("provider"))
-                    .unwrap(),
-                &total_due,
-            );
-        }
-
-        pub fn set_provider(env: Env, provider: Address) {
-            env.storage()
-                .instance()
-                .set(&symbol_short!("provider"), &provider);
-        }
-    }
-
-    /// A mock receiver contract for testing failed flash loans.
-    #[contract]
-    pub struct MockReceiverFailure;
-
-    #[contractimpl]
-    impl MockReceiverFailure {
-        pub fn execute_loan(_env: Env, _token: Address, _amount: i128, _fee: i128) {
-            // Do nothing, return nothing
-        }
-    }
-
-    /// A mock receiver contract for testing successful batch flash loans.
-    #[contract]
-    pub struct MockBatchReceiverSuccess;
-
-    #[contractimpl]
-    impl MockBatchReceiverSuccess {
-        pub fn execute_batch_loan(env: Env, loans: Vec<LoanDetail>) {
-            let provider = env
-                .storage()
-                .instance()
-                .get::<_, Address>(&symbol_short!("provider"))
-                .unwrap();
-
-            for i in 0..loans.len() {
-                let loan = loans.get(i).unwrap();
-                let token_client = TokenClient::new(&env, &loan.token);
-                let total_due = loan.amount + loan.fee;
+        #[contractimpl]
+        impl MockReceiverSuccess {
+            pub fn execute_loan(env: Env, token: Address, amount: i128, fee: i128) {
+                let token_client = TokenClient::new(&env, &token);
+                let total_due = amount + fee;
 
                 // Transfer back the amount + fee to the provider
-                token_client.transfer(&env.current_contract_address(), &provider, &total_due);
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &env.storage()
+                        .instance()
+                        .get::<_, Address>(&symbol_short!("provider"))
+                        .unwrap(),
+                    &total_due,
+                );
+            }
+
+            pub fn set_provider(env: Env, provider: Address) {
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("provider"), &provider);
             }
         }
-
-        pub fn set_provider(env: Env, provider: Address) {
-            env.storage()
-                .instance()
-                .set(&symbol_short!("provider"), &provider);
-        }
     }
+    use mod_mockreceiversuccess::MockReceiverSuccess;
+    use mod_mockreceiversuccess::MockReceiverSuccessClient;
 
-    /// A mock receiver contract for testing failed batch flash loans.
-    #[contract]
-    pub struct MockBatchReceiverFailure;
+    pub mod mod_mockreceiverfailure {
+        use super::*;
+        #[contract]
+        pub struct MockReceiverFailure;
 
-    #[contractimpl]
-    impl MockBatchReceiverFailure {
-        pub fn execute_batch_loan(_env: Env, _loans: Vec<LoanDetail>) {
-            // Do nothing, return nothing
-        }
-    }
-
-    /// A mock receiver that partially repays batch loans.
-    #[contract]
-    pub struct MockBatchReceiverPartialRepayment;
-
-    #[contractimpl]
-    impl MockBatchReceiverPartialRepayment {
-        pub fn execute_batch_loan(env: Env, loans: Vec<LoanDetail>) {
-            let provider = env
-                .storage()
-                .instance()
-                .get::<_, Address>(&symbol_short!("provider"))
-                .unwrap();
-
-            // Only repay the first loan
-            if loans.len() > 0 {
-                let loan = loans.get(0).unwrap();
-                let token_client = TokenClient::new(&env, &loan.token);
-                let total_due = loan.amount + loan.fee;
-                token_client.transfer(&env.current_contract_address(), &provider, &total_due);
+        #[contractimpl]
+        impl MockReceiverFailure {
+            pub fn execute_loan(_env: Env, _token: Address, _amount: i128, _fee: i128) {
+                // Do nothing, return nothing
             }
         }
+    }
+    use mod_mockreceiverfailure::MockReceiverFailure;
 
-        pub fn set_provider(env: Env, provider: Address) {
-            env.storage()
-                .instance()
-                .set(&symbol_short!("provider"), &provider);
+    pub mod mod_mockbatchreceiversuccess {
+        use super::*;
+        #[contract]
+        pub struct MockBatchReceiverSuccess;
+
+        #[contractimpl]
+        impl MockBatchReceiverSuccess {
+            pub fn execute_batch_loan(env: Env, loans: Vec<LoanDetail>) {
+                let provider = env
+                    .storage()
+                    .instance()
+                    .get::<_, Address>(&symbol_short!("provider"))
+                    .unwrap();
+
+                for i in 0..loans.len() {
+                    let loan = loans.get(i).unwrap();
+                    let token_client = TokenClient::new(&env, &loan.token);
+                    let total_due = loan.amount + loan.fee;
+
+                    // Transfer back the amount + fee to the provider
+                    token_client.transfer(&env.current_contract_address(), &provider, &total_due);
+                }
+            }
+
+            pub fn set_provider(env: Env, provider: Address) {
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("provider"), &provider);
+            }
         }
     }
+    use mod_mockbatchreceiversuccess::MockBatchReceiverSuccess;
+    use mod_mockbatchreceiversuccess::MockBatchReceiverSuccessClient;
+
+    pub mod mod_mockbatchreceiverfailure {
+        use super::*;
+        #[contract]
+        pub struct MockBatchReceiverFailure;
+
+        #[contractimpl]
+        impl MockBatchReceiverFailure {
+            pub fn execute_batch_loan(_env: Env, _loans: Vec<LoanDetail>) {
+                // Do nothing, return nothing
+            }
+        }
+    }
+    use mod_mockbatchreceiverfailure::MockBatchReceiverFailure;
+
+    pub mod mod_mockbatchreceiverpartialrepayment {
+        use super::*;
+        #[contract]
+        pub struct MockBatchReceiverPartialRepayment;
+
+        #[contractimpl]
+        impl MockBatchReceiverPartialRepayment {
+            pub fn execute_batch_loan(env: Env, loans: Vec<LoanDetail>) {
+                let provider = env
+                    .storage()
+                    .instance()
+                    .get::<_, Address>(&symbol_short!("provider"))
+                    .unwrap();
+
+                // Only repay the first loan
+                if loans.len() > 0 {
+                    let loan = loans.get(0).unwrap();
+                    let token_client = TokenClient::new(&env, &loan.token);
+                    let total_due = loan.amount + loan.fee;
+                    token_client.transfer(&env.current_contract_address(), &provider, &total_due);
+                }
+            }
+
+            pub fn set_provider(env: Env, provider: Address) {
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("provider"), &provider);
+            }
+        }
+    }
+    use mod_mockbatchreceiverpartialrepayment::MockBatchReceiverPartialRepayment;
+    use mod_mockbatchreceiverpartialrepayment::MockBatchReceiverPartialRepaymentClient;
 
     fn setup(env: &Env) -> (Address, Address, Address, Address) {
         env.mock_all_auths();
 
         let admin = Address::generate(env);
-        let provider_id = env.register_contract(None, FlashLoanProvider);
+        let provider_id = env.register(FlashLoanProvider, ());
         let token_id = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
@@ -129,14 +150,14 @@ mod tests {
         let sac = StellarAssetClient::new(env, &token_id);
         sac.mint(&provider_id, &1_000_000);
 
-        (provider_id, token_id, admin, admin.clone())
+        (provider_id, token_id, admin.clone(), admin)
     }
 
     fn setup_multiple_tokens(env: &Env, count: u32) -> (Address, Vec<Address>, Address) {
         env.mock_all_auths();
 
         let admin = Address::generate(env);
-        let provider_id = env.register_contract(None, FlashLoanProvider);
+        let provider_id = env.register(FlashLoanProvider, ());
 
         let mut token_ids = Vec::new(env);
         for _ in 0..count {
@@ -156,7 +177,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, token_id, _admin, _) = setup(&env);
 
-        let receiver_id = env.register_contract(None, MockReceiverSuccess);
+        let receiver_id = env.register(MockReceiverSuccess, ());
         let receiver_client = MockReceiverSuccessClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -177,7 +198,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, token_id, _admin, _) = setup(&env);
 
-        let receiver_id = env.register_contract(None, MockReceiverFailure);
+        let receiver_id = env.register(MockReceiverFailure, ());
 
         let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
         provider_client.flash_loan(&receiver_id, &token_id, &100_000);
@@ -216,7 +237,7 @@ mod tests {
         let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
         provider_client.set_fee_bps(&10); // 0.10%
 
-        let receiver_id = env.register_contract(None, MockReceiverSuccess);
+        let receiver_id = env.register(MockReceiverSuccess, ());
         let receiver_client = MockReceiverSuccessClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -234,7 +255,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 3);
 
-        let receiver_id = env.register_contract(None, MockBatchReceiverSuccess);
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
         let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -254,9 +275,9 @@ mod tests {
         provider_client.flash_loan_batch(&receiver_id, &loans);
 
         // Check provider balances: should be initial + fee for each token
-        let token_client_1 = TokenClient::new(&env, token_ids.get(0).unwrap());
-        let token_client_2 = TokenClient::new(&env, token_ids.get(1).unwrap());
-        let token_client_3 = TokenClient::new(&env, token_ids.get(2).unwrap());
+        let token_client_1 = TokenClient::new(&env, &token_ids.get(0).unwrap());
+        let token_client_2 = TokenClient::new(&env, &token_ids.get(1).unwrap());
+        let token_client_3 = TokenClient::new(&env, &token_ids.get(2).unwrap());
 
         assert_eq!(token_client_1.balance(&provider_id), 1_000_000 + fee_1);
         assert_eq!(token_client_2.balance(&provider_id), 1_000_000 + fee_2);
@@ -268,7 +289,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 1);
 
-        let receiver_id = env.register_contract(None, MockBatchReceiverSuccess);
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
         let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -281,7 +302,7 @@ mod tests {
 
         provider_client.flash_loan_batch(&receiver_id, &loans);
 
-        let token_client = TokenClient::new(&env, token_ids.get(0).unwrap());
+        let token_client = TokenClient::new(&env, &token_ids.get(0).unwrap());
         assert_eq!(token_client.balance(&provider_id), 1_000_000 + fee);
     }
 
@@ -291,7 +312,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, _token_ids, _admin) = setup_multiple_tokens(&env, 1);
 
-        let receiver_id = env.register_contract(None, MockBatchReceiverSuccess);
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
         let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -307,7 +328,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 2);
 
-        let receiver_id = env.register_contract(None, MockBatchReceiverFailure);
+        let receiver_id = env.register(MockBatchReceiverFailure, ());
 
         let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
 
@@ -324,7 +345,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 2);
 
-        let receiver_id = env.register_contract(None, MockBatchReceiverPartialRepayment);
+        let receiver_id = env.register(MockBatchReceiverPartialRepayment, ());
         let receiver_client = MockBatchReceiverPartialRepaymentClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -345,7 +366,7 @@ mod tests {
         let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
         provider_client.set_fee_bps(&15); // 0.15%
 
-        let receiver_id = env.register_contract(None, MockBatchReceiverSuccess);
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
         let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -359,8 +380,8 @@ mod tests {
 
         provider_client.flash_loan_batch(&receiver_id, &loans);
 
-        let token_client_1 = TokenClient::new(&env, token_ids.get(0).unwrap());
-        let token_client_2 = TokenClient::new(&env, token_ids.get(1).unwrap());
+        let token_client_1 = TokenClient::new(&env, &token_ids.get(0).unwrap());
+        let token_client_2 = TokenClient::new(&env, &token_ids.get(1).unwrap());
 
         assert_eq!(token_client_1.balance(&provider_id), 1_000_000 + fee_1);
         assert_eq!(token_client_2.balance(&provider_id), 1_000_000 + fee_2);
@@ -371,7 +392,7 @@ mod tests {
         let env = Env::default();
         let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 5);
 
-        let receiver_id = env.register_contract(None, MockBatchReceiverSuccess);
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
         let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
         receiver_client.set_provider(&provider_id);
 
@@ -388,7 +409,7 @@ mod tests {
         for i in 0..5 {
             let amount = (i + 1) as i128 * 10_000;
             let fee = amount * fee_bps / 10000;
-            let token_client = TokenClient::new(&env, token_ids.get(i).unwrap());
+            let token_client = TokenClient::new(&env, &token_ids.get(i).unwrap());
             assert_eq!(token_client.balance(&provider_id), 1_000_000 + fee);
         }
     }

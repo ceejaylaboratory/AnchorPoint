@@ -11,13 +11,9 @@ import {
   SignerInfo,
   SignatureInfo,
   MultiKeyChallenge,
-  MultiKeyVerifiedToken
-import {
+  MultiKeyVerifiedToken,
   generateSep10ChallengeTransaction,
   storeSep10Challenge,
-  getChallenge as getChallengeFromRedis,
-  removeChallenge,
-  signToken,
   verifySep10ChallengeTransaction,
   extractAccountFromSep10Transaction
 } from '../../services/auth.service';
@@ -82,14 +78,6 @@ export const getChallenge = async (
     // Store the challenge in Redis with TTL
     await storeChallenge(redisService, account, challenge);
 
-    // In a real implementation, you would create a Stellar transaction
-    // with the challenge as a manage_data operation
-    const response: ChallengeResponse = {
-      transaction: challenge, // Simplified - should be a base64 encoded transaction
-      network_passphrase: config.STELLAR_NETWORK_PASSPHRASE
-      network_passphrase: process.env?.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
-      multiKeyChallenge
-    // Use configured anchor key or generate a default one for demo
     const anchorPublicKey = config.ANCHOR_PUBLIC_KEY || 'GBAD_PUBLIC_KEY'; // Default for demo
     const networkType = config.STELLAR_NETWORK === 'public' ? NetworkType.PUBLIC : NetworkType.TESTNET;
 
@@ -104,8 +92,9 @@ export const getChallenge = async (
     await storeSep10Challenge(redisService, account, sep10Challenge);
 
     const response: ChallengeResponse = {
-      transaction: sep10Challenge.transactionXdr,
-      network_passphrase: sep10Challenge.networkPassphrase
+      transaction: sep10Challenge.transactionXdr || sep10Challenge.challenge,
+      network_passphrase: sep10Challenge.networkPassphrase || config.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+      multiKeyChallenge
     };
 
     return res.json(response);
@@ -181,10 +170,6 @@ export const getToken = async (
     }
     
     // Single-key authentication (existing logic)
-    const mockAccount = 'GBAD_PUBLIC_KEY'; // In real implementation, extract from transaction
-    const storedChallenge = await getChallengeFromRedis(redisService, mockAccount);
-
-    if (!storedChallenge || storedChallenge.challenge !== transaction) {
     const networkType = config.STELLAR_NETWORK === 'public' ? NetworkType.PUBLIC : NetworkType.TESTNET;
 
     // Extract the account from the signed transaction

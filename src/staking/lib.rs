@@ -121,28 +121,7 @@ impl StakingContract {
         }
 
         env.storage().persistent().set(&DataKey::Stake(user.clone()), &info);
-        env.events().publish((symbol_short!("stake"), user), (amount, info.lock_end, info.rate_multiplier));
-        // Update rewards
-        info.accumulated_rewards = info.accumulated_rewards
-            .checked_add(Self::calc_new_rewards(env.clone(), &info, current_time))
-            .expect("rewards overflow");
-        info.amount = info.amount.checked_add(amount).expect("stake overflow");
-        info.last_updated = current_time;
-        info.lock_end = current_time
-            .checked_add(
-                env
-                    .storage()
-                    .instance()
-                    .get::<_, u64>(&DataKey::LockPeriod)
-                    .unwrap()
-            ).expect("lock end overflow");
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::Stake(user.clone()), &info);
-        // Topic: event name only; user + amounts in data.
-        env.events()
-            .publish(symbol_short!("stake"), (user, amount, info.lock_end));
+        env.events().publish((symbol_short!("staking"), symbol_short!("stake")), (user, amount, info.lock_end, info.rate_multiplier));
     }
 
     pub fn withdraw(env: Env, user: Address) {
@@ -168,16 +147,12 @@ impl StakingContract {
         let current_time = env.ledger().timestamp();
         let base_rate: i128 = env.storage().instance().get(&DataKey::BaseRate).unwrap();
         let rewards = info.accumulated_rewards + Self::calc_new_rewards(base_rate, &info, current_time);
-        let rewards =
-            info.accumulated_rewards.checked_add(Self::calc_new_rewards(env.clone(), &info, current_time)).expect("rewards overflow");
         let mut amount_to_return = info.amount;
 
         if current_time < info.lock_end {
             let penalty_bps: i128 = env.storage().instance().get(&DataKey::PenaltyBps).unwrap();
             let penalty = (amount_to_return * penalty_bps) / 10000;
             amount_to_return -= penalty;
-            let penalty = amount_to_return.checked_mul(penalty_bps).expect("penalty overflow") / 10000;
-            amount_to_return = amount_to_return.checked_sub(penalty).expect("penalty underflow");
             // Penalties stay in contract as "unclaimed rewards" or similar
             // Or just lost.
         }
@@ -190,12 +165,7 @@ impl StakingContract {
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&env.current_contract_address(), &user, &total_to_send);
 
-        env.events().publish((symbol_short!("withdraw"), user), (amount_to_return, rewards));
-        // Topic: event name only; user + amounts in data.
-        env.events().publish(
-            symbol_short!("withdraw"),
-            (user, amount_to_return, rewards),
-        );
+        env.events().publish((symbol_short!("staking"), symbol_short!("withdraw")), (user, amount_to_return, rewards));
     }
 
     pub fn claim_rewards(env: Env, user: Address) {
@@ -219,8 +189,6 @@ impl StakingContract {
         let current_time = env.ledger().timestamp();
         let base_rate: i128 = env.storage().instance().get(&DataKey::BaseRate).unwrap();
         let rewards = info.accumulated_rewards + Self::calc_new_rewards(base_rate, &info, current_time);
-        let rewards =
-            info.accumulated_rewards.checked_add(Self::calc_new_rewards(env.clone(), &info, current_time)).expect("rewards overflow");
         assert!(rewards > 0, "no rewards to claim");
 
         info.accumulated_rewards = 0;
@@ -231,10 +199,7 @@ impl StakingContract {
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&env.current_contract_address(), &user, &rewards);
 
-        env.events().publish((symbol_short!("claim"), user), rewards);
-        // Topic: event name only; user + rewards in data.
-        env.events()
-            .publish(symbol_short!("claim"), (user, rewards));
+        env.events().publish((symbol_short!("staking"), symbol_short!("claim")), (user, rewards));
     }
 
     pub fn get_stake_info(env: Env, user: Address) -> StakeInfo {
@@ -264,14 +229,14 @@ impl StakingContract {
         let seconds = (current_time - info.last_updated) as i128;
         // rate_multiplier: 100 = 1x, 150 = 1.5x, 200 = 2x
         (info.amount * base_rate * seconds * info.rate_multiplier) / (REWARD_PRECISION * 100)
-        info.amount.checked_mul(rate).expect("reward overflow").checked_mul(seconds).expect("reward overflow") / REWARD_PRECISION
     }
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, Address, symbol_short};
+    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, Address, symbol_short, token::{self, StellarAssetClient}};
 
     #[contract]
     pub struct MockRegistry;
@@ -293,9 +258,9 @@ mod tests {
         
         let admin = Address::generate(&env);
         let token_admin = Address::generate(&env);
-        let token_id = env.register_stellar_asset_contract(token_admin);
+        let token_id = env.register_stellar_asset_contract_v2(token_admin).address();
         
-        client.initialize(&admin, &token_id, &1000, &3600, &1000); // 10% penalty, 1hr lock
+        client.initialize(&admin, &token_id, &1000, &1000); // 10% penalty, 1hr lock
         (env, client, admin, token_id)
     }
 
@@ -303,7 +268,7 @@ mod tests {
     fn test_initialize() {
         let (env, client, _admin, token_id) = setup();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            client.initialize(&Address::generate(&env), &token_id, &1000, &3600, &1000);
+            client.initialize(&Address::generate(&env), &token_id, &1000, &1000);
         }));
         assert!(result.is_err());
     }
@@ -314,9 +279,10 @@ mod tests {
         let user = Address::generate(&env);
         
         let token_client = token::Client::new(&env, &token_id);
-        token_client.mint(&user, &10000);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
         
-        client.stake(&user, &1000);
+        client.stake(&user, &1000, &0);
         
         let info = client.get_stake_info(&user);
         assert_eq!(info.amount, 1000);
@@ -332,9 +298,10 @@ mod tests {
         let (env, client, _admin, token_id) = setup();
         let user = Address::generate(&env);
         let token_client = token::Client::new(&env, &token_id);
-        token_client.mint(&user, &10000);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
         
-        client.stake(&user, &1000);
+        client.stake(&user, &1000, &0);
         
         // Withdraw immediately (before lock_end)
         client.withdraw(&user);
@@ -350,9 +317,10 @@ mod tests {
         let (env, client, _admin, token_id) = setup();
         let user = Address::generate(&env);
         let token_client = token::Client::new(&env, &token_id);
-        token_client.mint(&user, &10000);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
         
-        client.stake(&user, &1000);
+        client.stake(&user, &1000, &0);
         
         // Advance time 4000s (> 3600s lock)
         env.ledger().set_timestamp(env.ledger().timestamp() + 4000);
@@ -368,9 +336,10 @@ mod tests {
         let (env, client, _admin, token_id) = setup();
         let user = Address::generate(&env);
         let token_client = token::Client::new(&env, &token_id);
-        token_client.mint(&user, &10000);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
         
-        client.stake(&user, &1000);
+        client.stake(&user, &1000, &0);
         
         env.ledger().set_timestamp(env.ledger().timestamp() + 1000);
         
@@ -396,7 +365,7 @@ mod tests {
         
         client.set_security_registry(&registry_id);
         
-        client.stake(&user, &100);
+        client.stake(&user, &100, &0);
     }
 
     #[test]
@@ -413,7 +382,7 @@ mod tests {
     fn test_stake_zero_panics() {
         let (env, client, _admin, _token_id) = setup();
         let user = Address::generate(&env);
-        client.stake(&user, &0);
+        client.stake(&user, &0, &0);
     }
 
     #[test]
@@ -429,7 +398,7 @@ mod tests {
     fn test_claim_no_rewards_panics() {
         let (env, client, _admin, _token_id) = setup();
         let user = Address::generate(&env);
-        client.stake(&user, &1000);
+        client.stake(&user, &1000, &0);
         client.claim_rewards(&user);
     }
 }

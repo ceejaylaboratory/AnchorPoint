@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 mod tests {
-    use soroban_amm::{AMMClient, AMM};
+    use anchorpoint_amm::{AMMClient, AMM};
+    use sep41_token::{TokenContract, TokenContractClient};
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
-    use soroban_token::{TokenContract, TokenContractClient};
 
     // Fails CI if gas increases beyond baseline + ~10% (adjust baseline as needed)
     const MAX_CPU: u64 = 50_000_000;
@@ -21,13 +21,13 @@ mod tests {
         let amm_id = env.register(AMM, ());
         let amm_client = AMMClient::new(&env, &amm_id);
 
-        let start_cpu = env.budget().cpu_instruction_cost();
-        let start_mem = env.budget().memory_bytes_cost();
+        let start_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+        let start_mem = env.cost_estimate().budget().memory_bytes_cost();
 
         amm_client.initialize(&token_a, &token_b);
 
-        let cpu_used = env.budget().cpu_instruction_cost() - start_cpu;
-        let mem_used = env.budget().memory_bytes_cost() - start_mem;
+        let cpu_used = env.cost_estimate().budget().cpu_instruction_cost() - start_cpu;
+        let mem_used = env.cost_estimate().budget().memory_bytes_cost() - start_mem;
 
         // In a real framework, we'd log this or compare with previous runs exactly
         assert!(cpu_used < MAX_CPU, "AMM initialize CPU regression!");
@@ -35,7 +35,8 @@ mod tests {
 
         let _shares = amm_client.deposit(&Address::generate(&env), &1000, &1000);
 
-        let deposit_cpu_used = env.budget().cpu_instruction_cost() - cpu_used - start_cpu;
+        let deposit_cpu_used =
+            env.cost_estimate().budget().cpu_instruction_cost() - cpu_used - start_cpu;
         assert!(deposit_cpu_used < MAX_CPU, "AMM deposit CPU regression!");
     }
 
@@ -59,13 +60,13 @@ mod tests {
         let user2 = Address::generate(&env);
         client.mint(&user1, &1, &1000);
 
-        let start_cpu = env.budget().cpu_instruction_cost();
-        let start_mem = env.budget().memory_bytes_cost();
+        let start_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+        let start_mem = env.cost_estimate().budget().memory_bytes_cost();
 
         client.transfer(&user1, &user2, &1, &500);
 
-        let cpu_used = env.budget().cpu_instruction_cost() - start_cpu;
-        let mem_used = env.budget().memory_bytes_cost() - start_mem;
+        let cpu_used = env.cost_estimate().budget().cpu_instruction_cost() - start_cpu;
+        let mem_used = env.cost_estimate().budget().memory_bytes_cost() - start_mem;
 
         assert!(cpu_used < MAX_CPU, "Token transfer CPU regression!");
         assert!(mem_used < MAX_MEM, "Token transfer MEM regression!");

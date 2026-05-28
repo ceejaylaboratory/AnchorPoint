@@ -12,7 +12,8 @@
 //! - Query event history for indexers
 
 use soroban_sdk::{
-    bytes, contract, contractimpl, contracttype, symbol_short, vec, Address, Bytes, Env, String as SorobanString, Map, Vec,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Map,
+    String as SorobanString, Vec,
 };
 use utils::events::{emit_event, AnchorEvent, CrossContractEvent};
 
@@ -67,9 +68,7 @@ impl EventHub {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::EventCounter, &0u64);
+        env.storage().instance().set(&DataKey::EventCounter, &0u64);
 
         let contracts: Map<Address, bool> = Map::new(&env);
         env.storage()
@@ -81,10 +80,8 @@ impl EventHub {
             .persistent()
             .set(&DataKey::EventLog, &event_log);
 
-        env.events().publish(
-            (symbol_short!("hub"), symbol_short!("init")),
-            admin,
-        );
+        env.events()
+            .publish((symbol_short!("hub"), symbol_short!("init")), admin);
     }
 
     /// Register a new source contract with the Event Hub
@@ -117,10 +114,8 @@ impl EventHub {
             .instance()
             .set(&DataKey::RegisteredContracts, &contracts);
 
-        env.events().publish(
-            (symbol_short!("hub"), symbol_short!("reg")),
-            contract,
-        );
+        env.events()
+            .publish((symbol_short!("hub"), symbol_short!("reg")), contract);
     }
 
     /// Unregister a source contract
@@ -149,10 +144,8 @@ impl EventHub {
             .instance()
             .set(&DataKey::RegisteredContracts, &contracts);
 
-        env.events().publish(
-            (symbol_short!("hub"), symbol_short!("unreg")),
-            contract,
-        );
+        env.events()
+            .publish((symbol_short!("hub"), symbol_short!("unreg")), contract);
     }
 
     /// Check if a contract is registered
@@ -170,10 +163,7 @@ impl EventHub {
             .get(&DataKey::RegisteredContracts)
             .expect("hub not initialized");
 
-        contracts
-            .get(contract)
-            .map(|v| v)
-            .unwrap_or(false)
+        contracts.get(contract).map(|v| v).unwrap_or(false)
     }
 
     /// Capture and re-emit an event from a source contract
@@ -368,10 +358,8 @@ impl EventHub {
             .expect("hub not initialized");
 
         let mut result = Vec::new(&env);
-        for i in 0..contracts.len() {
-            if let Some(key) = contracts.key_by_index(i) {
-                result.push_back(key);
-            }
+        for key in contracts.keys() {
+            result.push_back(key);
         }
 
         result
@@ -424,14 +412,10 @@ mod tests {
         let source_contract = Address::generate(&env);
         client.register_contract(&admin, &source_contract);
 
-        let event_type = SorobanString::from_slice(&env, b"transfer");
+        let event_type = SorobanString::from_str(&env, "transfer");
         let event_data = Bytes::from_slice(&env, b"test_event_data");
 
-        client.capture_event(
-            &source_contract,
-            &event_type,
-            &event_data,
-        );
+        client.capture_event(&source_contract, &event_type, &event_data);
 
         assert_eq!(client.get_event_count(), 1);
 
@@ -476,7 +460,7 @@ mod tests {
         client.register_contract(&admin, &contract1);
         client.register_contract(&admin, &contract2);
 
-        let event_type = SorobanString::from_slice(&env, b"transfer");
+        let event_type = SorobanString::from_str(&env, "transfer");
         let event_data = Bytes::from_slice(&env, b"data");
 
         client.capture_event(&contract1, &event_type, &event_data);

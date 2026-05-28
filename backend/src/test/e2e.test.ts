@@ -7,7 +7,7 @@ import prisma from '../lib/prisma';
 describe('AnchorPoint E2E Tests (SEP-1, SEP-10, SEP-24, SEP-38)', () => {
   const clientKeypair = Keypair.random();
   const clientPublicKey = clientKeypair.publicKey();
-  let authToken = '';
+  const authToken = '';
   let quoteId = '';
 
   beforeAll(async () => {

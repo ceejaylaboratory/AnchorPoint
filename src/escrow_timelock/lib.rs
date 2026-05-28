@@ -250,7 +250,9 @@ impl EscrowTimelock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{
+        testutils::Address as _, testutils::Ledger, token::StellarAssetClient, Address, Env,
+    };
 
     #[test]
     fn test_initialize_escrow() {
@@ -260,15 +262,17 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
-        let token_client = token::Client::new(&e, &token_id);
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         // Mint tokens to sender
         let amount = 1000;
-        token_client.mint(&sender, &amount);
+        stellar_client.mint(&sender, &amount);
         assert_eq!(token_client.balance(&sender), amount);
 
         // Set unlock time to future (current time + 1000 seconds)
@@ -300,15 +304,17 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         // Mint tokens and initialize
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000; // Set to a fixed time
         e.ledger().with_mut(|li| li.timestamp = 500); // Set current time before unlock
@@ -336,14 +342,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         // Set unlock time far in future
         let unlock_time = 10000;
@@ -368,14 +376,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000;
         e.ledger().with_mut(|li| li.timestamp = 500);
@@ -402,14 +412,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let _token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000;
         e.ledger().with_mut(|li| li.timestamp = 500); // Before unlock
@@ -428,14 +440,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let _token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000;
         e.ledger().with_mut(|li| li.timestamp = 1500); // After unlock

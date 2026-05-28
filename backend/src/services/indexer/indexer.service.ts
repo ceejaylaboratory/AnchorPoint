@@ -160,7 +160,7 @@ export class IndexerService {
 
     // Step 2: Fetch stellar.toml
     let parsedToml: Record<string, unknown>;
-    let rawToml: string | null = null;
+    const rawToml: string | null = null;
     try {
       parsedToml = await this.tomlFetcher.fetch(homeDomain);
     } catch (err) {

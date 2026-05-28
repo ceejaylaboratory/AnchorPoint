@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec, Map};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec};
 
 /// Storage keys used by the upgradeable contract.
 #[derive(Clone)]
@@ -69,7 +69,9 @@ impl UpgradeableContract {
         }
 
         // Store the admin list and set the initial version.
-        env.storage().instance().set(&DataKey::AdminList, &admin_list);
+        env.storage()
+            .instance()
+            .set(&DataKey::AdminList, &admin_list);
         env.storage().instance().set(&DataKey::Version, &1u32);
     }
 
@@ -86,18 +88,22 @@ impl UpgradeableContract {
     /// Panics if the caller is not an administrator or if there's already a pending proposal.
     pub fn propose_upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
         admin.require_auth();
-        
+
         // Verify caller is an administrator
-        let admin_list: Vec<Address> = env.storage().instance().get(&DataKey::AdminList).expect("not initialized");
+        let admin_list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminList)
+            .expect("not initialized");
         if !admin_list.iter().any(|a| a == admin) {
             panic!("caller is not an administrator");
         }
-        
+
         // Check if there's already a pending proposal
         if env.storage().instance().has(&DataKey::UpgradeProposal) {
             panic!("upgrade proposal already pending");
         }
-        
+
         // Create the proposal
         let proposal = UpgradeProposal {
             wasm_hash: new_wasm_hash.clone(),
@@ -105,14 +111,21 @@ impl UpgradeableContract {
             approval_count: 1, // Proposer counts as first approval
             executed: false,
         };
-        
-        env.storage().instance().set(&DataKey::UpgradeProposal, &proposal);
-        
+
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeProposal, &proposal);
+
         // Record the proposer's approval
-        env.storage().instance().set(&DataKey::Approval(admin.clone()), &true);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::Approval(admin.clone()), &true);
+
         env.events().publish(
-            (soroban_sdk::symbol_short!("upgrade"), soroban_sdk::symbol_short!("proposed")),
+            (
+                soroban_sdk::symbol_short!("upgrade"),
+                soroban_sdk::symbol_short!("proposed"),
+            ),
             (admin, new_wasm_hash),
         );
     }
@@ -130,56 +143,69 @@ impl UpgradeableContract {
     /// or the caller has already approved.
     pub fn approve_upgrade(env: Env, admin: Address) {
         admin.require_auth();
-        
+
         // Verify caller is an administrator
-        let admin_list: Vec<Address> = env.storage().instance().get(&DataKey::AdminList).expect("not initialized");
+        let admin_list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminList)
+            .expect("not initialized");
         if !admin_list.iter().any(|a| a == admin) {
             panic!("caller is not an administrator");
         }
-        
+
         // Check if there's a pending proposal
-        let mut proposal: UpgradeProposal = env.storage().instance()
+        let mut proposal: UpgradeProposal = env
+            .storage()
+            .instance()
             .get(&DataKey::UpgradeProposal)
             .expect("no pending proposal");
-        
+
         if proposal.executed {
             panic!("proposal already executed");
         }
-        
+
         // Check if caller has already approved
-        if env.storage().instance().has(&DataKey::Approval(admin.clone())) {
+        if env
+            .storage()
+            .instance()
+            .has(&DataKey::Approval(admin.clone()))
+        {
             panic!("already approved");
         }
-        
+
         // Record approval
-        env.storage().instance().set(&DataKey::Approval(admin.clone()), &true);
+        env.storage()
+            .instance()
+            .set(&DataKey::Approval(admin.clone()), &true);
         proposal.approval_count += 1;
-        
+
         // Clone values before potentially moving
         let admin_clone = admin.clone();
         let approval_count = proposal.approval_count;
-        
+
         // Check if we have 3 approvals (3 out of 5)
         if proposal.approval_count >= 3 {
             // Execute the upgrade
             Self::execute_upgrade(env.clone(), proposal);
         } else {
             // Update proposal with new approval count
-            env.storage().instance().set(&DataKey::UpgradeProposal, &proposal);
+            env.storage()
+                .instance()
+                .set(&DataKey::UpgradeProposal, &proposal);
         }
-        
+
         env.events().publish(
-            (soroban_sdk::symbol_short!("upgrade"), soroban_sdk::symbol_short!("approved")),
+            (
+                soroban_sdk::symbol_short!("upgrade"),
+                soroban_sdk::symbol_short!("approved"),
+            ),
             (admin_clone, approval_count),
         );
     }
 
     /// Executes an upgrade that has received sufficient approvals.
     fn execute_upgrade(env: Env, proposal: UpgradeProposal) {
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
-    /// Panics if the caller is not the admin.
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         if let Some(registry) = env
             .storage()
             .instance()
@@ -200,26 +226,39 @@ impl UpgradeableContract {
 
         // Increment the version counter.
         let current_version: u32 = env.storage().instance().get(&DataKey::Version).unwrap_or(1);
-        env.storage()
-            .instance()
-            .set(&DataKey::Version, &current_version.checked_add(1).expect("version overflow"));
+        env.storage().instance().set(
+            &DataKey::Version,
+            &current_version.checked_add(1).expect("version overflow"),
+        );
 
         // Mark proposal as executed
         let mut executed_proposal = proposal;
         executed_proposal.executed = true;
-        env.storage().instance().set(&DataKey::UpgradeProposal, &executed_proposal);
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeProposal, &executed_proposal);
 
         // Perform the upgrade — this replaces the running WASM.
-        env.deployer().update_current_contract_wasm(wasm_hash.clone());
-        
+        env.deployer()
+            .update_current_contract_wasm(wasm_hash.clone());
+
         // Clear approval records
-        let admin_list: Vec<Address> = env.storage().instance().get(&DataKey::AdminList).expect("not initialized");
+        let admin_list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminList)
+            .expect("not initialized");
         for admin in admin_list.iter() {
-            env.storage().instance().remove(&DataKey::Approval(admin.clone()));
+            env.storage()
+                .instance()
+                .remove(&DataKey::Approval(admin.clone()));
         }
-        
+
         env.events().publish(
-            (soroban_sdk::symbol_short!("upgrade"), soroban_sdk::symbol_short!("executed")),
+            (
+                soroban_sdk::symbol_short!("upgrade"),
+                soroban_sdk::symbol_short!("executed"),
+            ),
             (wasm_hash, current_version + 1),
         );
     }
@@ -235,32 +274,43 @@ impl UpgradeableContract {
     /// Panics if the caller is not an administrator or there's no pending proposal.
     pub fn cancel_upgrade(env: Env, admin: Address) {
         admin.require_auth();
-        
+
         // Verify caller is an administrator
-        let admin_list: Vec<Address> = env.storage().instance().get(&DataKey::AdminList).expect("not initialized");
+        let admin_list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminList)
+            .expect("not initialized");
         if !admin_list.iter().any(|a| a == admin) {
             panic!("caller is not an administrator");
         }
-        
+
         // Check if there's a pending proposal
-        let proposal: UpgradeProposal = env.storage().instance()
+        let proposal: UpgradeProposal = env
+            .storage()
+            .instance()
             .get(&DataKey::UpgradeProposal)
             .expect("no pending proposal");
-        
+
         if proposal.executed {
             panic!("cannot cancel executed proposal");
         }
-        
+
         // Remove the proposal
         env.storage().instance().remove(&DataKey::UpgradeProposal);
-        
+
         // Clear approval records
         for admin_addr in admin_list.iter() {
-            env.storage().instance().remove(&DataKey::Approval(admin_addr.clone()));
+            env.storage()
+                .instance()
+                .remove(&DataKey::Approval(admin_addr.clone()));
         }
-        
+
         env.events().publish(
-            (soroban_sdk::symbol_short!("upgrade"), soroban_sdk::symbol_short!("cancelled")),
+            (
+                soroban_sdk::symbol_short!("upgrade"),
+                soroban_sdk::symbol_short!("cancelled"),
+            ),
             admin,
         );
     }
@@ -273,7 +323,9 @@ impl UpgradeableContract {
     /// # Panics
     /// Always panics - use the new multi-sig upgrade flow.
     pub fn upgrade(_env: Env, _new_wasm_hash: BytesN<32>) {
-        panic!("upgrade function deprecated - use propose_upgrade and approve_upgrade for multi-sig");
+        panic!(
+            "upgrade function deprecated - use propose_upgrade and approve_upgrade for multi-sig"
+        );
     }
 
     /// Replaces an administrator in the multi-sig list.
@@ -289,24 +341,28 @@ impl UpgradeableContract {
     /// Panics if the caller is not an administrator or if old_admin is not in the list.
     pub fn replace_admin(env: Env, proposer: Address, old_admin: Address, new_admin: Address) {
         proposer.require_auth();
-        
+
         // Verify caller is an administrator
-        let mut admin_list: Vec<Address> = env.storage().instance().get(&DataKey::AdminList).expect("not initialized");
+        let admin_list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminList)
+            .expect("not initialized");
         if !admin_list.iter().any(|a| a == proposer) {
             panic!("caller is not an administrator");
         }
-        
+
         // Verify old_admin is in the list
         let old_index = admin_list.iter().position(|a| a == old_admin);
         if old_index.is_none() {
             panic!("old_admin not in admin list");
         }
-        
+
         // Verify new_admin is not already in the list
         if admin_list.iter().any(|a| a == new_admin) {
             panic!("new_admin already in admin list");
         }
-        
+
         // Simple implementation: proposer can replace directly for now
         // In a production system, this would also require multi-sig approval
         let idx = old_index.unwrap();
@@ -318,10 +374,15 @@ impl UpgradeableContract {
                 new_admin_list.push_back(admin.clone());
             }
         }
-        env.storage().instance().set(&DataKey::AdminList, &new_admin_list);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::AdminList, &new_admin_list);
+
         env.events().publish(
-            (soroban_sdk::symbol_short!("admin"), soroban_sdk::symbol_short!("replaced")),
+            (
+                soroban_sdk::symbol_short!("admin"),
+                soroban_sdk::symbol_short!("replaced"),
+            ),
             (old_admin, new_admin),
         );
     }
@@ -346,13 +407,20 @@ impl UpgradeableContract {
 
     /// Returns the current admin address (deprecated - returns first admin from list).
     pub fn get_admin(env: Env) -> Address {
-        let admin_list: Vec<Address> = env.storage().instance().get(&DataKey::AdminList).expect("not initialized");
+        let admin_list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminList)
+            .expect("not initialized");
         admin_list.get(0).expect("admin list is empty").clone()
     }
 
     /// Returns the list of all administrators.
     pub fn get_admin_list(env: Env) -> Vec<Address> {
-        env.storage().instance().get(&DataKey::AdminList).expect("not initialized")
+        env.storage()
+            .instance()
+            .get(&DataKey::AdminList)
+            .expect("not initialized")
     }
 
     /// Returns the current upgrade proposal, if any.
@@ -362,7 +430,10 @@ impl UpgradeableContract {
 
     /// Returns whether an administrator has approved the current proposal.
     pub fn has_approved(env: Env, admin: Address) -> bool {
-        env.storage().instance().get(&DataKey::Approval(admin)).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Approval(admin))
+            .unwrap_or(false)
     }
 }
 
@@ -390,7 +461,7 @@ mod test {
         admin_list.push_back(admin3);
         admin_list.push_back(admin4);
         admin_list.push_back(admin5);
-        
+
         client.initialize(&admin_list);
 
         (env, client, admin_list)
@@ -423,7 +494,11 @@ mod test {
         let (env, client, admin_list) = setup_contract();
 
         let new_admin = Address::generate(&env);
-        client.replace_admin(&admin_list.get(0).unwrap(), &admin_list.get(0).unwrap(), &new_admin);
+        client.replace_admin(
+            &admin_list.get(0).unwrap(),
+            &admin_list.get(0).unwrap(),
+            &new_admin,
+        );
 
         let updated_list = client.get_admin_list();
         assert_eq!(updated_list.get(0).unwrap(), new_admin);

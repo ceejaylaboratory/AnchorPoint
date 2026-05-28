@@ -22,12 +22,10 @@ import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
-import { errorHandler } from './api/middleware/error.middleware';
-import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { publicLimiter } from './api/middleware/rate-limit.middleware';
-import { notificationService } from './services/notification.service';
+import { notificationService, NotificationType } from './services/notification.service';
 import { ConsoleEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
-import { NotificationType } from '@prisma/client';
+import { getBreakerHealthSummary, registerBreakerMetrics } from './resilience';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, new ConsoleEmailProvider());
@@ -35,9 +33,15 @@ notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvide
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 
 const app = express();
+app.disable('x-powered-by'); // Prevent Express from sending the X-Powered-By header
 const PORT = config.PORT;
 
-app.use(cors());
+const corsOptions = {
+  origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 
 /**
@@ -83,7 +87,11 @@ app.get('/', (req: Request, res: Response) => {
  *                   format: date-time
  */
 app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'UP', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'UP', 
+    timestamp: new Date().toISOString(),
+    circuitBreakers: getBreakerHealthSummary()
+  });
 });
 
 // Swagger API Documentation
@@ -164,6 +172,9 @@ if (process.env.NODE_ENV !== 'test') {
       app.listen(PORT, () => {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+        
+        // Initialize Circuit Breaker Telemetry
+        registerBreakerMetrics();
       });
     });
   app.listen(PORT, () => {

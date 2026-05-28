@@ -17,25 +17,17 @@ enum Tier {
 }
 
 model User {
-  id            String        @id @default(uuid())
-  publicKey     String        @unique
-  email         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  transactions  Transaction[]
-  kycCustomer   KycCustomer?
-  apiKeys       ApiKey[]
+  id                        String                 @id @default(uuid())
+  publicKey                 String                 @unique
+  email                     String?
+  phone                     String?
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
+  transactions              Transaction[]
+  kycCustomer               KycCustomer?
+  apiKeys                   ApiKey[]
   recurringPaymentSchedules RecurringPaymentSchedule[]
-  id                    String                 @id @default(uuid())
-  publicKey             String                 @unique
-  email                 String?
-  phone                 String?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  transactions          Transaction[]
-  kycCustomer           KycCustomer?
-  apiKeys               ApiKey[]
-  notificationPreference NotificationPreference?
+  notificationPreference    NotificationPreference?
 
   @@index([publicKey])
 }
@@ -132,13 +124,7 @@ model Transaction {
   user                User           @relation(fields: [userId], references: [id])
   assetCode           String
   amount              String
-  type                String    // DEPOSIT | WITHDRAW | SEP31 | SWAP
-  status              String    // PENDING, COMPLETED, FAILED
-  externalId          String?   @unique
-  stellarTxId         String?   @unique
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  type                String         // DEPOSIT | WITHDRAW | SEP31
+  type                String         // DEPOSIT | WITHDRAW | SEP31 | SWAP
   status              String         // PENDING, COMPLETED, FAILED
   externalId          String?        @unique
   stellarTxId         String?        @unique
@@ -254,6 +240,8 @@ model SystemConfig {
 
   @@index([isActive])
   @@index([createdAt])
+}
+
 enum JobStatus {
   PENDING
   ACTIVE

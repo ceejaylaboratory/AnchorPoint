@@ -13,7 +13,7 @@ mod verification {
         // and handle the None case. In the contract we use .expect(), so we want to know
         // under what conditions it panics.
         let fee = calculate_fee(amount);
-        
+
         if amount >= 0 && amount <= i128::MAX / 5 {
             assert!(fee.is_some());
         }
@@ -29,11 +29,11 @@ mod verification {
         kani::assume(balance_before >= 0);
         kani::assume(fee >= 0);
         kani::assume(balance_after >= 0);
-        
+
         // Ensure no overflow in required_repayment
         if let Some(required_repayment) = balance_before.checked_add(fee) {
             let success = balance_after >= required_repayment;
-            
+
             if success {
                 // If it succeeded, it must be that the balance increased at least by the fee
                 assert!(balance_after >= balance_before + fee);
@@ -48,7 +48,7 @@ mod verification {
     fn verify_overflow_safety() {
         let amount: i128 = kani::any();
         kani::assume(amount > 0);
-        
+
         // Prove that if amount is within a reasonable range, fee calculation is safe
         // i128::MAX / 5 is the limit for amount * 5
         if amount < (i128::MAX / 5) {

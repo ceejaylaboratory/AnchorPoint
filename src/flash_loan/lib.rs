@@ -1,6 +1,9 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Env, Vec, Map};
+use soroban_sdk::{
+    contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Env, Map,
+    Vec,
+};
 
 /// Storage keys for the flash loan provider
 #[derive(Clone)]
@@ -77,10 +80,6 @@ impl FlashLoanProvider {
     /// * `token` - The address of the token to be lent.
     /// * `amount` - The amount of tokens to lend.
     pub fn flash_loan(env: Env, receiver: Address, token: Address, amount: i128) {
-        // 1. Calculate the fee (5 basis points = 0.05%)
-        // fee = amount * 5 / 10000
-        let fee = amount.checked_mul(5).and_then(|a| a.checked_div(10000)).expect("Fee calculation overflow");
-        
         // 1. Calculate the fee (default 5 basis points = 0.05%)
         let fee_bps = Self::get_fee_bps(env.clone());
         let fee = amount * fee_bps as i128 / 10000;
@@ -97,20 +96,24 @@ impl FlashLoanProvider {
         receiver_client.execute_loan(&token, &amount, &fee);
 
         // 5. Verify repayment
-        // This ensures atomic repayment enforcement. If the balance check fails, the 
+        // This ensures atomic repayment enforcement. If the balance check fails, the
         // whole transaction reverts, ensuring the loan is only successful if repaid.
         // Soroban's call stack management and the lack of contract state in this provider
         // make it naturally resistant to reentrancy attacks.
         let balance_after = token_client.balance(&env.current_contract_address());
-        
-        let required_repayment = balance_before.checked_add(fee).expect("Repayment calculation overflow");
+
+        let required_repayment = balance_before
+            .checked_add(fee)
+            .expect("Repayment calculation overflow");
         if balance_after < required_repayment {
             panic!("Flash loan not repaid with fee");
         }
 
         // Topic: event name only; receiver + token (Addresses) + amounts in data.
-        env.events()
-            .publish(symbol_short!("flash_ln"), (receiver, token, amount, fee));
+        env.events().publish(
+            (symbol_short!("flash"), symbol_short!("flash_ln")),
+            (receiver, token, amount, fee),
+        );
     }
 
     /// Executes a batch flash loan for multiple assets in a single atomic transaction.
@@ -152,7 +155,7 @@ impl FlashLoanProvider {
             balance_checks.set(token.clone(), balance_before);
             loan_details.push_back(LoanDetail {
                 token: token.clone(),
-                amount: *amount,
+                amount: amount,
                 fee,
             });
         }
@@ -161,7 +164,7 @@ impl FlashLoanProvider {
         for i in 0..loans.len() {
             let (token, amount) = loans.get(i).unwrap();
             let token_client = token::Client::new(&env, &token);
-            token_client.transfer(&provider_address, &receiver, amount);
+            token_client.transfer(&provider_address, &receiver, &amount);
         }
 
         // 3. Invoke the receiver's batch execution logic
@@ -173,22 +176,22 @@ impl FlashLoanProvider {
             let loan = loan_details.get(i).unwrap();
             let token_client = token::Client::new(&env, &loan.token);
             let balance_after = token_client.balance(&provider_address);
-            let balance_before = balance_checks.get(loan.token).unwrap();
+            let balance_before = balance_checks.get(loan.token.clone()).unwrap();
 
             let expected_repayment = balance_before + loan.fee;
             if balance_after < expected_repayment {
                 panic!(
                     "Flash loan not repaid for token {:?}: expected {}, got {}",
-                    loan.token,
-                    expected_repayment,
-                    balance_after
+                    loan.token, expected_repayment, balance_after
                 );
             }
         }
 
         // 5. Emit batch event
-        env.events()
-            .publish((symbol_short!("flash_batch"), receiver), loan_details);
+        env.events().publish(
+            (symbol_short!("flash"), symbol_short!("flash_bch")),
+            (receiver, loan_details),
+        );
     }
 }
 

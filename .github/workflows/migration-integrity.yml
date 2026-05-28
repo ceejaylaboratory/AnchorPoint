@@ -28,11 +28,14 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: 'package-lock.json'
       
       - name: Install dependencies
         working-directory: backend
-        run: npm ci
+        run: |
+          npm install --ignore-scripts
+          npm install @prisma/debug @prisma/engines-version --no-save
+          npx prisma generate
       
       - name: Setup test database
         working-directory: backend
@@ -121,11 +124,14 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: 'package-lock.json'
       
       - name: Install dependencies
         working-directory: backend
-        run: npm ci
+        run: |
+          npm install --ignore-scripts
+          npm install @prisma/debug @prisma/engines-version --no-save
+          npx prisma generate
       
       - name: Create staging database clone
         working-directory: backend

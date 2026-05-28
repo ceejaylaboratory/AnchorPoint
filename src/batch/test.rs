@@ -49,7 +49,7 @@ fn default_retry(max_attempts: u32) -> RetryConfig {
     RetryConfig { max_attempts, delay_ledgers: 0 }
 }
 
-fn setup(env: &Env) -> BatchExecutorClient {
+fn setup(env: &Env) -> BatchExecutorClient<'_> {
     let id = env.register(BatchExecutor, ());
     let client = BatchExecutorClient::new(env, &id);
     let admin = soroban_sdk::Address::generate(env);

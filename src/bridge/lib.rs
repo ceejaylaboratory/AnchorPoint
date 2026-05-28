@@ -68,7 +68,12 @@ impl Bridge {
 
     /// Initialise the bridge with a trusted relayer public key.
     /// Must be called once by the deployer.
-    pub fn initialize(env: Env, admin: Address, relayer_key: BytesN<32>, min_collateral_ratio: u32) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        relayer_key: BytesN<32>,
+        min_collateral_ratio: u32,
+    ) {
         admin.require_auth();
         if env.storage().instance().has(&DataKey::RelayerKey) {
             panic!("already initialized");
@@ -76,18 +81,16 @@ impl Bridge {
         env.storage()
             .instance()
             .set(&DataKey::RelayerKey, &relayer_key);
-        env.storage()
-            .instance()
-            .set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
             .set(&DataKey::MinCollateralRatio, &min_collateral_ratio);
-        
+
         // Initialize last activity timestamp
         env.storage()
             .instance()
             .set(&DataKey::LastRelayerActivity, &env.ledger().timestamp());
-        
+
         // Initialize emergency mode as false
         env.storage()
             .instance()
@@ -134,17 +137,10 @@ impl Bridge {
         }
         env.storage().persistent().set(&processed_key, &true);
 
-        // 3. Mint / Burn with collateralization check
-        let token_client = token::Client::new(&env, &msg.token);
-        // 3. Update last relayer activity timestamp
+        // Update last relayer activity timestamp
         env.storage()
             .instance()
             .set(&DataKey::LastRelayerActivity, &env.ledger().timestamp());
-
-        // 4. Mint / Burn
-        let token_client = token::Client::new(&env, &msg.token);
-        // 3. Mint / Burn
-        let _token_client = token::Client::new(&env, &msg.token);
         match msg.op {
             BridgeOp::Mint => {
                 // Inbound: tokens locked on source chain → mint wrapped tokens here.
@@ -158,15 +154,19 @@ impl Bridge {
                 let current_minted: i128 = env
                     .storage()
                     .instance()
-                    .get(&DataKey::DestinationMinted(msg.source_chain, msg.token.clone()))
+                    .get(&DataKey::DestinationMinted(
+                        msg.source_chain,
+                        msg.token.clone(),
+                    ))
                     .unwrap_or(0);
-                env.storage()
-                    .instance()
-                    .set(&DataKey::DestinationMinted(msg.source_chain, msg.token.clone()), &(current_minted + msg.amount));
+                env.storage().instance().set(
+                    &DataKey::DestinationMinted(msg.source_chain, msg.token.clone()),
+                    &(current_minted + msg.amount),
+                );
 
                 // Topic: op symbol only; all details in data. source_chain (u32) is small.
                 env.events().publish(
-                    symbol_short!("bridge_mn"),
+                    (symbol_short!("bridge_mn"),),
                     (
                         msg.source_chain,
                         msg.recipient.clone(),
@@ -178,7 +178,12 @@ impl Bridge {
             }
             BridgeOp::Burn => {
                 // Verify collateralization before processing burn
-                Self::verify_collateralization(&env, msg.source_chain, msg.token.clone(), msg.amount);
+                Self::verify_collateralization(
+                    &env,
+                    msg.source_chain,
+                    msg.token.clone(),
+                    msg.amount,
+                );
 
                 // Outbound: burn wrapped tokens here → unlock on source chain.
                 env.invoke_contract::<()>(
@@ -191,15 +196,19 @@ impl Bridge {
                 let current_minted: i128 = env
                     .storage()
                     .instance()
-                    .get(&DataKey::DestinationMinted(msg.source_chain, msg.token.clone()))
+                    .get(&DataKey::DestinationMinted(
+                        msg.source_chain,
+                        msg.token.clone(),
+                    ))
                     .unwrap_or(0);
-                env.storage()
-                    .instance()
-                    .set(&DataKey::DestinationMinted(msg.source_chain, msg.token.clone()), &(current_minted - msg.amount));
+                env.storage().instance().set(
+                    &DataKey::DestinationMinted(msg.source_chain, msg.token.clone()),
+                    &(current_minted - msg.amount),
+                );
 
                 // Topic: op symbol only; all details in data.
                 env.events().publish(
-                    symbol_short!("bridge_bn"),
+                    (symbol_short!("bridge_bn"),),
                     (
                         msg.source_chain,
                         msg.recipient.clone(),
@@ -218,28 +227,46 @@ impl Bridge {
 
     /// Update the locked amount on the source chain for a specific token.
     /// Called by relayer to sync collateralization state from source chain.
-    pub fn update_source_locked(env: Env, admin: Address, source_chain: u32, token: Address, locked_amount: i128) {
+    pub fn update_source_locked(
+        env: Env,
+        admin: Address,
+        source_chain: u32,
+        token: Address,
+        locked_amount: i128,
+    ) {
         admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
 
         let timestamp = env.ledger().timestamp();
-        env.storage()
-            .instance()
-            .set(&DataKey::SourceLocked(source_chain, token.clone()), &locked_amount);
-        env.storage()
-            .instance()
-            .set(&DataKey::CollateralUpdateTime(source_chain, token), &timestamp);
+        env.storage().instance().set(
+            &DataKey::SourceLocked(source_chain, token.clone()),
+            &locked_amount,
+        );
+        env.storage().instance().set(
+            &DataKey::CollateralUpdateTime(source_chain, token.clone()),
+            &timestamp,
+        );
 
-        env.events()
-            .publish((symbol_short!("collat_update"), source_chain, token), locked_amount);
+        env.events().publish(
+            (symbol_short!("collat_up"), source_chain, token),
+            locked_amount,
+        );
     }
 
     /// Set the minimum collateralization ratio (in basis points).
     /// 10000 = 100% (fully collateralized), 5000 = 50%, etc.
     pub fn set_min_collateral_ratio(env: Env, admin: Address, min_ratio: u32) {
         admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         assert!(min_ratio > 0 && min_ratio <= 10000, "invalid ratio");
 
@@ -293,36 +320,51 @@ impl Bridge {
             "insufficient collateralization: current={}%, required={}%",
             current_ratio / 100,
             min_ratio / 100
+        );
+    }
+
     // Emergency Exit Logic
     // -----------------------------------------------------------------------
 
     /// Activates emergency mode. Can be called by admin or automatically after 72h of inactivity.
     pub fn activate_emergency_mode(env: Env, caller: Address) {
         caller.require_auth();
-        
+
         // Check if already in emergency mode
-        let emergency_mode: bool = env.storage().instance().get(&DataKey::EmergencyMode).unwrap_or(false);
+        let emergency_mode: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::EmergencyMode)
+            .unwrap_or(false);
         if emergency_mode {
             panic!("emergency mode already active");
         }
-        
+
         // Check if 72 hours (259200 seconds) have passed since last relayer activity
-        let last_activity: u64 = env.storage().instance().get(&DataKey::LastRelayerActivity).unwrap_or(0);
+        let last_activity: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LastRelayerActivity)
+            .unwrap_or(0);
         let current_time = env.ledger().timestamp();
         let elapsed = current_time.saturating_sub(last_activity);
-        
+
         // 72 hours = 72 * 60 * 60 = 259200 seconds
         if elapsed < 259200 {
             // Only admin can manually activate before 72h
-            let admin: Address = env.storage().instance().get(&DataKey::RelayerKey).expect("not initialized");
+            let admin: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::RelayerKey)
+                .expect("not initialized");
             if caller != admin {
                 panic!("only admin can activate emergency mode before 72h");
             }
         }
-        
+
         // Activate emergency mode
         env.storage().instance().set(&DataKey::EmergencyMode, &true);
-        
+
         env.events().publish(
             (symbol_short!("emergency"), symbol_short!("activated")),
             (caller, elapsed),
@@ -332,17 +374,21 @@ impl Bridge {
     /// Allows users to withdraw their locked assets when emergency mode is active.
     pub fn emergency_withdraw(env: Env, user: Address, token: Address, amount: i128) {
         user.require_auth();
-        
+
         // Check if emergency mode is active
-        let emergency_mode: bool = env.storage().instance().get(&DataKey::EmergencyMode).unwrap_or(false);
+        let emergency_mode: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::EmergencyMode)
+            .unwrap_or(false);
         if !emergency_mode {
             panic!("emergency mode not active");
         }
-        
+
         // Transfer tokens to user
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&env.current_contract_address(), &user, &amount);
-        
+
         env.events().publish(
             (symbol_short!("emergency"), symbol_short!("withdraw")),
             (user, token, amount),
@@ -352,22 +398,28 @@ impl Bridge {
     /// Deactivates emergency mode. Only admin can call this.
     pub fn deactivate_emergency_mode(env: Env, admin: Address) {
         admin.require_auth();
-        
+
         // Verify caller is admin (relayer key holder)
-        let stored_admin: Address = env.storage().instance().get(&DataKey::RelayerKey).expect("not initialized");
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RelayerKey)
+            .expect("not initialized");
         if admin != stored_admin {
             panic!("caller is not admin");
         }
-        
-        env.storage().instance().set(&DataKey::EmergencyMode, &false);
-        
+
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyMode, &false);
+
         // Reset activity timestamp to current time
         env.storage()
             .instance()
             .set(&DataKey::LastRelayerActivity, &env.ledger().timestamp());
-        
+
         env.events().publish(
-            (symbol_short!("emergency"), symbol_short!("deactivated")),
+            (symbol_short!("emergency"), symbol_short!("deactivtd")),
             admin,
         );
     }
@@ -410,7 +462,8 @@ impl Bridge {
     /// Returns the current collateralization ratio (in basis points) for a token.
     pub fn get_collateralization_ratio(env: Env, source_chain: u32, token: Address) -> u32 {
         let source_locked = Self::get_source_locked(env.clone(), source_chain, token.clone());
-        let destination_minted = Self::get_destination_minted(env.clone(), source_chain, token.clone());
+        let destination_minted =
+            Self::get_destination_minted(env.clone(), source_chain, token.clone());
 
         if destination_minted <= 0 {
             return 10000; // Fully collateralized if nothing minted
@@ -430,7 +483,8 @@ impl Bridge {
     /// Returns whether a burn operation would be allowed based on collateralization.
     pub fn is_burn_allowed(env: Env, source_chain: u32, token: Address, burn_amount: i128) -> bool {
         let source_locked = Self::get_source_locked(env.clone(), source_chain, token.clone());
-        let destination_minted = Self::get_destination_minted(env.clone(), source_chain, token.clone());
+        let destination_minted =
+            Self::get_destination_minted(env.clone(), source_chain, token.clone());
         let min_ratio = Self::get_min_collateral_ratio(env.clone()) as i128;
 
         let new_minted = destination_minted - burn_amount;
@@ -454,23 +508,48 @@ impl Bridge {
 
 #[cfg(test)]
 mod tests {
+    extern crate ed25519_dalek;
+    extern crate std;
     use super::*;
     use soroban_sdk::{testutils::Address as _, token::StellarAssetClient};
 
     fn setup() -> (Env, BridgeClient<'static>, Address, Address, BytesN<32>) {
+        let (env, client, admin, relayer, relayer_key, _) = setup_with_secret();
+        (env, client, admin, relayer, relayer_key)
+    }
+
+    fn setup_with_secret() -> (
+        Env,
+        BridgeClient<'static>,
+        Address,
+        Address,
+        BytesN<32>,
+        [u8; 32],
+    ) {
         let env = Env::default();
-        env.mock_all_auths();
+        env.mock_all_auths_allowing_non_root_auth();
 
         let admin = Address::generate(&env);
         let relayer = Address::generate(&env);
-        let relayer_key = BytesN::from_array(&env, &[1u8; 32]);
 
-        let contract_id = env.register_contract(None, Bridge);
+        let secret = [1u8; 32];
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let pub_key = signing_key.verifying_key();
+        let relayer_key = BytesN::from_array(&env, pub_key.as_bytes());
+
+        let contract_id = env.register(Bridge, ());
         let client = BridgeClient::new(&env, &contract_id);
 
         client.initialize(&admin, &relayer_key, &10000); // 100% collateralization
 
-        (env, client, admin, relayer, relayer_key)
+        (env, client, admin, relayer, relayer_key, secret)
+    }
+
+    fn sign_message(env: &Env, secret: &[u8; 32], msg: &[u8]) -> BytesN<64> {
+        use ed25519_dalek::Signer;
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(secret);
+        let signature = signing_key.sign(msg);
+        BytesN::from_array(env, &signature.to_bytes())
     }
 
     fn create_bridge_message(
@@ -482,7 +561,7 @@ mod tests {
         op: BridgeOp,
     ) -> BridgeMessage {
         let message_hash = BytesN::from_array(&env, &[0u8; 32]);
-        let signature = Bytes::from_slice(&env, &[0u8; 64]);
+        let signature = BytesN::from_array(&env, &[0u8; 64]);
 
         BridgeMessage {
             source_chain,
@@ -497,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_initialize_with_collateralization() {
-        let (env, client, admin, _, _) = setup();
+        let (_env, client, _admin, _, _) = setup();
 
         assert_eq!(client.get_min_collateral_ratio(), 10000);
     }
@@ -510,12 +589,12 @@ mod tests {
 
         client.update_source_locked(&admin, &source_chain, &token, &1000);
 
-        assert_eq!(client.get_source_locked(source_chain, token), 1000);
+        assert_eq!(client.get_source_locked(&source_chain, &token), 1000);
     }
 
     #[test]
     fn test_set_min_collateral_ratio() {
-        let (env, client, admin, _, _) = setup();
+        let (_env, client, admin, _, _) = setup();
 
         client.set_min_collateral_ratio(&admin, &8000); // 80%
 
@@ -525,16 +604,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid ratio")]
     fn test_set_invalid_collateral_ratio() {
-        let (env, client, admin, _, _) = setup();
+        let (_env, client, admin, _, _) = setup();
 
         client.set_min_collateral_ratio(&admin, &15000); // Invalid: > 100%
     }
 
     #[test]
     fn test_mint_tracks_destination_minted() {
-        let (env, client, admin, relayer, relayer_key) = setup();
+        let (env, client, admin, relayer, _, secret) = setup_with_secret();
         let source_chain = 1u32;
-        let token = Address::generate(&env);
+        let _token = Address::generate(&env);
         let recipient = Address::generate(&env);
 
         // Register a token contract for testing
@@ -552,17 +631,20 @@ mod tests {
         );
 
         // Sign the message
-        let signature = env.crypto().ed25519_sign(&relayer_key, &msg.message_hash.clone().into());
+        let signature = sign_message(&env, &secret, &msg.message_hash.to_array());
         msg.signature = signature;
 
         client.process_message(&relayer, &msg);
 
-        assert_eq!(client.get_destination_minted(source_chain, token_id.address()), 1000);
+        assert_eq!(
+            client.get_destination_minted(&source_chain, &token_id.address()),
+            1000
+        );
     }
 
     #[test]
     fn test_burn_decreases_destination_minted() {
-        let (env, client, admin, relayer, relayer_key) = setup();
+        let (env, client, admin, relayer, _, secret) = setup_with_secret();
         let source_chain = 1u32;
         let token_id = env.register_stellar_asset_contract_v2(admin.clone());
         let token_client = StellarAssetClient::new(&env, &token_id.address());
@@ -583,11 +665,14 @@ mod tests {
             1000,
             BridgeOp::Mint,
         );
-        let signature = env.crypto().ed25519_sign(&relayer_key, &msg.message_hash.clone().into());
+        let signature = sign_message(&env, &secret, &msg.message_hash.to_array());
         msg.signature = signature;
         client.process_message(&relayer, &msg);
 
-        assert_eq!(client.get_destination_minted(source_chain, token_id.address()), 1000);
+        assert_eq!(
+            client.get_destination_minted(&source_chain, &token_id.address()),
+            1000
+        );
 
         // Now burn
         let mut burn_msg = create_bridge_message(
@@ -598,11 +683,14 @@ mod tests {
             500,
             BridgeOp::Burn,
         );
-        let burn_signature = env.crypto().ed25519_sign(&relayer_key, &burn_msg.message_hash.clone().into());
+        let burn_signature = sign_message(&env, &secret, &burn_msg.message_hash.to_array());
         burn_msg.signature = burn_signature;
         client.process_message(&relayer, &burn_msg);
 
-        assert_eq!(client.get_destination_minted(source_chain, token_id.address()), 500);
+        assert_eq!(
+            client.get_destination_minted(&source_chain, &token_id.address()),
+            500
+        );
     }
 
     #[test]
@@ -614,11 +702,17 @@ mod tests {
         client.update_source_locked(&admin, &source_chain, &token, &10000);
 
         // Simulate minting via internal tracking
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(source_chain, token.clone()), &8000);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(source_chain, token.clone()),
+                &8000,
+            )
+        });
 
-        assert_eq!(client.get_collateralization_ratio(source_chain, token), 12500); // 125%
+        assert_eq!(
+            client.get_collateralization_ratio(&source_chain, &token),
+            12500
+        ); // 125%
     }
 
     #[test]
@@ -628,12 +722,15 @@ mod tests {
         let token = Address::generate(&env);
 
         client.update_source_locked(&admin, &source_chain, &token, &10000);
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(source_chain, token.clone()), &8000);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(source_chain, token.clone()),
+                &8000,
+            )
+        });
 
         // Burning 1000 would leave 7000 minted, ratio = 10000/7000 = 143% > 100% (allowed)
-        assert!(client.is_burn_allowed(source_chain, token, 1000));
+        assert!(client.is_burn_allowed(&source_chain, &token, &1000));
     }
 
     #[test]
@@ -643,17 +740,20 @@ mod tests {
         let token = Address::generate(&env);
 
         client.update_source_locked(&admin, &source_chain, &token, &5000);
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(source_chain, token.clone()), &8000);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(source_chain, token.clone()),
+                &8000,
+            )
+        });
 
         // Burning 1000 would leave 7000 minted, ratio = 5000/7000 = 71% < 100% (denied)
-        assert!(!client.is_burn_allowed(source_chain, token, 1000));
+        assert!(!client.is_burn_allowed(&source_chain, &token, &1000));
     }
 
     #[test]
     fn test_burn_fails_with_insufficient_collateral() {
-        let (env, client, admin, relayer, relayer_key) = setup();
+        let (env, client, admin, relayer, _, secret) = setup_with_secret();
         let source_chain = 1u32;
         let token_id = env.register_stellar_asset_contract_v2(admin.clone());
         let token_client = StellarAssetClient::new(&env, &token_id.address());
@@ -666,9 +766,12 @@ mod tests {
         client.update_source_locked(&admin, &source_chain, &token_id.address(), &5000);
 
         // Simulate previous mints
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(source_chain, token_id.address()), &8000);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(source_chain, token_id.address()),
+                &8000,
+            )
+        });
 
         let mut burn_msg = create_bridge_message(
             &env,
@@ -678,7 +781,7 @@ mod tests {
             1000,
             BridgeOp::Burn,
         );
-        let burn_signature = env.crypto().ed25519_sign(&relayer_key, &burn_msg.message_hash.clone().into());
+        let burn_signature = sign_message(&env, &secret, &burn_msg.message_hash.to_array());
         burn_msg.signature = burn_signature;
 
         // Should fail due to insufficient collateralization
@@ -690,7 +793,7 @@ mod tests {
 
     #[test]
     fn test_burn_succeeds_with_sufficient_collateral() {
-        let (env, client, admin, relayer, relayer_key) = setup();
+        let (env, client, admin, relayer, _, secret) = setup_with_secret();
         let source_chain = 1u32;
         let token_id = env.register_stellar_asset_contract_v2(admin.clone());
         let token_client = StellarAssetClient::new(&env, &token_id.address());
@@ -703,9 +806,12 @@ mod tests {
         client.update_source_locked(&admin, &source_chain, &token_id.address(), &10000);
 
         // Simulate previous mints
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(source_chain, token_id.address()), &5000);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(source_chain, token_id.address()),
+                &5000,
+            )
+        });
 
         let mut burn_msg = create_bridge_message(
             &env,
@@ -715,13 +821,16 @@ mod tests {
             1000,
             BridgeOp::Burn,
         );
-        let burn_signature = env.crypto().ed25519_sign(&relayer_key, &burn_msg.message_hash.clone().into());
+        let burn_signature = sign_message(&env, &secret, &burn_msg.message_hash.to_array());
         burn_msg.signature = burn_signature;
 
         // Should succeed
         client.process_message(&relayer, &burn_msg);
 
-        assert_eq!(client.get_destination_minted(source_chain, token_id.address()), 4000);
+        assert_eq!(
+            client.get_destination_minted(&source_chain, &token_id.address()),
+            4000
+        );
     }
 
     #[test]
@@ -730,11 +839,11 @@ mod tests {
         let source_chain = 1u32;
         let token = Address::generate(&env);
 
-        assert_eq!(client.get_collateral_update_time(source_chain, token), 0);
+        assert_eq!(client.get_collateral_update_time(&source_chain, &token), 0);
 
         client.update_source_locked(&admin, &source_chain, &token, &1000);
 
-        let update_time = client.get_collateral_update_time(source_chain, token);
+        let update_time = client.get_collateral_update_time(&source_chain, &token);
         assert!(update_time > 0);
     }
 
@@ -745,18 +854,21 @@ mod tests {
         let token = Address::generate(&env);
 
         client.update_source_locked(&admin, &source_chain, &token, &8000);
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(source_chain, token.clone()), &10000);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(source_chain, token.clone()),
+                &10000,
+            )
+        });
 
         // With 100% requirement, burn is denied
-        assert!(!client.is_burn_allowed(source_chain, token, 1000));
+        assert!(!client.is_burn_allowed(&source_chain, &token, &1000));
 
         // Lower requirement to 70%
         client.set_min_collateral_ratio(&admin, &7000);
 
         // Now burn should be allowed
-        assert!(client.is_burn_allowed(source_chain, token, 1000));
+        assert!(client.is_burn_allowed(&source_chain, &token, &1000));
     }
 
     #[test]
@@ -766,12 +878,15 @@ mod tests {
         let token = Address::generate(&env);
 
         client.update_source_locked(&admin, &source_chain, &token, &1000);
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(source_chain, token.clone()), &1000);
+        env.as_contract(&client.address, || {
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(source_chain, token.clone()),
+                &1000,
+            )
+        });
 
         // Burning all minted tokens should be allowed even with low collateral
-        assert!(client.is_burn_allowed(source_chain, token, 1000));
+        assert!(client.is_burn_allowed(&source_chain, &token, &1000));
     }
 
     #[test]
@@ -784,35 +899,21 @@ mod tests {
         client.update_source_locked(&admin, &chain1, &token, &1000);
         client.update_source_locked(&admin, &chain2, &token, &2000);
 
-        assert_eq!(client.get_source_locked(chain1, token), 1000);
-        assert_eq!(client.get_source_locked(chain2, token), 2000);
+        assert_eq!(client.get_source_locked(&chain1, &token), 1000);
+        assert_eq!(client.get_source_locked(&chain2, &token), 2000);
 
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(chain1, token.clone()), &500);
-        env.storage()
-            .instance()
-            .set(&DataKey::DestinationMinted(chain2, token), &1000);
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::DestinationMinted(chain1, token.clone()), &500)
+        });
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::DestinationMinted(chain2, token.clone()), &1000)
+        });
 
-        assert_eq!(client.get_collateralization_ratio(chain1, token), 20000); // 200%
-        assert_eq!(client.get_collateralization_ratio(chain2, token), 20000); // 200%
-    /// Returns `true` if emergency mode is active.
-    pub fn is_emergency_mode(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::EmergencyMode).unwrap_or(false)
-    }
-
-    /// Returns the timestamp of the last relayer activity.
-    pub fn last_relayer_activity(env: Env) -> u64 {
-        env.storage()
-            .instance()
-            .get(&DataKey::LastRelayerActivity)
-            .unwrap_or(0)
-    }
-
-    /// Returns the time elapsed since last relayer activity in seconds.
-    pub fn time_since_last_activity(env: Env) -> u64 {
-        let last_activity: u64 = env.storage().instance().get(&DataKey::LastRelayerActivity).unwrap_or(0);
-        let current_time = env.ledger().timestamp();
-        current_time.saturating_sub(last_activity)
+        assert_eq!(client.get_collateralization_ratio(&chain1, &token), 20000); // 200%
+        assert_eq!(client.get_collateralization_ratio(&chain2, &token), 20000); // 200%
     }
 }
