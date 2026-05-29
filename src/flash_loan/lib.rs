@@ -77,13 +77,10 @@ impl FlashLoanProvider {
     /// * `token` - The address of the token to be lent.
     /// * `amount` - The amount of tokens to lend.
     pub fn flash_loan(env: Env, receiver: Address, token: Address, amount: i128) {
-        // 1. Calculate the fee (5 basis points = 0.05%)
-        // fee = amount * 5 / 10000
-        let fee = amount.checked_mul(5).and_then(|a| a.checked_div(10000)).expect("Fee calculation overflow");
-        
-        // 1. Calculate the fee (default 5 basis points = 0.05%)
+        // 1. Calculate the fee using the current fee basis points.
+        // Default fee is 5 basis points (0.05%).
         let fee_bps = Self::get_fee_bps(env.clone());
-        let fee = amount * fee_bps as i128 / 10000;
+        let fee = amount.checked_mul(fee_bps as i128).and_then(|a| a.checked_div(10000)).expect("Fee calculation overflow");
 
         // 2. Initial balance check
         let token_client = token::Client::new(&env, &token);
