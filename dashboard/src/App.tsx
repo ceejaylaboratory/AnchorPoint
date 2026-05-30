@@ -10,17 +10,21 @@ import {
   X,
   Wallet,
   AlertCircle,
+  Bell,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { LogoMark } from './components/LogoMark';
 import { RequirementList } from './components/RequirementList';
+import { NotificationBell } from './components/NotificationBell';
 
 // Lazy-load heavy tab views so they are only fetched when first visited
 const DashboardOverview = lazy(() => import('./components/DashboardOverview'));
 const TransactionHistory = lazy(() => import('./components/TransactionHistory'));
 const SEP24Flow = lazy(() => import('./components/SEP24Flow'));
 const KycStatusView = lazy(() => import('./components/KycStatusView'));
+const NotificationCenter = lazy(() => import('./components/NotificationCenter'));
+const NotificationPreferences = lazy(() => import('./components/NotificationPreferences'));
 
 const defaultUiConfig: UiConfig = {
   brandName: 'AnchorPoint',
@@ -106,6 +110,7 @@ const App = () => {
       { id: 'deposit', icon: ArrowDownLeft, label: 'Deposit' },
       { id: 'withdraw', icon: ArrowUpRight, label: 'Withdraw' },
       { id: 'history', icon: History, label: 'History' },
+      { id: 'notifications', icon: Bell, label: 'Notifications' },
       { id: 'kyc', icon: ShieldCheck, label: 'KYC Status' },
       { id: 'settings', icon: Settings, label: 'Settings' },
     ],
@@ -212,6 +217,10 @@ const App = () => {
                 {loadingState === 'error' ? 'Fallback Theme Active' : 'Config Connected'}
               </span>
             </div>
+            <NotificationBell
+              apiBaseUrl={apiBaseUrl}
+              onViewAll={() => setActiveTab('notifications')}
+            />
             <button className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
               <Wallet size={18} aria-hidden="true" />
               <span className="text-sm font-medium">Connect Wallet</span>
@@ -234,6 +243,8 @@ const App = () => {
                 {activeTab === 'deposit' && 'Initiate a new on-ramp transaction via SEP-24.'}
                 {activeTab === 'withdraw' && 'Initiate a new off-ramp transaction via SEP-24.'}
                 {activeTab === 'history' && 'Track historical and pending transactions.'}
+                {activeTab === 'notifications' && 'View webhook events and transaction notifications.'}
+                {activeTab === 'kyc' && 'Check your KYC verification status.'}
                 {activeTab === 'settings' &&
                   'Preview the current branding and required fields supplied by the anchor backend.'}
               </p>
@@ -262,6 +273,15 @@ const App = () => {
                 {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} />}
                 {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} />}
                 {activeTab === 'history' && <TransactionHistory />}
+                {activeTab === 'notifications' && (
+                  <NotificationCenter
+                    apiBaseUrl={apiBaseUrl}
+                    onOpenPreferences={() => setActiveTab('notification-preferences')}
+                  />
+                )}
+                {activeTab === 'notification-preferences' && (
+                  <NotificationPreferences apiBaseUrl={apiBaseUrl} />
+                )}
                 {activeTab === 'kyc' && <KycStatusView uiConfig={uiConfig} />}
                 {activeTab === 'settings' && (
                   <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
