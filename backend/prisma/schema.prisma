@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -17,25 +17,17 @@ enum Tier {
 }
 
 model User {
-  id            String        @id @default(uuid())
-  publicKey     String        @unique
-  email         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  transactions  Transaction[]
-  kycCustomer   KycCustomer?
-  apiKeys       ApiKey[]
+  id                        String                    @id @default(uuid())
+  publicKey                 String                    @unique
+  email                     String?
+  phone                     String?
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+  transactions              Transaction[]
+  kycCustomer               KycCustomer?
+  apiKeys                   ApiKey[]
   recurringPaymentSchedules RecurringPaymentSchedule[]
-  id                    String                 @id @default(uuid())
-  publicKey             String                 @unique
-  email                 String?
-  phone                 String?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  transactions          Transaction[]
-  kycCustomer           KycCustomer?
-  apiKeys               ApiKey[]
-  notificationPreference NotificationPreference?
+  notificationPreference    NotificationPreference?
 
   @@index([publicKey])
 }
@@ -91,9 +83,9 @@ enum RecurringPaymentRunStatus {
 }
 
 model RecurringPaymentSchedule {
-  id          String   @id @default(uuid())
+  id          String                         @id @default(uuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id])
+  user        User                           @relation(fields: [userId], references: [id])
   destination String
   assetCode   String
   amount      String
@@ -101,8 +93,8 @@ model RecurringPaymentSchedule {
   status      RecurringPaymentScheduleStatus @default(ACTIVE)
   nextRunAt   DateTime
   lastRunAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime                       @default(now())
+  updatedAt   DateTime                       @updatedAt
   runs        RecurringPaymentRun[]
 
   @@index([userId])
@@ -110,17 +102,17 @@ model RecurringPaymentSchedule {
 }
 
 model RecurringPaymentRun {
-  id          String   @id @default(uuid())
+  id          String                    @id @default(uuid())
   scheduleId  String
-  schedule    RecurringPaymentSchedule @relation(fields: [scheduleId], references: [id])
+  schedule    RecurringPaymentSchedule  @relation(fields: [scheduleId], references: [id])
   status      RecurringPaymentRunStatus @default(PENDING)
-  attempt     Int      @default(0)
-  stellarTxId String?  @unique
+  attempt     Int                       @default(0)
+  stellarTxId String?                   @unique
   error       String?
   startedAt   DateTime?
   finishedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
 
   @@index([scheduleId])
   @@index([status])
@@ -132,14 +124,8 @@ model Transaction {
   user                User           @relation(fields: [userId], references: [id])
   assetCode           String
   amount              String
-  type                String    // DEPOSIT | WITHDRAW | SEP31 | SWAP
-  status              String    // PENDING, COMPLETED, FAILED
-  externalId          String?   @unique
-  stellarTxId         String?   @unique
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  type                String         // DEPOSIT | WITHDRAW | SEP31
-  status              String         // PENDING, COMPLETED, FAILED
+  type                String
+  status              String
   externalId          String?        @unique
   stellarTxId         String?        @unique
   createdAt           DateTime       @default(now())
@@ -147,9 +133,9 @@ model Transaction {
   notifications       Notification[]
 
   // Fee tracking
-  feeAmount           String?   @default("0")  // Fee amount in asset units
-  feeAssetCode        String?   // Asset code for fee (e.g., XLM, USDC)
-  feeType             String?   // FLAT, PERCENTAGE, TIERED
+  feeAmount           String?        @default("0")
+  feeAssetCode        String?
+  feeType             String?
 
   // SEP-31 specific fields (nullable for backward compatibility)
   senderInfo          Json?
@@ -167,17 +153,17 @@ model Transaction {
 }
 
 model FeeReport {
-  id              String    @id @default(uuid())
-  reportType      String    // DAILY, MONTHLY
+  id              String   @id @default(uuid())
+  reportType      String
   startDate       DateTime
   endDate         DateTime
-  totalFees       String    // Total fees collected in base asset
-  totalFeesXLM    String    // Total fees converted to XLM
-  operationCounts Json      // { DEPOSIT: 10, WITHDRAW: 5, SWAP: 3, SEP31: 2 }
-  feeBreakdown    Json      // Detailed breakdown by operation type
-  generatedAt     DateTime  @default(now())
-  filePath        String?   // Path to generated report file
-  fileType        String?   // JSON, PDF
+  totalFees       String
+  totalFeesXLM    String
+  operationCounts Json
+  feeBreakdown    Json
+  generatedAt     DateTime @default(now())
+  filePath        String?
+  fileType        String?
 
   @@index([reportType])
   @@index([startDate])
@@ -254,6 +240,8 @@ model SystemConfig {
 
   @@index([isActive])
   @@index([createdAt])
+}
+
 enum JobStatus {
   PENDING
   ACTIVE
@@ -270,31 +258,31 @@ enum JobPriority {
 }
 
 model ContractJob {
-  id          String      @id @default(uuid())
-  jobId       String      @unique
-  type        String
-  priority    JobPriority @default(NORMAL)
-  status      JobStatus   @default(PENDING)
-  contractId  String?
-  functionName String?
-  parameters   Json?
-  result      Json?
-  error       String?
-  errorCategory String?
-  errorSeverity String?
-  errorCode   String?
-  userMessage String?
+  id              String      @id @default(uuid())
+  jobId           String      @unique
+  type            String
+  priority        JobPriority @default(NORMAL)
+  status          JobStatus   @default(PENDING)
+  contractId      String?
+  functionName    String?
+  parameters      Json?
+  result          Json?
+  error           String?
+  errorCategory   String?
+  errorSeverity   String?
+  errorCode       String?
+  userMessage     String?
   suggestedAction String?
-  retryable   Boolean     @default(false)
-  attempts    Int         @default(0)
-  maxAttempts Int         @default(3)
-  createdBy   String?
-  metadata    Json?
-  startedAt   DateTime?
-  completedAt DateTime?
-  failedAt    DateTime?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  retryable       Boolean     @default(false)
+  attempts        Int         @default(0)
+  maxAttempts     Int         @default(3)
+  createdBy       String?
+  metadata        Json?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  failedAt        DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   @@index([jobId])
   @@index([status])

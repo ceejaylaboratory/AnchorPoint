@@ -489,4 +489,239 @@ mod tests {
         let contract2_events = client.get_events_by_contract(&contract2, &10u32);
         assert_eq!(contract2_events.len(), 1);
     }
+
+    // ── Double-init guard ─────────────────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "already initialized")]
+    fn test_double_initialize_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        client.initialize(&admin);
+    }
+
+    // ── Unregistered source contract ─────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "source contract not registered")]
+    fn test_capture_from_unregistered_contract_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let unregistered = Address::generate(&env);
+        let event_type = SorobanString::from_slice(&env, b"transfer");
+        let event_data = Bytes::from_slice(&env, b"data");
+        client.capture_event(&unregistered, &event_type, &event_data);
+    }
+
+    // ── get_event by ID ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_event_by_id() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(2_000_000u64);
+
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let source = Address::generate(&env);
+        client.register_contract(&admin, &source);
+
+        let event_type = SorobanString::from_slice(&env, b"stake");
+        let event_data = Bytes::from_slice(&env, b"payload");
+        client.capture_event(&source, &event_type, &event_data);
+
+        let entry = client.get_event(&1u64);
+        assert_eq!(entry.id, 1u64);
+        assert_eq!(entry.source_contract, source);
+        assert_eq!(entry.event_type, event_type);
+        assert_eq!(entry.event_data, event_data);
+        assert_eq!(entry.timestamp, 2_000_000u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "event not found")]
+    fn test_get_event_not_found_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.get_event(&99u64);
+    }
+
+    // ── Event counter ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_event_counter_increments_per_capture() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        assert_eq!(client.get_event_count(), 0);
+
+        let source = Address::generate(&env);
+        client.register_contract(&admin, &source);
+
+        let event_type = SorobanString::from_slice(&env, b"tx");
+        let event_data = Bytes::from_slice(&env, b"d");
+
+        client.capture_event(&source, &event_type, &event_data);
+        assert_eq!(client.get_event_count(), 1);
+
+        client.capture_event(&source, &event_type, &event_data);
+        assert_eq!(client.get_event_count(), 2);
+
+        client.capture_event(&source, &event_type, &event_data);
+        assert_eq!(client.get_event_count(), 3);
+    }
+
+    // ── Pagination ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_events_pagination() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let source = Address::generate(&env);
+        client.register_contract(&admin, &source);
+
+        let event_type = SorobanString::from_slice(&env, b"evt");
+        let event_data = Bytes::from_slice(&env, b"data");
+
+        for _ in 0..5 {
+            client.capture_event(&source, &event_type, &event_data);
+        }
+
+        // First page — events 1-3
+        let page1 = client.get_events(&1u64, &3u32);
+        assert_eq!(page1.len(), 3);
+        assert_eq!(page1.get(0).unwrap().id, 1u64);
+        assert_eq!(page1.get(2).unwrap().id, 3u64);
+
+        // Second page — events 4-5
+        let page2 = client.get_events(&4u64, &10u32);
+        assert_eq!(page2.len(), 2);
+        assert_eq!(page2.get(0).unwrap().id, 4u64);
+
+        // Zero limit returns nothing
+        let empty = client.get_events(&1u64, &0u32);
+        assert_eq!(empty.len(), 0);
+    }
+
+    // ── get_registered_contracts ──────────────────────────────────────────────
+
+    #[test]
+    fn test_get_registered_contracts() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // No contracts registered initially
+        let registered = client.get_registered_contracts();
+        assert_eq!(registered.len(), 0);
+
+        let c1 = Address::generate(&env);
+        let c2 = Address::generate(&env);
+        client.register_contract(&admin, &c1);
+        client.register_contract(&admin, &c2);
+
+        let registered = client.get_registered_contracts();
+        assert_eq!(registered.len(), 2);
+    }
+
+    // ── Unauthorized access ───────────────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "unauthorized")]
+    fn test_register_unauthorized_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let impostor = Address::generate(&env);
+        let source = Address::generate(&env);
+        // impostor != admin so the assert_eq inside register_contract panics
+        client.register_contract(&impostor, &source);
+    }
+
+    #[test]
+    #[should_panic(expected = "unauthorized")]
+    fn test_unregister_unauthorized_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let source = Address::generate(&env);
+        client.register_contract(&admin, &source);
+
+        let impostor = Address::generate(&env);
+        client.unregister_contract(&impostor, &source);
+    }
+
+    // ── Unregister then capture panics ────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "source contract not registered")]
+    fn test_capture_after_unregister_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let source = Address::generate(&env);
+        client.register_contract(&admin, &source);
+        client.unregister_contract(&admin, &source);
+
+        let event_type = SorobanString::from_slice(&env, b"transfer");
+        let event_data = Bytes::from_slice(&env, b"data");
+        // Should panic — contract was unregistered
+        client.capture_event(&source, &event_type, &event_data);
+    }
 }

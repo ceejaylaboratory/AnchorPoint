@@ -289,4 +289,133 @@ mod tests {
         let result_u32: u32 = result.try_into_val(&env).unwrap();
         assert_eq!(result_u32, 42);
     }
+
+    // ── Pre-init guards ───────────────────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "not initialized")]
+    fn test_get_admin_panics_before_init() {
+        let env = Env::default();
+        let proxy_id = env.register(ProxyContract, ());
+        let proxy = ProxyContractClient::new(&env, &proxy_id);
+        proxy.get_admin();
+    }
+
+    #[test]
+    #[should_panic(expected = "not initialized")]
+    fn test_get_implementation_panics_before_init() {
+        let env = Env::default();
+        let proxy_id = env.register(ProxyContract, ());
+        let proxy = ProxyContractClient::new(&env, &proxy_id);
+        proxy.get_implementation();
+    }
+
+    #[test]
+    #[should_panic(expected = "not initialized")]
+    fn test_upgrade_panics_before_init() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let proxy_id = env.register(ProxyContract, ());
+        let proxy = ProxyContractClient::new(&env, &proxy_id);
+        let new_impl = env.register(MockImpl, ());
+        proxy.upgrade(&new_impl);
+    }
+
+    #[test]
+    #[should_panic(expected = "not initialized")]
+    fn test_forward_panics_before_init() {
+        let env = Env::default();
+        let proxy_id = env.register(ProxyContract, ());
+        let proxy = ProxyContractClient::new(&env, &proxy_id);
+        proxy.forward(&Symbol::new(&env, "ping"), &soroban_sdk::vec![&env]);
+    }
+
+    // ── Multiple sequential upgrades ─────────────────────────────────────────
+
+    #[test]
+    fn test_multiple_sequential_upgrades() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (proxy, _admin, first_impl) = setup(&env);
+        assert_eq!(proxy.get_implementation(), first_impl);
+
+        let impl_v2 = env.register(MockImpl, ());
+        proxy.upgrade(&impl_v2);
+        assert_eq!(proxy.get_implementation(), impl_v2);
+
+        let impl_v3 = env.register(MockImpl, ());
+        proxy.upgrade(&impl_v3);
+        assert_eq!(proxy.get_implementation(), impl_v3);
+
+        let impl_v4 = env.register(MockImpl, ());
+        proxy.upgrade(&impl_v4);
+        assert_eq!(proxy.get_implementation(), impl_v4);
+    }
+
+    #[test]
+    fn test_forward_after_multiple_upgrades() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (proxy, _admin, _first_impl) = setup(&env);
+
+        let impl_v2 = env.register(MockImpl, ());
+        proxy.upgrade(&impl_v2);
+
+        let impl_v3 = env.register(MockImpl, ());
+        proxy.upgrade(&impl_v3);
+
+        // forward should still resolve through the latest implementation
+        let result: Val = proxy.forward(&Symbol::new(&env, "ping"), &soroban_sdk::vec![&env]);
+        let result_u32: u32 = result.try_into_val(&env).unwrap();
+        assert_eq!(result_u32, 42);
+    }
+
+    #[test]
+    fn test_forward_add_after_multiple_upgrades() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (proxy, _admin, _first_impl) = setup(&env);
+
+        let impl_v2 = env.register(MockImpl, ());
+        proxy.upgrade(&impl_v2);
+
+        let result: Val = proxy.forward(
+            &Symbol::new(&env, "add"),
+            &soroban_sdk::vec![&env, 20i128.into_val(&env), 22i128.into_val(&env)],
+        );
+        let result_i128: i128 = result.try_into_val(&env).unwrap();
+        assert_eq!(result_i128, 42);
+    }
+
+    // ── Admin transfer + upgradeability ──────────────────────────────────────
+
+    #[test]
+    fn test_transfer_admin_preserves_implementation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (proxy, _old_admin, impl_id) = setup(&env);
+
+        let new_admin = Address::generate(&env);
+        proxy.transfer_admin(&new_admin);
+
+        // Admin changed but implementation must remain unchanged
+        assert_eq!(proxy.get_admin(), new_admin);
+        assert_eq!(proxy.get_implementation(), impl_id);
+    }
+
+    #[test]
+    fn test_upgrade_after_admin_transfer() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (proxy, _old_admin, _impl_id) = setup(&env);
+
+        let new_admin = Address::generate(&env);
+        proxy.transfer_admin(&new_admin);
+
+        // New admin should be able to upgrade
+        let new_impl = env.register(MockImpl, ());
+        proxy.upgrade(&new_impl);
+        assert_eq!(proxy.get_implementation(), new_impl);
+        assert_eq!(proxy.get_admin(), new_admin);
+    }
 }
