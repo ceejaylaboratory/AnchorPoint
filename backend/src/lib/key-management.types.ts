@@ -6,7 +6,6 @@
  */
 
 export enum KeyManagementErrorType {
-  /** Vault/KMS service is unavailable */
   VAULT_UNAVAILABLE = 'VAULT_UNAVAILABLE',
   /** Requested key not found in vault/KMS */
   KEY_NOT_FOUND = 'KEY_NOT_FOUND',

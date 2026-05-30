@@ -28,6 +28,7 @@ import { notificationService } from './services/notification.service';
 import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
 import { NotificationType } from '@prisma/client';
 import { validateKmsConfigOnStartup } from './lib/key-management.service';
+import queueDashboardRouter from './api/routes/queue-dashboard.route';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
@@ -143,6 +144,9 @@ app.use('/sep6', publicLimiter, sep6Router);
 app.use('/metrics', publicLimiter, metricsRouter);
 
 app.use('/api/recurring-payments', recurringPaymentsRouter);
+
+// BullMQ queue monitoring dashboard (#362) — admin-only in production
+app.use('/api/queue-dashboard', queueDashboardRouter);
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);

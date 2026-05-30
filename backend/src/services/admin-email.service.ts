@@ -1,7 +1,6 @@
 import { config } from '../config/env';
-import { smtpService } from '../lib/smtp.service';
-import { createSmtpTransporter, isSmtpConfigured } from '../lib/smtp/create-transporter';
 import logger from '../utils/logger';
+import { sendEmail } from '../lib/email.service';
 
 export interface PasswordResetEmailInput {
   to: string;
@@ -17,9 +16,8 @@ export class SmtpAdminEmailService implements AdminEmailService {
   async sendPasswordResetEmail(input: PasswordResetEmailInput): Promise<void> {
     const resetUrl = `${config.ADMIN_PASSWORD_RESET_URL_BASE}?token=${encodeURIComponent(input.token)}`;
 
-    await smtpService.sendMail({
-    if (!isSmtpConfigured()) {
-      logger.info('SMTP not configured; password reset email logged for development', {
+    if (!config.SMTP_HOST && !process.env.SENDGRID_API_KEY) {
+      logger.info('No email transport configured; password reset email logged for development', {
         to: input.to,
         resetUrl,
         expiresAt: input.expiresAt.toISOString(),
@@ -27,10 +25,8 @@ export class SmtpAdminEmailService implements AdminEmailService {
       return;
     }
 
-    const transporter = createSmtpTransporter();
-
-    await transporter.sendMail({
-      from: config.SMTP_FROM,
+    await sendEmail({
+      from: config.SMTP_FROM || 'noreply@anchorpoint.app',
       to: input.to,
       subject: 'AnchorPoint Admin Password Reset',
       text: [
