@@ -1,44 +1,63 @@
-# Stage 1: Build
-FROM node:20-alpine AS builder
+# -----------------------------------------------------------------------------
+# Stage 1: Shared base image
+# -----------------------------------------------------------------------------
+FROM node:20-alpine AS base
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# -----------------------------------------------------------------------------
+# Stage 2: Install dependencies once (cached by package lock changes)
+# -----------------------------------------------------------------------------
+FROM base AS deps
 
-# Install dependencies
+ENV NODE_ENV=development
+
+# Copy only dependency manifests first to maximize Docker cache reuse
+COPY package*.json ./
 RUN npm ci
 
-# Copy source code
+# -----------------------------------------------------------------------------
+# Stage 3: Build application and prune dev dependencies
+# -----------------------------------------------------------------------------
+FROM deps AS build
+
+# Copy application source after dependency installation to preserve cache layers
 COPY . .
 
-# Build TypeScript
-RUN npm run build
+# Build TypeScript output and generate Prisma client artifacts.
+# Afterwards prune dev dependencies to keep runtime image smaller.
+RUN npm run build \
+  && npx prisma generate \
+  && npm prune --omit=dev \
+  && npm cache clean --force
 
-# Stage 2: Production
-FROM node:20-alpine AS production
+# -----------------------------------------------------------------------------
+# Stage 4: Runtime image (small, secure, production-only)
+# -----------------------------------------------------------------------------
+FROM base AS runtime
 
-WORKDIR /app
+ENV NODE_ENV=production
 
-# Copy package files
-COPY package*.json ./
+# Runtime utilities:
+# - dumb-init for proper signal handling and zombie reaping
+# - wget for container health checks
+RUN apk add --no-cache dumb-init wget
 
-# Install production dependencies only
-RUN npm ci --only=production
+# Copy only runtime assets from build stage
+COPY --from=build /app/package*.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/prisma ./prisma
 
-# Copy built files from builder
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/prisma ./prisma
+# Use non-root user provided by official Node image
+USER node
 
-# Generate Prisma client
-RUN npx prisma generate
-
-# Expose port
+# Expose backend port
 EXPOSE 3002
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# Health check endpoint used by orchestrators and compose
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
 
-# Start the application
-CMD ["npm", "start"]
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "dist/index.js"]

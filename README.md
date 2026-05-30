@@ -89,6 +89,24 @@ docker-compose logs -f
 docker-compose down
 ```
 
+### Testnet Compose Deployment
+
+For testnet deployment readiness, use the dedicated compose file:
+
+```bash
+# Build and run the testnet stack
+docker compose -f docker-compose.testnet.yml up -d --build
+
+# Validate backend health
+curl http://localhost:3002/health
+
+# Check service status
+docker compose -f docker-compose.testnet.yml ps
+
+# Stop testnet stack
+docker compose -f docker-compose.testnet.yml down
+```
+
 ### Services
 
 | Service   | Port | Description                    |
