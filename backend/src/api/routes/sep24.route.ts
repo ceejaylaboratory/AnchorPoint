@@ -13,6 +13,7 @@ import {
 } from '../../services/sep24-interactive-token.service';
 import prisma from '../../lib/prisma';
 import logger from '../../utils/logger';
+import { sensitiveApiLimiter } from '../middleware/rate-limit.middleware';
 
 const router = Router();
 
@@ -86,7 +87,7 @@ const getBaseInteractiveUrl = (): string => process.env.INTERACTIVE_URL || 'http
  *       400:
  *         description: Invalid request parameters
  */
-router.post('/transactions/deposit/interactive', async (req: Request, res: Response) => {
+router.post('/transactions/deposit/interactive', sensitiveApiLimiter, async (req: Request, res: Response) => {
   const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
 
   if (!asset_code) {
@@ -95,8 +96,27 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
     });
   }
 
+  // Validate Stellar account address if provided
+  if (account) {
+    try {
+      const isValidAccount = /^G[A-Z0-9]{55}$/.test(account);
+      if (!isValidAccount) {
+        logger.warn('Invalid Stellar account address format', { account, ip: req.ip });
+        return res.status(400).json({
+          error: 'Invalid Stellar account address format',
+        });
+      }
+    } catch (error) {
+      logger.warn('Invalid Stellar account address format', { account, ip: req.ip, error: (error as Error).message });
+      return res.status(400).json({
+        error: 'Invalid Stellar account address format',
+      });
+    }
+  }
+
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
+    logger.warn('Unsupported asset code requested', { asset_code, ip: req.ip });
     return res.status(400).json(unsupportedAssetResponse(asset_code));
   }
 
@@ -177,7 +197,7 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
  *       400:
  *         description: Invalid request parameters
  */
-router.post('/transactions/withdraw/interactive', async (req: Request, res: Response) => {
+router.post('/transactions/withdraw/interactive', sensitiveApiLimiter, async (req: Request, res: Response) => {
   const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
 
   if (!asset_code) {
@@ -186,8 +206,27 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
     });
   }
 
+  // Validate Stellar account address if provided
+  if (account) {
+    try {
+      const isValidAccount = /^G[A-Z0-9]{55}$/.test(account);
+      if (!isValidAccount) {
+        logger.warn('Invalid Stellar account address format', { account, ip: req.ip });
+        return res.status(400).json({
+          error: 'Invalid Stellar account address format',
+        });
+      }
+    } catch (error) {
+      logger.warn('Invalid Stellar account address format', { account, ip: req.ip, error: (error as Error).message });
+      return res.status(400).json({
+        error: 'Invalid Stellar account address format',
+      });
+    }
+  }
+
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
+    logger.warn('Unsupported asset code requested', { asset_code, ip: req.ip });
     return res.status(400).json(unsupportedAssetResponse(asset_code));
   }
 
@@ -238,7 +277,7 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
  *       401:
  *         description: Token is invalid or expired
  */
-router.get('/interactive/validate', (req: Request, res: Response) => {
+router.get('/interactive/validate', sensitiveApiLimiter, (req: Request, res: Response) => {
   const token = typeof req.query.token === 'string' ? req.query.token : '';
 
   if (!token) {
