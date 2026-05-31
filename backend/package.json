@@ -23,6 +23,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
+    "db:restore:verify": "node scripts/verify-db-restore.js",
     "migrate:verify": "ts-node scripts/verify-migrations.ts",
     "migrate:check": "ts-node scripts/migration-integrity-checker.ts",
     "migrate:rollback": "ts-node scripts/generate-rollback.ts",

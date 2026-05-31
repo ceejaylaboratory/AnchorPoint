@@ -57,6 +57,14 @@ To run the linter:
 npm run lint
 ```
 
+### Database Restore Verification
+To verify that the SQLite backend database can be backed up and restored without mutating the source database:
+```bash
+npm run db:restore:verify
+```
+
+For the full disaster recovery procedure, see [Database Restore Disaster Recovery Runbook](./docs/DISASTER_RECOVERY_DB_RESTORE.md).
+
 ## External KYC Providers (SEP-12)
 AnchorPoint supports pluggable third-party KYC providers for SEP-12 flows.
 

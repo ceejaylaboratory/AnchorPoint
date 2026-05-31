@@ -45,6 +45,28 @@ Creates a `rollback.sql` file in the migration directory with:
 - Confidence levels (high/medium/low)
 - Manual intervention notes where needed
 
+### 3. verify-db-restore.js
+
+Verifies that the SQLite database can be backed up and restored without mutating the source database.
+
+**Usage:**
+```bash
+npm run db:restore:verify
+
+# Verify a specific database file
+npm run db:restore:verify -- --source ./prisma/dev.db
+
+# Keep backup and restore probe files in a known directory
+npm run db:restore:verify -- --source ./prisma/dev.db --backup-dir ./tmp/dr-restore
+```
+
+**Features:**
+- Runs `PRAGMA quick_check` on the source, backup, and restored probe.
+- Creates a SQLite backup with the online backup command.
+- Restores into an isolated probe database.
+- Compares user table names and row counts.
+- Avoids printing row-level data or secrets.
+
 **Confidence Levels:**
 - **High**: Automatic rollback possible (e.g., DROP TABLE for CREATE TABLE)
 - **Medium**: Rollback possible with review (e.g., recreate index)
@@ -56,6 +78,9 @@ Creates a `rollback.sql` file in the migration directory with:
 
 ```bash
 cd backend
+
+# Verify database backup/restore readiness
+npm run db:restore:verify
 
 # Check migration integrity
 npm run migrate:check
