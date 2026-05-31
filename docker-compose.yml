@@ -7,9 +7,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=anchorpoint
-      - POSTGRES_PASSWORD=anchorpoint
-      - POSTGRES_DB=anchorpoint
+      - POSTGRES_USER=${POSTGRES_USER:-anchorpoint}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local environment or .env file}
+      - POSTGRES_DB=${POSTGRES_DB:-anchorpoint}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -33,7 +33,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3002
-      - DATABASE_URL=postgresql://anchorpoint:anchorpoint@postgres:5432/anchorpoint
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-anchorpoint}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local environment or .env file}@postgres:5432/${POSTGRES_DB:-anchorpoint}
       - REDIS_URL=redis://redis:6379
       - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
       - PROMETHEUS_METRICS_PORT=9464
