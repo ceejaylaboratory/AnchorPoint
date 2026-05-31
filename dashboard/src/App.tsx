@@ -69,8 +69,10 @@ const App = () => {
         }
 
         const payload = await response.json();
-        if (!ignore && payload?.data) {
-          setUiConfig(payload.data as UiConfig);
+        if (!ignore) {
+          if (payload?.data) {
+            setUiConfig(payload.data as UiConfig);
+          }
           setLoadingState('ready');
         }
       } catch (error) {
@@ -123,6 +125,7 @@ const App = () => {
       }
     >
       <aside
+        data-testid="sidebar"
         id="main-sidebar"
         aria-label="Main navigation"
         className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-800 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0`}
@@ -180,6 +183,13 @@ const App = () => {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-800 bg-background/50 px-8 backdrop-blur-md">
+          <button
+            aria-label="Toggle navigation"
+            className="lg:hidden"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+          >
+            {sidebarOpen ? <X /> : <Menu />}
         <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-800 bg-background/50 px-4 sm:px-6 lg:px-8 backdrop-blur-md">
           <button
             aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
@@ -193,6 +203,10 @@ const App = () => {
 
           <div className="flex items-center gap-4">
             <div
+              data-testid="backend-status"
+              className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex"
+            >
+              <div className={`h-2 w-2 rounded-full ${loadingState === 'error' ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
               className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex"
               role="status"
               aria-live="polite"
@@ -240,6 +254,10 @@ const App = () => {
             </div>
             {loadingState === 'error' ? (
               <div
+                data-testid="config-warning"
+                className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+              >
+                <AlertCircle size={16} />
                 className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
                 role="alert"
               >
@@ -251,6 +269,7 @@ const App = () => {
 
           <AnimatePresence mode="wait">
             <motion.div
+              data-testid="active-view"
               key={activeTab}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
