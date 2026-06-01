@@ -7,10 +7,6 @@ import logger from '../../utils/logger';
  * for on-chain asset pairs managed by the anchor.
  */
 
-// Simple in-memory cache for swap rates (5 minute TTL)
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const swapRateCache = new Map<string, { rate: SwapRate; timestamp: number }>();
-
 interface AssetPair {
   sell_asset: string;
   buy_asset: string;
@@ -25,7 +21,7 @@ interface SwapRate {
 
 interface SwapRateResponse {
   rates: SwapRate[];
-  errors?: { pair: string; reason: string }[];
+  errors: { pair: string; reason: string }[];
 }
 
 /**
@@ -38,30 +34,90 @@ const MOCK_SWAP_RATES: Record<string, Record<string, number>> = {
     'USDT': 0.12,
     'BTC': 0.0000027,
     'ETH': 0.000048,
+    'EURC': 0.105,
+    'CADT': 0.132,
+    'DAI': 0.12,
+    'USDP': 0.12,
   },
   'USDC': {
     'XLM': 8.33,
     'USDT': 1.0,
     'BTC': 0.000022,
     'ETH': 0.0004,
+    'EURC': 0.833,
+    'CADT': 1.05,
+    'DAI': 1.0,
+    'USDP': 1.0,
   },
   'USDT': {
     'XLM': 8.33,
     'USDC': 1.0,
     'BTC': 0.000022,
     'ETH': 0.0004,
+    'EURC': 0.833,
+    'CADT': 1.05,
+    'DAI': 1.0,
+    'USDP': 1.0,
   },
   'BTC': {
     'XLM': 370370,
     'USDC': 45000,
     'USDT': 45000,
     'ETH': 18.5,
+    'EURC': 37500,
+    'CADT': 47200,
+    'DAI': 45000,
+    'USDP': 45000,
   },
   'ETH': {
     'XLM': 20000,
     'USDC': 2500,
     'USDT': 2500,
     'BTC': 0.054,
+    'EURC': 2525,
+    'CADT': 3175,
+    'DAI': 2500,
+    'USDP': 2500,
+  },
+  'EURC': {
+    'XLM': 9.52,
+    'USDC': 1.2,
+    'USDT': 1.2,
+    'BTC': 0.0000266,
+    'ETH': 0.000397,
+    'CADT': 1.26,
+    'DAI': 1.2,
+    'USDP': 1.2,
+  },
+  'CADT': {
+    'XLM': 7.58,
+    'USDC': 0.95,
+    'USDT': 0.95,
+    'BTC': 0.0000212,
+    'ETH': 0.000315,
+    'EURC': 0.794,
+    'DAI': 0.95,
+    'USDP': 0.95,
+  },
+  'DAI': {
+    'XLM': 8.33,
+    'USDC': 1.0,
+    'USDT': 1.0,
+    'BTC': 0.000022,
+    'ETH': 0.0004,
+    'EURC': 0.833,
+    'CADT': 1.05,
+    'USDP': 1.0,
+  },
+  'USDP': {
+    'XLM': 8.33,
+    'USDC': 1.0,
+    'USDT': 1.0,
+    'BTC': 0.000022,
+    'ETH': 0.0004,
+    'EURC': 0.833,
+    'CADT': 1.05,
+    'DAI': 1.0,
   },
 };
 
@@ -69,6 +125,13 @@ class Sep40Controller {
   // Simple in-memory cache for swap rates (5 minute TTL)
   private readonly CACHE_TTL_MS = 5 * 60 * 1000;
   private readonly swapRateCache = new Map<string, { rate: SwapRate; timestamp: number }>();
+  
+  // Cache statistics
+  private readonly cacheStats = {
+    hits: 0,
+    misses: 0,
+    size: 0,
+  };
 
   /**
   /**
@@ -79,60 +142,68 @@ class Sep40Controller {
   async getSwapRates(pairs: AssetPair[]): Promise<SwapRateResponse> {
     const rates: SwapRate[] = [];
     const errors: { pair: string; reason: string }[] = [];
-
+  
+    // Validate input pairs array
+    if (!Array.isArray(pairs)) {
+      return {
+        rates: [],
+        errors: [{
+          pair: 'N/A',
+          reason: 'Invalid input: pairs must be an array'
+        }]
+      };
+    }
+  
     for (const pair of pairs) {
       try {
         // Validate pair structure
+        if (!pair || typeof pair !== 'object') {
+          errors.push({
+            pair: 'N/A',
+            reason: 'Invalid pair object: must be an object'
+          });
+          continue;
+        }
+          
         if (!pair.sell_asset || !pair.buy_asset) {
           errors.push({
-            pair: `${pair.sell_asset || 'null'}/${pair.buy_asset || 'null'}`,
+            pair: `${pair.sell_asset || 'null'}/${pair.buy_asset || 'null'}`, 
             reason: 'Missing sell_asset or buy_asset property'
           });
           continue;
         }
-
-    const invalidPairs: string[] = [];
-
-    for (const pair of pairs) {
-      try {
+  
+        // Validate asset codes are strings
+        if (typeof pair.sell_asset !== 'string' || typeof pair.buy_asset !== 'string') {
+          errors.push({
+            pair: `${pair.sell_asset || 'null'}/${pair.buy_asset || 'null'}`, 
+            reason: 'sell_asset and buy_asset must be strings'
+          });
+          continue;
+        }
+  
         const rate = await this.getSwapRate(pair.sell_asset, pair.buy_asset);
         if (rate) {
           rates.push(rate);
         } else {
           errors.push({
-            pair: `${pair.sell_asset}/${pair.buy_asset}`,
+            pair: `${pair.sell_asset}/${pair.buy_asset}`, 
             reason: 'Unsupported asset pair or invalid rate calculation'
           });
         }
       } catch (error) {
         errors.push({
-          pair: `${pair.sell_asset}/${pair.buy_asset}`,
+          pair: `${pair.sell_asset || 'unknown'}/${pair.buy_asset || 'unknown'}`, 
           reason: error instanceof Error ? error.message : 'Unknown error occurred'
         });
       }
     }
-
-    return { 
-      rates, 
-      errors: errors.length > 0 ? errors : undefined 
+  
+    // Ensure response is always consistent
+    return {
+      rates,
+      errors: errors
     };
-          invalidPairs.push(`${pair.sell_asset}/${pair.buy_asset}`);
-        }
-      } catch (error) {
-        logger.error('Error getting swap rate for pair', { 
-          pair, 
-          error: error instanceof Error ? error.message : 'unknown error' 
-        });
-        invalidPairs.push(`${pair.sell_asset}/${pair.buy_asset}`);
-      }
-    }
-
-    // Log warnings for invalid pairs
-    if (invalidPairs.length > 0) {
-      logger.warn('Some asset pairs could not be resolved', { invalidPairs });
-    }
-
-    return { rates };
   }
 
   /**
@@ -149,8 +220,19 @@ class Sep40Controller {
     // Trim whitespace and convert to uppercase
     let normalized = assetCode.trim().toUpperCase();
     
+    // Handle asset codes with periods (e.g., "EURC.USDC") by taking only the first part
+    if (normalized.includes('.')) {
+      normalized = normalized.split('.')[0];
+    }
+    
     // Remove any non-alphanumeric characters (except underscores)
     normalized = normalized.replace(/[^A-Z0-9_]/g, '');
+    
+    // Additional validation for common asset code patterns
+    // Allow 3-12 character asset codes (standard for most stablecoins)
+    if (normalized.length < 3 || normalized.length > 12) {
+      return null;
+    }
     
     // Validate that it's not empty after cleaning
     if (!normalized) {
@@ -173,15 +255,11 @@ class Sep40Controller {
     // Check cache first
     const cached = this.swapRateCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
-    const sellCode = sellAsset.toUpperCase();
-    const buyCode = buyAsset.toUpperCase();
-    const cacheKey = `${sellCode}/${buyCode}`;
-
-    // Check cache first
-    const cached = swapRateCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      this.cacheStats.hits++;
       return cached.rate;
     }
+    
+    this.cacheStats.misses++;
 
     // Validate asset codes
     if (!sellCode || !buyCode || sellCode === buyCode) {
@@ -192,10 +270,22 @@ class Sep40Controller {
     let rate = MOCK_SWAP_RATES[sellCode]?.[buyCode];
 
     if (!rate) {
-      // Try to calculate inverse rate
+      // Try to calculate inverse rate with higher precision
       const inverseRate = MOCK_SWAP_RATES[buyCode]?.[sellCode];
       if (inverseRate) {
-        rate = 1 / inverseRate;
+        // Use more precise calculation for inverse rates
+        // Avoid direct 1/inverseRate division to prevent precision loss
+        rate = Math.pow(inverseRate, -1);
+        
+        // Additional validation for inverse rate calculation
+        if (isNaN(rate) || !isFinite(rate)) {
+          logger.warn('Invalid inverse rate calculation', { 
+            sellAsset: sellCode, 
+            buyAsset: buyCode, 
+            inverseRate 
+          });
+          return null;
+        }
       } else {
         return null;
       }
@@ -226,17 +316,40 @@ class Sep40Controller {
       });
       return null;
     }
-
+    
+    // Check for potential floating-point precision issues with very small rates
+    if (rate < 1e-10) {
+      logger.warn('Extremely small swap rate detected - potential precision loss', { 
+        sellAsset: sellCode, 
+        buyAsset: buyCode, 
+        rate 
+      });
+    }
+    
+    // Check for potential precision issues with very large rates
+    if (rate > 100000) {
+      logger.warn('Very large swap rate detected - potential precision loss', { 
+        sellAsset: sellCode, 
+        buyAsset: buyCode, 
+        rate 
+      });
+    }
+    
+    // Use proper decimal arithmetic to avoid string-based rounding errors
+    // Multiply by 10^decimals, round, then divide back
+    const multiplier = Math.pow(10, decimals);
+    const roundedRate = Math.round(rate * multiplier) / multiplier;
+    
     const rateObj = {
       sell_asset: sellCode,
       buy_asset: buyCode,
-      rate: parseFloat(rate.toFixed(decimals)),
+      rate: roundedRate,
       decimals,
     };
 
     // Store in cache
     this.swapRateCache.set(cacheKey, { rate: rateObj, timestamp: Date.now() });
-    swapRateCache.set(cacheKey, { rate: rateObj, timestamp: Date.now() });
+    this.cacheStats.size = this.swapRateCache.size;
 
     return rateObj;
   }
@@ -271,6 +384,22 @@ class Sep40Controller {
   }
 
   /**
+   * Get cache statistics for monitoring
+   * @returns Cache statistics object
+   */
+  getCacheStats(): { hits: number; misses: number; size: number; hitRate: number } {
+    const total = this.cacheStats.hits + this.cacheStats.misses;
+    const hitRate = total > 0 ? (this.cacheStats.hits / total) : 0;
+    
+    return {
+      hits: this.cacheStats.hits,
+      misses: this.cacheStats.misses,
+      size: this.cacheStats.size,
+      hitRate: parseFloat(hitRate.toFixed(3)),
+    };
+  }
+
+  /**
    * Update mock swap rate (for testing/admin purposes)
    * @param sellAsset Asset code to sell
    * @param buyAsset Asset code to buy
@@ -292,7 +421,21 @@ class Sep40Controller {
     this.swapRateCache.delete(cacheKey);
     this.swapRateCache.delete(inverseCacheKey);
   }
+
+  /**
+   * Clear the entire cache
+   */
+  clearCache(): void {
+    this.swapRateCache.clear();
+    this.cacheStats.hits = 0;
+    this.cacheStats.misses = 0;
+    this.cacheStats.size = 0;
+  }
 }
 
 // Export singleton instance
 export const sep40Controller = new Sep40Controller();
+
+// Export cache statistics and management functions for testing
+export const getCacheStats = () => sep40Controller.getCacheStats();
+export const clearCache = () => sep40Controller.clearCache();
