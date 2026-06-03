@@ -1,17 +1,6 @@
 version: 2
 updates:
-  - package-ecosystem: "cargo"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    # Enable security updates
-    allow:
-      - dependency-type: "all"
   - package-ecosystem: "npm"
-    directory: "/"
+    directory: "/dashboard"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
-    allow:
-      - dependency-type: "all"
