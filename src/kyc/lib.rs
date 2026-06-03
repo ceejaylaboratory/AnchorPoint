@@ -51,8 +51,9 @@ impl KycVerifier {
         env.storage()
             .persistent()
             .set(&DataKey::UserKyc(user.clone()), &expires_at);
+        // Topic: event name only; user + expires_at in data.
         env.events()
-            .publish((symbol_short!("kyc_set"), user), expires_at);
+            .publish(symbol_short!("kyc_set"), (user, expires_at));
     }
 
     pub fn is_kyc_valid(env: Env, user: Address) -> bool {

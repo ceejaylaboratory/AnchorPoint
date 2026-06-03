@@ -1,0 +1,291 @@
+# =============================================================================
+# Kubernetes Worker Deployment - Issue #416
+# =============================================================================
+# This manifest defines the deployment configuration for AnchorPoint worker services.
+# It includes ConfigMap for non-sensitive config, Secret for sensitive data,
+# Deployment with proper resource limits and health probes, and a Service for access.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# ConfigMap: Non-sensitive configuration for worker pods
+# Used for environment variables that are safe to commit to version control
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  # Unique name for this ConfigMap within the namespace
+  name: worker-config
+  # Consistent labeling for all AnchorPoint testnet resources
+  labels:
+    app: anchorpoint
+    component: worker
+    environment: testnet
+data:
+  # Logging level for the worker application (debug, info, warn, error)
+  LOG_LEVEL: "info"
+  # Number of concurrent jobs each worker can process
+  QUEUE_CONCURRENCY: "5"
+  # Soroban/Stellar network to connect to
+  STELLAR_NETWORK: "testnet"
+  # Default request timeout in milliseconds
+  REQUEST_TIMEOUT_MS: "30000"
+  # Metrics endpoint port for Prometheus scraping
+  METRICS_PORT: "9464"
+
+# -----------------------------------------------------------------------------
+# Secret: Sensitive credentials for worker pods
+# All values must be base64-encoded. Never commit actual secrets to this file.
+# Use: echo -n "your_secret_value" | base64
+# Or use external secret operators (AWS Secrets Store, Vault, etc.) in production
+# -----------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  # Unique name for this Secret within the namespace
+  name: worker-secrets
+  # Consistent labeling for all AnchorPoint testnet resources
+  labels:
+    app: anchorpoint
+    component: worker
+    environment: testnet
+# Opaque type allows arbitrary key-value pairs
+type: Opaque
+data:
+  # Redis connection URL for BullMQ queue (base64-encoded)
+  # Format: redis://:[password]@[host]:[port]
+  REDIS_URL: ""
+  # Database connection string for PostgreSQL (base64-encoded)
+  DATABASE_URL: ""
+  # Stellar network passphrase (base64-encoded)
+  STELLAR_PASSPHRASE: ""
+  # Deployer secret key for contract operations (base64-encoded)
+  STELLAR_DEPLOYER_SECRET: ""
+  # JWT secret for API authentication (base64-encoded)
+  JWT_SECRET: ""
+
+# -----------------------------------------------------------------------------
+# Deployment: Worker application deployment with RollingUpdate strategy
+# Manages pod lifecycle, scaling, and updates
+# -----------------------------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Unique name for this Deployment within the namespace
+  name: anchorpoint-worker
+  # Consistent labeling for all AnchorPoint testnet resources
+  labels:
+    app: anchorpoint
+    component: worker
+    environment: testnet
+spec:
+  # Number of worker replicas - adjust based on queue load
+  replicas: 2
+  # RollingUpdate strategy ensures zero-downtime deployments
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Maximum number of pods that can be unavailable during update
+      maxUnavailable: 1
+      # Maximum number of pods that can be created over desired replicas
+      maxSurge: 1
+  # Selector matches pod labels to manage
+  selector:
+    matchLabels:
+      app: anchorpoint
+      component: worker
+      environment: testnet
+  template:
+    metadata:
+      # Pod labels - must match selector labels
+      labels:
+        app: anchorpoint
+        component: worker
+        environment: testnet
+    spec:
+      # Restart policy - always restart containers on failure or completion
+      restartPolicy: Always
+      # Containers define what will run in each pod
+      containers:
+        - name: worker
+          # Container image - use latest tag or pin to specific version in production
+          image: anchorpoint/worker:latest
+          # Pull policy - use Always in CI/CD, IfNotPresent for local development
+          imagePullPolicy: IfNotPresent
+          # Expose HTTP port for health checks and metrics
+          ports:
+            - containerPort: 3002
+              name: http
+            - containerPort: 9464
+              name: metrics
+          # Environment variables from ConfigMap (non-sensitive)
+          envFrom:
+            - configMapRef:
+                name: worker-config
+          # Environment variables from Secret (sensitive) using secretKeyRef
+          # No hardcoded values - all secrets come from Kubernetes secrets
+          env:
+            # Reference Redis URL from secret
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: worker-secrets
+                  key: REDIS_URL
+            # Reference database URL from secret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: worker-secrets
+                  key: DATABASE_URL
+            # Reference Stellar passphrase from secret
+            - name: STELLAR_PASSPHRASE
+              valueFrom:
+                secretKeyRef:
+                  name: worker-secrets
+                  key: STELLAR_PASSPHRASE
+            # Reference deployer secret from secret
+            - name: STELLAR_DEPLOYER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: worker-secrets
+                  key: STELLAR_DEPLOYER_SECRET
+            # Reference JWT secret from secret
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: worker-secrets
+                  key: JWT_SECRET
+          # Resource constraints - prevent resource exhaustion
+          resources:
+            requests:
+              # Minimum CPU guaranteed - 100m = 0.1 CPU cores
+              cpu: 100m
+              # Minimum memory guaranteed - 128Mi = 128 mebibytes
+              memory: 128Mi
+            limits:
+              # Maximum CPU allowed - 500m = 0.5 CPU cores
+              cpu: 500m
+              # Maximum memory allowed - 512Mi = 512 mebibytes
+              memory: 512Mi
+          # Liveness probe - restart container if this fails
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3002
+              scheme: HTTP
+            # Wait 30 seconds after container starts before probing
+            initialDelaySeconds: 30
+            # Check every 10 seconds
+            periodSeconds: 10
+            # Probe times out after 5 seconds
+            timeoutSeconds: 5
+            # After 3 consecutive failures, restart the container
+            failureThreshold: 3
+            # Success threshold - number of successes to be considered healthy
+            successThreshold: 1
+          # Readiness probe - remove pod from service endpoints if this fails
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3002
+              scheme: HTTP
+            # Wait 5 seconds after container starts before probing
+            initialDelaySeconds: 5
+            # Check every 5 seconds
+            periodSeconds: 5
+            # Probe times out after 3 seconds
+            timeoutSeconds: 3
+            # After 2 consecutive failures, remove from load balancer
+            failureThreshold: 2
+            # Success threshold - number of successes to be considered ready
+            successThreshold: 1
+          # Security context for the container
+          securityContext:
+            # Do not run as root user - security best practice
+            runAsNonRoot: true
+            # Run as user ID 1000 (non-privileged)
+            runAsUser: 1000
+            # Prevent privilege escalation
+            allowPrivilegeEscalation: false
+            # Read-only root filesystem - mount writeable volumes if needed
+            readOnlyRootFilesystem: true
+
+# -----------------------------------------------------------------------------
+# Service: Internal network access to worker pods
+# Provides stable DNS name and load balancing for worker pods
+# -----------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # Unique name for this Service within the namespace
+  name: anchorpoint-worker-svc
+  # Consistent labeling for all AnchorPoint testnet resources
+  labels:
+    app: anchorpoint
+    component: worker
+    environment: testnet
+spec:
+  # Service type - ClusterIP for internal cluster access only
+  type: ClusterIP
+  # Selector matches pods this service routes to
+  selector:
+    app: anchorpoint
+    component: worker
+    environment: testnet
+  # Ports define how the service is accessed
+  ports:
+    - name: http
+      # Service port - how other pods connect
+      port: 3002
+      # Target port - the containerPort in the pod
+      targetPort: 3002
+      # Protocol - TCP or UDP
+      protocol: TCP
+    - name: metrics
+      # Metrics port for Prometheus scraping
+      port: 9464
+      targetPort: 9464
+      protocol: TCP
+
+# =============================================================================
+# Manual QA Steps:
+# =============================================================================
+# 1. Validate YAML syntax:
+#    yamllint infra/k8s/workers/deployment.yaml
+#
+# 2. Create namespace (if not exists):
+#    kubectl create namespace anchorpoint-testnet
+#
+# 3. Create secrets before applying (replace values):
+#    kubectl create secret generic worker-secrets -n anchorpoint-testnet \
+#      --from-literal=REDIS_URL='redis://:password@redis:6379' \
+#      --from-literal=DATABASE_URL='postgresql://...' \
+#      --from-literal=STELLAR_PASSPHRASE='...' \
+#      --from-literal=STELLAR_DEPLOYER_SECRET='...' \
+#      --from-literal=JWT_SECRET='...'
+#
+# 4. Deploy the manifest:
+#    kubectl apply -f infra/k8s/workers/deployment.yaml -n anchorpoint-testnet
+#
+# 5. Verify deployment:
+#    kubectl get pods -n anchorpoint-testnet -l app=anchorpoint,component=worker
+#    kubectl get svc -n anchorpoint-testnet anchorpoint-worker-svc
+#    kubectl describe pod -n anchorpoint-testnet -l app=anchorpoint,component=worker
+#
+# 6. Check health endpoint:
+#    kubectl exec -n anchorpoint-testnet deploy/anchorpoint-worker -- curl -s http://localhost:3002/health
+#
+# 7. View logs:
+#    kubectl logs -n anchorpoint-testnet -l app=anchorpoint,component=worker
+#
+# 8. Verify resource limits:
+#    kubectl describe pod -n anchorpoint-testnet -l app=anchorpoint,component=worker | grep -A5 "Limits\|Requests"
+#
+# 9. Verify probes are working:
+#    kubectl describe pod -n anchorpoint-testnet -l app=anchorpoint,component=worker | grep -A10 "Liveness\|Readiness"
+#
+# 10. Cleanup:
+#    kubectl delete -f infra/k8s/workers/deployment.yaml -n anchorpoint-testnet
+# =============================================================================

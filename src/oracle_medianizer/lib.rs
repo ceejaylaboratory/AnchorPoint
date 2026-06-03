@@ -72,7 +72,9 @@ impl OracleMedianizer {
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::OracleCount, &0u32);
-        env.storage().instance().set(&DataKey::MinSources, &min_sources);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinSources, &min_sources);
     }
 
     /// Add an authorized oracle source
@@ -113,12 +115,18 @@ impl OracleMedianizer {
             .get(&DataKey::OracleCount)
             .unwrap_or(0);
 
-        env.storage().instance().set(&DataKey::OracleCount, &(count + 1));
+        env.storage().instance().set(&DataKey::OracleCount, &count.checked_add(1).expect("oracle count overflow"));
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleCount, &(count + 1));
 
+        // Topic: event name + oracle Address (needed for indexing source changes).
         env.events().publish(
-            (symbol_short!("oracle"), oracle),
-            symbol_short!("added"),
+            symbol_short!("oracle_add"),
+            oracle,
         );
+        env.events()
+            .publish((symbol_short!("oracle"), oracle), symbol_short!("added"));
     }
 
     /// Remove an oracle source
@@ -152,13 +160,18 @@ impl OracleMedianizer {
             .unwrap_or(0);
 
         if count > 0 {
-            env.storage().instance().set(&DataKey::OracleCount, &(count - 1));
+            env.storage()
+                .instance()
+                .set(&DataKey::OracleCount, &(count - 1));
         }
 
+        // Topic: event name only; oracle Address in data.
         env.events().publish(
-            (symbol_short!("oracle"), oracle),
-            symbol_short!("removed"),
+            symbol_short!("oracle_rm"),
+            oracle,
         );
+        env.events()
+            .publish((symbol_short!("oracle"), oracle), symbol_short!("removed"));
     }
 
     /// Set heartbeat interval for an asset
@@ -245,10 +258,13 @@ impl OracleMedianizer {
             .instance()
             .set(&DataKey::PriceData(asset.clone(), oracle.clone()), &feed);
 
+        // Topic: event name only; asset + oracle + price in data.
         env.events().publish(
-            (symbol_short!("submit"), asset.clone(), oracle),
-            price,
+            symbol_short!("submit"),
+            (asset, oracle, price),
         );
+        env.events()
+            .publish((symbol_short!("submit"), asset.clone(), oracle), price);
     }
 
     /// Calculate and store the median price for an asset with outlier detection
@@ -270,10 +286,7 @@ impl OracleMedianizer {
             .get(&DataKey::MinSources)
             .expect("min sources not set");
 
-        assert!(
-            sources.len() >= min_sources,
-            "minimum sources not met"
-        );
+        assert!(sources.len() >= min_sources, "minimum sources not met");
 
         // Collect all valid prices
         let mut prices: Vec<i128> = Vec::new(&env);
@@ -297,13 +310,13 @@ impl OracleMedianizer {
         prices = Self::sort_prices(&env, prices);
 
         // Calculate mean for outlier detection
-        let sum: i128 = prices.iter().fold(0i128, |acc, p| acc + p);
+        let sum: i128 = prices.iter().fold(0i128, |acc, p| acc.checked_add(p).expect("sum overflow"));
         let mean = sum / prices.len() as i128;
 
         // Calculate standard deviation
         let variance_sum: i128 = prices.iter().fold(0i128, |acc, p| {
             let diff = p - mean;
-            acc + (diff * diff)
+            acc.checked_add(diff.checked_mul(diff).expect("variance overflow")).expect("variance overflow")
         });
         let variance = variance_sum / prices.len() as i128;
 
@@ -312,10 +325,14 @@ impl OracleMedianizer {
 
         // Filter outliers (remove values > 2 standard deviations from mean)
         let mut filtered_prices: Vec<i128> = Vec::new(&env);
-        let threshold = 2 * std_dev;
+        let threshold = 2_i128.checked_mul(std_dev).expect("threshold overflow");
 
         for price in prices.iter() {
-            let diff = if price > mean { price - mean } else { mean - price };
+            let diff = if price > mean {
+                price - mean
+            } else {
+                mean - price
+            };
 
             if diff <= threshold {
                 filtered_prices.push_back(price);
@@ -336,18 +353,14 @@ impl OracleMedianizer {
             // Even number: average of two middle values
             let mid1 = filtered_prices.get_unchecked(len / 2 - 1);
             let mid2 = filtered_prices.get_unchecked(len / 2);
-            (mid1 + mid2) / 2
+            (mid1.checked_add(mid2).expect("median overflow")) / 2
         } else {
             // Odd number: middle value
             filtered_prices.get_unchecked(len / 2)
         };
 
         // Check if update should be triggered
-        let should_update = Self::should_update_price(
-            &env,
-            asset.clone(),
-            median,
-        );
+        let should_update = Self::should_update_price(&env, asset.clone(), median);
 
         if should_update {
             // Store median price
@@ -358,10 +371,17 @@ impl OracleMedianizer {
                 .instance()
                 .set(&DataKey::LastUpdate(asset.clone()), &env.ledger().timestamp());
 
+            // Topic: event name only; asset + median in data.
             env.events().publish(
-                (symbol_short!("median"), asset),
-                median,
+                symbol_short!("median"),
+                (asset, median),
+            env.storage().instance().set(
+                &DataKey::LastUpdate(asset.clone()),
+                &env.ledger().timestamp(),
             );
+
+            env.events()
+                .publish((symbol_short!("median"), asset), median);
         }
 
         median
@@ -413,21 +433,33 @@ impl OracleMedianizer {
         let current_time = env.ledger().timestamp();
 
         // Check heartbeat trigger
-        if let Some(heartbeat) = env.storage().instance().get::<_, u64>(&DataKey::Heartbeat(asset.clone())) {
+        if let Some(heartbeat) = env
+            .storage()
+            .instance()
+            .get::<_, u64>(&DataKey::Heartbeat(asset.clone()))
+        {
             let last_update: u64 = env
                 .storage()
                 .instance()
                 .get(&DataKey::LastUpdate(asset.clone()))
                 .unwrap_or(0);
 
-            if current_time > last_update + heartbeat {
+            if current_time > last_update.checked_add(heartbeat).expect("heartbeat overflow") {
                 return true; // Heartbeat exceeded
             }
         }
 
         // Check deviation trigger
-        if let Some(deviation_threshold_bps) = env.storage().instance().get::<_, u32>(&DataKey::DeviationThreshold(asset.clone())) {
-            if let Some(old_price) = env.storage().instance().get::<_, i128>(&DataKey::MedianPrice(asset.clone())) {
+        if let Some(deviation_threshold_bps) = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::DeviationThreshold(asset.clone()))
+        {
+            if let Some(old_price) = env
+                .storage()
+                .instance()
+                .get::<_, i128>(&DataKey::MedianPrice(asset.clone()))
+            {
                 if old_price > 0 {
                     let deviation = if new_price > old_price {
                         new_price - old_price
@@ -435,7 +467,7 @@ impl OracleMedianizer {
                         old_price - new_price
                     };
 
-                    let deviation_bps = (deviation * 10000) / old_price;
+                    let deviation_bps = deviation.checked_mul(10000).expect("deviation overflow") / old_price;
 
                     if deviation_bps >= deviation_threshold_bps as i128 {
                         return true; // Deviation threshold exceeded
@@ -460,7 +492,7 @@ impl OracleMedianizer {
     ///
     /// # Returns
     /// Sorted vector of prices
-    fn sort_prices(env: &Env, prices: Vec<i128>) -> Vec<i128> {
+    fn sort_prices(_env: &Env, prices: Vec<i128>) -> Vec<i128> {
         let mut sorted = prices.clone();
         let len = sorted.len();
 
@@ -546,7 +578,7 @@ mod tests {
         // Submit prices
         client.submit_price(&oracle1, &asset, &1000000000i128); // $10.00
         client.submit_price(&oracle2, &asset, &1010000000i128); // $10.10
-        client.submit_price(&oracle3, &asset, &990000000i128);  // $9.90
+        client.submit_price(&oracle3, &asset, &990000000i128); // $9.90
 
         let sources = soroban_sdk::vec![&env, oracle1.clone(), oracle2.clone(), oracle3.clone()];
         let median = client.calculate_median(&asset, &sources);

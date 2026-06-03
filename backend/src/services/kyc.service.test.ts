@@ -7,6 +7,10 @@ import {
   SUPPORTED_ASSETS
 } from './kyc.service';
 
+jest.mock('./sep24-interactive-token.service', () => ({
+  signInteractiveToken: jest.fn(() => 'mock-interactive-token'),
+}));
+
 describe('KYC Service', () => {
   it('normalizeAssetCode trims and uppercases', () => {
     expect(normalizeAssetCode(' usdc ')).toBe('USDC');
@@ -22,7 +26,8 @@ describe('KYC Service', () => {
       baseUrl: 'http://localhost:3000',
       transactionId: 'tx_1',
       assetCode: 'USDC',
-      path: '/kyc-deposit'
+      path: '/kyc-deposit',
+      flow: 'deposit',
     });
 
     const parsed = new URL(url);
@@ -30,6 +35,7 @@ describe('KYC Service', () => {
     expect(parsed.searchParams.get('transaction_id')).toBe('tx_1');
     expect(parsed.searchParams.get('asset_code')).toBe('USDC');
     expect(parsed.searchParams.get('lang')).toBe('en');
+    expect(parsed.searchParams.get('token')).toBe('mock-interactive-token');
     expect(parsed.searchParams.get('account')).toBeNull();
     expect(parsed.searchParams.get('amount')).toBeNull();
   });
@@ -51,6 +57,7 @@ describe('KYC Service', () => {
     expect(parsed.searchParams.get('account')).toBe('GACCOUNT');
     expect(parsed.searchParams.get('amount')).toBe('12.50');
     expect(parsed.searchParams.get('lang')).toBe('fr');
+    expect(parsed.searchParams.get('token')).toBe('mock-interactive-token');
   });
 
   it('createWithdrawInteractiveUrl uses the withdraw path', () => {
@@ -63,6 +70,7 @@ describe('KYC Service', () => {
     const parsed = new URL(url);
     expect(parsed.pathname).toBe('/kyc-withdraw');
     expect(parsed.searchParams.get('transaction_id')).toBe('tx_3');
+    expect(parsed.searchParams.get('token')).toBe('mock-interactive-token');
   });
 });
 

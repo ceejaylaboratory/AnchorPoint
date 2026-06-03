@@ -18,5 +18,9 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "@types/node": "^25.6.0",
+    "axios": "^1.15.2"
   }
 }

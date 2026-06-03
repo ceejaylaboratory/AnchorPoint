@@ -5,6 +5,7 @@ import {
   isSep31AssetSupported,
 } from "../config/sep31Fields";
 import logger from "../utils/logger";
+import { notificationService } from "./notification.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,13 @@ export interface Sep31Transaction {
   refunded: boolean;
   startedAt: string;
   completedAt?: string;
-}
+  // Additional status tracking fields
+  lastStatusUpdate?: string;
+  statusHistory?: Array<{
+    status: Sep31Status;
+    timestamp: string;
+    message?: string;
+  }>;
 
 // ─── Callback Notifier Interface ──────────────────────────────────────────────
 
@@ -209,6 +216,16 @@ export class SEP31Service {
 
     const tx = this.mapToSep31Transaction(updated);
 
+    // Notify user of status change
+    const notificationMessage = `Your transaction ${id} status updated to: ${status.replace("_", " ")}`;
+    notificationService.notify(updated.userId, notificationMessage, id).catch((err) => {
+      logger.error("Failed to trigger notification", { 
+        transactionId: id, 
+        userId: updated.userId,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    });
+    
     // Fire callback if configured
     if (tx.callbackUrl && this.notifier) {
       this.notifier.notify(tx).catch((err: unknown) => {
@@ -264,6 +281,14 @@ export class SEP31Service {
           : record.completedAt
             ? String(record.completedAt)
             : undefined,
+      // Additional status tracking fields
+      lastStatusUpdate:
+        record.updatedAt instanceof Date
+          ? record.updatedAt.toISOString()
+          : record.updatedAt
+            ? String(record.updatedAt)
+            : undefined,
+      statusHistory: [],
     };
   }
 }

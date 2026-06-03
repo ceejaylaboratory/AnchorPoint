@@ -7,7 +7,9 @@
 //! - Proposals require quorum to pass
 //! - Mathematical accuracy is ensured through careful integer operations
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, String,
+};
 
 /// Default voting credits allocated to each user
 const DEFAULT_VOTING_CREDITS: i128 = 10_000;
@@ -80,6 +82,8 @@ pub struct Proposal {
     pub status: ProposalStatus,
     /// Required quorum (absolute number of votes)
     pub quorum: i128,
+    /// Ledger sequence when the proposal was created for token snapshotting
+    pub created_at_ledger: u32,
 }
 
 /// Vote record for a user on a proposal
@@ -166,17 +170,18 @@ impl GovernanceContract {
             .get(&DataKey::TotalCreditsIssued)
             .unwrap_or(0);
 
-        let new_credits = current_credits + credits;
+        let new_credits = current_credits.checked_add(credits).expect("credits overflow");
         env.storage()
             .instance()
             .set(&DataKey::VotingCredits(user.clone()), &new_credits);
         env.storage()
             .instance()
-            .set(&DataKey::TotalCreditsIssued, &(total_issued + credits));
+            .set(&DataKey::TotalCreditsIssued, &total_issued.checked_add(credits).expect("credits overflow"));
 
+        // Topic: event name only; user + amounts in data to avoid indexing large Address.
         env.events().publish(
-            (symbol_short!("credits"), user),
-            (caller, credits, new_credits),
+            symbol_short!("credits"),
+            (user, caller, credits, new_credits),
         );
     }
 
@@ -223,8 +228,9 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::QuorumPercentage, &percentage);
 
+        // Topic: event name only; caller + percentage in data.
         env.events()
-            .publish((symbol_short!("quorum"), caller), percentage);
+            .publish(symbol_short!("quorum"), (caller, percentage));
     }
 
     /// Create a new proposal
@@ -256,7 +262,7 @@ impl GovernanceContract {
             .instance()
             .get(&DataKey::ProposalCounter)
             .unwrap_or(0);
-        let new_id = counter + 1;
+        let new_id = counter.checked_add(1).expect("proposal counter overflow");
 
         // Calculate quorum based on total credits issued
         let total_credits: i128 = env
@@ -272,7 +278,7 @@ impl GovernanceContract {
 
         // Quorum is percentage of total credits that must participate
         // Using integer math: quorum = (total_credits * quorum_percentage) / 100
-        let quorum = (total_credits * quorum_percentage) / 100;
+        let quorum = total_credits.checked_mul(quorum_percentage).expect("quorum overflow") / 100;
 
         let proposal = Proposal {
             id: new_id,
@@ -284,9 +290,10 @@ impl GovernanceContract {
             total_quadratic_cost: 0,
             voter_count: 0,
             created_at: env.ledger().timestamp(),
-            deadline: env.ledger().timestamp() + voting_period,
+            deadline: env.ledger().timestamp().checked_add(voting_period).expect("deadline overflow"),
             status: ProposalStatus::OPEN,
             quorum,
+            created_at_ledger: env.ledger().sequence(),
         };
 
         env.storage()
@@ -299,6 +306,7 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::ProposalQuadraticCost(new_id), &0i128);
 
+        // Topic: only the scalar proposal id; creator + title in data.
         env.events()
             .publish((symbol_short!("created"), new_id), (creator, title));
 
@@ -369,6 +377,27 @@ impl GovernanceContract {
             "insufficient voting credits"
         );
 
+        let token_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap();
+        let past_token_balance: i128 = env.invoke_contract(
+            &token_contract,
+            &soroban_sdk::Symbol::new(&env, "get_past_balance"),
+            soroban_sdk::vec![
+                &env,
+                voter.to_val(),
+                1u64.into_val(&env),
+                proposal.created_at_ledger.into()
+            ],
+        );
+
+        assert!(
+            past_token_balance >= quadratic_cost,
+            "insufficient snapshot token balance"
+        );
+
         // Deduct credits from user
         env.storage().instance().set(
             &DataKey::VotingCredits(voter.clone()),
@@ -377,14 +406,14 @@ impl GovernanceContract {
 
         // Update proposal vote totals
         if support {
-            proposal.votes_for += votes;
+            proposal.votes_for = proposal.votes_for.checked_add(votes).expect("votes overflow");
         } else {
-            proposal.votes_against += votes;
+            proposal.votes_against = proposal.votes_against.checked_add(votes).expect("votes overflow");
         }
 
         // Update quadratic cost tracking
-        proposal.total_quadratic_cost += quadratic_cost;
-        proposal.voter_count += 1;
+        proposal.total_quadratic_cost = proposal.total_quadratic_cost.checked_add(quadratic_cost).expect("cost overflow");
+        proposal.voter_count = proposal.voter_count.checked_add(1).expect("voter count overflow");
 
         // Store vote record
         let vote_record = VoteRecord {
@@ -408,10 +437,10 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
-        // Emit vote event
+        // Emit vote event — topic uses only small scalar (proposal_id: u32); voter + details in data.
         env.events().publish(
-            (symbol_short!("voted"), proposal_id, voter.clone()),
-            (support, votes, quadratic_cost),
+            (symbol_short!("voted"), proposal_id),
+            (voter, support, votes, quadratic_cost),
         );
     }
 
@@ -577,6 +606,7 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
+        // Topic: only scalar proposal_id; executor Address in data.
         env.events()
             .publish((symbol_short!("executed"), proposal_id), executor);
     }

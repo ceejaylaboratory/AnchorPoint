@@ -13,7 +13,9 @@
 //! - Aggregates multiple sources of entropy
 //! - Ensures all participants reveal before computing final random value
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Bytes, BytesN};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+};
 
 /// Phases of the commit-reveal protocol
 #[contracttype]
@@ -70,7 +72,9 @@ impl RandomNumberGenerator {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::CurrentPhase, &Phase::COMMIT);
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrentPhase, &Phase::COMMIT);
         env.storage().instance().set(&DataKey::RoundCounter, &0u32);
         env.storage()
             .instance()
@@ -113,7 +117,7 @@ impl RandomNumberGenerator {
             .get(&DataKey::RoundCounter)
             .unwrap_or(0);
 
-        let new_round_id = counter + 1;
+        let new_round_id = counter.checked_add(1).expect("round id overflow");
 
         env.storage()
             .instance()
@@ -189,12 +193,15 @@ impl RandomNumberGenerator {
 
         env.storage()
             .instance()
-            .set(&DataKey::CommitCount(round_id), &(commit_count + 1));
+            .set(&DataKey::CommitCount(round_id), &commit_count.checked_add(1).expect("commit count overflow"));
 
+        // Topic: event name + round_id (u32 scalar); user Address in data.
         env.events().publish(
-            (symbol_short!("commit"), round_id, user),
-            commitment,
+            (symbol_short!("commit"), round_id),
+            (user, commitment),
         );
+        env.events()
+            .publish((symbol_short!("commit"), round_id, user), commitment);
     }
 
     /// Move from commit phase to reveal phase
@@ -318,11 +325,12 @@ impl RandomNumberGenerator {
 
         env.storage()
             .instance()
-            .set(&DataKey::RevealCount(round_id), &(reveal_count + 1));
+            .set(&DataKey::RevealCount(round_id), &reveal_count.checked_add(1).expect("reveal count overflow"));
 
+        // Topic: event name + round_id (u32 scalar); user Address in data.
         env.events().publish(
-            (symbol_short!("reveal"), round_id, user),
-            symbol_short!("done"),
+            (symbol_short!("reveal"), round_id),
+            user,
         );
     }
 
@@ -341,7 +349,11 @@ impl RandomNumberGenerator {
     /// - Caller is not admin
     /// - Phase is not REVEAL
     /// - Not all participants have revealed
-    pub fn compute_random_seed(env: Env, caller: Address, participants: soroban_sdk::Vec<Address>) -> BytesN<32> {
+    pub fn compute_random_seed(
+        env: Env,
+        caller: Address,
+        participants: soroban_sdk::Vec<Address>,
+    ) -> BytesN<32> {
         caller.require_auth();
 
         let admin: Address = env
@@ -409,10 +421,8 @@ impl RandomNumberGenerator {
             .instance()
             .set(&DataKey::CurrentPhase, &Phase::COMPLETED);
 
-        env.events().publish(
-            (symbol_short!("seed"), current_round),
-            random_seed.clone(),
-        );
+        env.events()
+            .publish((symbol_short!("seed"), current_round), random_seed.clone());
 
         random_seed
     }
@@ -435,9 +445,7 @@ impl RandomNumberGenerator {
 
     /// Get the random seed for a specific round
     pub fn get_random_seed(env: Env, round_id: u32) -> Option<BytesN<32>> {
-        env.storage()
-            .instance()
-            .get(&DataKey::RandomSeed(round_id))
+        env.storage().instance().get(&DataKey::RandomSeed(round_id))
     }
 
     /// Get commit count for a round

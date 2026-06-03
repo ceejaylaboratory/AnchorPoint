@@ -123,8 +123,9 @@ impl SnapshotStaking {
             .instance()
             .set(&DataKey::TotalStaked, &(total + amount));
 
+        // Topic: event name only; user + amount in data.
         env.events()
-            .publish((symbol_short!("staked"), user), amount);
+            .publish(symbol_short!("staked"), (user, amount));
     }
 
     /// Record an unstake of `amount` for `user` at the current epoch.
@@ -155,8 +156,9 @@ impl SnapshotStaking {
             .instance()
             .set(&DataKey::TotalStaked, &(total - amount));
 
+        // Topic: event name only; user + amount in data.
         env.events()
-            .publish((symbol_short!("unstaked"), user), amount);
+            .publish(symbol_short!("unstaked"), (user, amount));
     }
 
     // ── Views ─────────────────────────────────────────────────────────────
@@ -368,4 +370,54 @@ mod tests {
         }));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_unstake_in_later_epoch_does_not_affect_past() {
+        let (_env, client, alice, _bob) = setup();
+        client.stake(&alice, &1000);
+        client.advance_epoch(); // epoch 0 closes with 1000
+        
+        client.unstake(&alice, &500);
+        assert_eq!(client.balance_at(&alice, &0), 1000);
+        assert_eq!(client.balance_at(&alice, &1), 500);
+    }
+
+    #[contract]
+    pub struct MockRegistry;
+    #[contractimpl]
+    impl MockRegistry {
+        pub fn is_paused(env: Env) -> bool {
+            env.storage().instance().get(&soroban_sdk::symbol_short!("paused")).unwrap_or(false)
+        }
+        pub fn set_paused(env: Env, paused: bool) {
+            env.storage().instance().set(&soroban_sdk::symbol_short!("paused"), &paused);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_pause_stake() {
+        let (env, client, alice, _bob) = setup();
+        let registry_id = env.register(MockRegistry, ());
+        let registry_client = MockRegistryClient::new(&env, &registry_id);
+        registry_client.set_paused(&true);
+        
+        client.set_security_registry(&registry_id);
+        client.stake(&alice, &100);
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_pause_unstake() {
+        let (env, client, alice, _bob) = setup();
+        let registry_id = env.register(MockRegistry, ());
+        let registry_client = MockRegistryClient::new(&env, &registry_id);
+        
+        client.stake(&alice, &1000);
+        
+        registry_client.set_paused(&true);
+        client.set_security_registry(&registry_id);
+        client.unstake(&alice, &100);
+    }
 }
+

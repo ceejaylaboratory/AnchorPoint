@@ -38,6 +38,28 @@ export class EventController {
             });
         }
     }
+
+    /**
+     * GET /api/events/health
+     * Get the health status of the event indexer
+     * Returns the last synced block and the gap between local DB and ledger tip
+     */
+    public async getHealth(req: Request, res: Response) {
+        try {
+            const health = await eventIndexer.getHealth();
+
+            return res.json({
+                success: true,
+                data: health
+            });
+        } catch (error) {
+            logger.error('Error fetching event indexer health:', error);
+            return res.status(500).json({
+                success: false,
+                message: 'Internal server error while fetching indexer health'
+            });
+        }
+    }
 }
 
 export const eventController = new EventController();

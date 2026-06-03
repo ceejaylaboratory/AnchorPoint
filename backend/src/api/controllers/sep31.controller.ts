@@ -136,7 +136,8 @@ export const getTransaction = async (
       return res.status(404).json({ error: "Transaction not found" });
     }
 
-    return res.status(200).json({
+    // Add additional status tracking information
+    const response = {
       transaction: {
         id: tx.id,
         status: tx.status,
@@ -148,13 +149,18 @@ export const getTransaction = async (
         external_transaction_id: tx.externalTransactionId ?? null,
         started_at: tx.startedAt,
         completed_at: tx.completedAt ?? null,
+        last_status_update: tx.lastStatusUpdate ?? null,
+        status_history: tx.statusHistory ?? [],
         refunded: tx.refunded,
         required_info_message: tx.requiredInfoMessage ?? null,
       },
-    });
+    };
+
+    return res.status(200).json(response);
   } catch (err) {
     logger.error("SEP-31 getTransaction unhandled error", {
       error: err instanceof Error ? err.message : String(err),
+      transactionId: req.params.id,
     });
     return res.status(500).json({ error: "internal server error" });
   }

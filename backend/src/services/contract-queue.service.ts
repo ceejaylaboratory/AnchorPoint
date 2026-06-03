@@ -9,6 +9,7 @@ import {
   retryStrategies,
 } from '../config/queue';
 import { JobStatus } from '@prisma/client';
+import sorobanErrorService from './soroban-error.service';
 
 /**
  * Contract Interaction Job Data
@@ -30,6 +31,14 @@ export interface JobResult {
   success: boolean;
   data?: any;
   error?: string;
+  errorDetails?: {
+    category: string;
+    severity: string;
+    code: string;
+    userMessage: string;
+    suggestedAction: string;
+    retryable: boolean;
+  };
   transactionId?: string;
   timestamp: Date;
 }
@@ -375,6 +384,12 @@ class ContractQueueService {
       startedAt?: Date;
       completedAt?: Date;
       failedAt?: Date;
+      errorCategory?: string;
+      errorSeverity?: string;
+      errorCode?: string;
+      userMessage?: string;
+      suggestedAction?: string;
+      retryable?: boolean;
     }
   ): Promise<void> {
     try {
@@ -418,9 +433,19 @@ class ContractQueueService {
     this.queue.on('failed', (job: Job | undefined, error: Error) => {
       if (job) {
         logger.error(`Job ${job.id} failed:`, error);
+        
+        // Parse error using Soroban error service
+        const errorDetails = sorobanErrorService.formatForApi(error);
+        
         this.updateJobInDatabase(job.id!, {
           status: JobStatus.FAILED,
           error: error.message,
+          errorCategory: errorDetails.category,
+          errorSeverity: errorDetails.severity,
+          errorCode: errorDetails.code,
+          userMessage: errorDetails.userMessage,
+          suggestedAction: errorDetails.suggestedAction,
+          retryable: errorDetails.retryable,
           failedAt: new Date(),
         });
       }

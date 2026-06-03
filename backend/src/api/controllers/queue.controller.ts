@@ -120,9 +120,23 @@ export class QueueController {
 
       const status = await contractQueueService.getJobStatus(jobId);
 
+      // Include error details if available
+      const responseData = { job: status };
+      
+      if (status.error && status.errorCategory) {
+        responseData.job.errorDetails = {
+          category: status.errorCategory,
+          severity: status.errorSeverity,
+          code: status.errorCode,
+          userMessage: status.userMessage,
+          suggestedAction: status.suggestedAction,
+          retryable: status.retryable,
+        };
+      }
+
       res.json({
         status: 'success',
-        data: { job: status },
+        data: responseData,
       });
     } catch (error: any) {
       logger.error('Error getting job status:', error);
@@ -146,9 +160,27 @@ export class QueueController {
         limit ? parseInt(limit as string, 10) : 50
       );
 
+      // Include error details for jobs that have them
+      const jobsWithDetails = jobs.map((job: any) => {
+        if (job.error && job.errorCategory) {
+          return {
+            ...job,
+            errorDetails: {
+              category: job.errorCategory,
+              severity: job.errorSeverity,
+              code: job.errorCode,
+              userMessage: job.userMessage,
+              suggestedAction: job.suggestedAction,
+              retryable: job.retryable,
+            },
+          };
+        }
+        return job;
+      });
+
       res.json({
         status: 'success',
-        data: { jobs },
+        data: { jobs: jobsWithDetails },
       });
     } catch (error: any) {
       logger.error('Error getting jobs by status:', error);
@@ -172,9 +204,27 @@ export class QueueController {
         limit ? parseInt(limit as string, 10) : 50
       );
 
+      // Include error details for jobs that have them
+      const jobsWithDetails = jobs.map((job: any) => {
+        if (job.error && job.errorCategory) {
+          return {
+            ...job,
+            errorDetails: {
+              category: job.errorCategory,
+              severity: job.errorSeverity,
+              code: job.errorCode,
+              userMessage: job.userMessage,
+              suggestedAction: job.suggestedAction,
+              retryable: job.retryable,
+            },
+          };
+        }
+        return job;
+      });
+
       res.json({
         status: 'success',
-        data: { jobs },
+        data: { jobs: jobsWithDetails },
       });
     } catch (error: any) {
       logger.error('Error getting user jobs:', error);

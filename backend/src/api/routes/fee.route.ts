@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { FeeService } from '../../services/fee.service';
 import { RedisService } from '../../services/redis.service';
-import { getFeeStats, estimateFee } from '../controllers/fee.controller';
+import { getFeeStats, estimateFee, calculateAssetFee } from '../controllers/fee.controller';
 
 const router = Router();
 
@@ -101,6 +101,60 @@ router.get('/stats', (req: Request, res: Response) => {
  */
 router.get('/estimate', (req: Request, res: Response) => {
   return estimateFee(req, res, feeService);
+});
+
+/**
+ * @swagger
+ * /fees/calculate:
+ *   get:
+ *     summary: Calculate asset-specific fee
+ *     description: Returns the calculated fee for a given asset and amount using the asset's configured fee strategy.
+ *     tags: [Fees]
+ *     parameters:
+ *       - in: query
+ *         name: asset
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Asset code (e.g. USDC, USD)
+ *       - in: query
+ *         name: amount
+ *         required: true
+ *         schema:
+ *           type: number
+ *         description: Transaction amount
+ *     responses:
+ *       200:
+ *         description: Calculated fee
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 assetCode:
+ *                   type: string
+ *                   example: "USDC"
+ *                 feeType:
+ *                   type: string
+ *                   enum: [flat, percentage, tiered]
+ *                   example: "flat"
+ *                 inputAmount:
+ *                   type: number
+ *                   example: 100
+ *                 feeAmount:
+ *                   type: number
+ *                   example: 0.5
+ *                 feeFixed:
+ *                   type: number
+ *                 feePercent:
+ *                   type: number
+ *                 feeMinimum:
+ *                   type: number
+ *       400:
+ *         description: Invalid parameters or unknown asset
+ */
+router.get('/calculate', (req: Request, res: Response) => {
+  return calculateAssetFee(req, res, feeService);
 });
 
 export default router;

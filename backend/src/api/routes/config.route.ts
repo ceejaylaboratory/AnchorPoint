@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getConfig, getHistory, updateConfig, rollbackConfig } from '../controllers/config.controller';
+import { getConfig, getUiConfig, getHistory, updateConfig, updateUiConfig, rollbackConfig } from '../controllers/config.controller';
 
 const router = Router();
 
@@ -19,6 +19,7 @@ const router = Router();
  *         description: Unauthorized
  */
 router.get('/', getConfig);
+router.get('/ui', getUiConfig);
 
 /**
  * @swagger
@@ -62,6 +63,7 @@ router.get('/history', getHistory);
  *         description: Unauthorized
  */
 router.post('/', updateConfig);
+router.post('/ui', updateUiConfig);
 
 /**
  * @swagger

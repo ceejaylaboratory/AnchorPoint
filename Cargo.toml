@@ -7,6 +7,7 @@ members = [
     "src/circuit_breaker",
     "src/escrow_multisig",
     "src/escrow_timelock",
+    "src/event_hub",
     "src/flash_loan",
     "src/governance",
     "src/indexing",
@@ -21,6 +22,9 @@ members = [
     "src/upgradeable",
     "src/utils",
     "src/vesting",
+    "src/proxy",
+    "src/yield_farming",
+    "src/benchmarks"
 ]
 resolver = "2"
 

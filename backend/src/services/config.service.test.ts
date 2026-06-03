@@ -50,9 +50,18 @@ describe('ConfigService', () => {
       settings: JSON.stringify({
         JWT_SECRET: 'test-secret-value',
         INTERACTIVE_URL: 'http://test.local',
+        STELLAR_NETWORK: 'testnet',
+        STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
+        STELLAR_BASE_FEE: '100',
         WEBHOOK_TIMEOUT_MS: 1000,
         WEBHOOK_MAX_RETRIES: 1,
-        WEBHOOK_RETRY_DELAY_MS: 100
+        WEBHOOK_RETRY_DELAY_MS: 100,
+        ui: {
+          brandName: 'AnchorPoint',
+          primaryColor: '#3b82f6',
+          accentColor: '#14b8a6',
+          fieldRequirements: { deposit: [], withdraw: [], kyc: [] }
+        }
       })
     };
     (prisma.systemConfig.findFirst as jest.Mock).mockResolvedValue(mockConfig);
@@ -68,9 +77,18 @@ describe('ConfigService', () => {
     const newSettings = {
       JWT_SECRET: 'new-secret-value',
       INTERACTIVE_URL: 'http://new.local',
+      STELLAR_NETWORK: 'testnet',
+      STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
+      STELLAR_BASE_FEE: '100',
       WEBHOOK_TIMEOUT_MS: 2000,
       WEBHOOK_MAX_RETRIES: 2,
-      WEBHOOK_RETRY_DELAY_MS: 200
+      WEBHOOK_RETRY_DELAY_MS: 200,
+      ui: {
+        brandName: 'AnchorPoint',
+        primaryColor: '#3b82f6',
+        accentColor: '#14b8a6',
+        fieldRequirements: { deposit: [], withdraw: [], kyc: [] }
+      }
     };
 
     (prisma.systemConfig.findFirst as jest.Mock).mockResolvedValue({ id: 'old-id', version: 1 });
@@ -90,5 +108,26 @@ describe('ConfigService', () => {
     expect(redis.publish).toHaveBeenCalledWith('CONFIG_UPDATED', '2');
     
     expect(configService.getConfig().JWT_SECRET).toBe('new-secret-value');
+  });
+
+  it('should merge and persist UI configuration updates', async () => {
+    (prisma.systemConfig.findFirst as jest.Mock).mockResolvedValue({ id: 'old-id', version: 2 });
+    (prisma.$transaction as jest.Mock).mockImplementation(async (cb) => {
+      return cb(prisma);
+    });
+    (prisma.systemConfig.create as jest.Mock).mockResolvedValue({ version: 3 });
+
+    await configService.updateUiConfig({
+      brandName: 'White Label Anchor',
+      fieldRequirements: {
+        deposit: [{ key: 'memo', label: 'Memo', required: true }],
+      },
+    });
+
+    expect(prisma.systemConfig.create).toHaveBeenCalled();
+    expect(configService.getUiConfig().brandName).toBe('White Label Anchor');
+    expect(configService.getUiConfig().fieldRequirements.deposit).toEqual([
+      { key: 'memo', label: 'Memo', required: true },
+    ]);
   });
 });

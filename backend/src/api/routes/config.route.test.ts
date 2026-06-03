@@ -10,8 +10,10 @@ app.use('/api/config', configRouter);
 jest.mock('../../services/config.service', () => {
   const mockService = {
     getConfig: jest.fn(),
+      getUiConfig: jest.fn(),
     getHistory: jest.fn(),
     updateConfig: jest.fn(),
+    updateUiConfig: jest.fn(),
     rollbackToVersion: jest.fn(),
   };
   return {
@@ -34,6 +36,17 @@ describe('Config API Routes', () => {
       const response = await request(app).get('/api/config');
       expect(response.status).toBe(200);
       expect(response.body.data).toEqual(mockConfig);
+    });
+  });
+
+  describe('GET /api/config/ui', () => {
+    it('should return the current UI configuration', async () => {
+      const mockUiConfig = { brandName: 'AnchorPoint', primaryColor: '#3b82f6' };
+      (configService.getUiConfig as jest.Mock).mockReturnValue(mockUiConfig);
+
+      const response = await request(app).get('/api/config/ui');
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual(mockUiConfig);
     });
   });
 
@@ -63,6 +76,23 @@ describe('Config API Routes', () => {
       expect(response.status).toBe(400);
       expect(response.body.status).toBe('error');
       expect(response.body.message).toBe('Validation failed');
+    });
+  });
+
+  describe('POST /api/config/ui', () => {
+    it('should update UI configuration successfully', async () => {
+      const newUiConfig = { brandName: 'New Anchor', primaryColor: '#0f766e' };
+      (configService.updateUiConfig as jest.Mock).mockResolvedValue({ version: 4 });
+      (configService.getUiConfig as jest.Mock).mockReturnValue(newUiConfig);
+
+      const response = await request(app)
+        .post('/api/config/ui')
+        .send(newUiConfig);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.version).toBe(4);
+      expect(response.body.data.ui).toEqual(newUiConfig);
+      expect(configService.updateUiConfig).toHaveBeenCalledWith(newUiConfig);
     });
   });
 

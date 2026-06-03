@@ -17,6 +17,19 @@ export const getConfig = async (req: Request, res: Response) => {
   }
 };
 
+export const getUiConfig = async (req: Request, res: Response) => {
+  try {
+    const config = configService.getUiConfig();
+    res.json({
+      status: 'success',
+      data: config
+    });
+  } catch (error) {
+    logger.error('Error fetching UI config:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch UI configuration' });
+  }
+};
+
 export const getHistory = async (req: Request, res: Response) => {
   try {
     const history = await configService.getHistory();
@@ -45,6 +58,27 @@ export const updateConfig = async (req: Request, res: Response) => {
       res.status(400).json({ status: 'error', message: 'Validation failed', errors: JSON.parse(error.message) });
     } else {
       res.status(500).json({ status: 'error', message: 'Failed to update configuration' });
+    }
+  }
+};
+
+export const updateUiConfig = async (req: Request, res: Response) => {
+  try {
+    const result = await configService.updateUiConfig(req.body);
+    res.json({
+      status: 'success',
+      message: 'UI configuration updated successfully',
+      data: {
+        version: result.version,
+        ui: configService.getUiConfig(),
+      }
+    });
+  } catch (error) {
+    logger.error('Error updating UI config:', error);
+    if (error instanceof Error && error.name === 'ZodError') {
+      res.status(400).json({ status: 'error', message: 'Validation failed', errors: JSON.parse(error.message) });
+    } else {
+      res.status(500).json({ status: 'error', message: 'Failed to update UI configuration' });
     }
   }
 };

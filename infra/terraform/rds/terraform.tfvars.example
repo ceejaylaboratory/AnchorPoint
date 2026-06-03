@@ -1,0 +1,96 @@
+# =============================================================================
+# AWS RDS PostgreSQL Terraform Variables - Example
+# Issue #413
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your actual values.
+# NEVER commit terraform.tfvars with actual credentials to version control!
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Project Configuration
+# -----------------------------------------------------------------------------
+
+# Project name used for resource naming
+project_name = "anchorpoint"
+
+# Deployment environment (testnet, mainnet, staging, production)
+environment = "testnet"
+
+# AWS region for the RDS instance
+region = "us-east-1"
+
+# -----------------------------------------------------------------------------
+# Database Configuration
+# -----------------------------------------------------------------------------
+
+# RDS instance class - adjust based on load requirements
+# Options: db.t3.micro (2 vCPU, 1GB), db.t3.small (2 vCPU, 2GB), db.t3.medium (2 vCPU, 4GB)
+db_instance_class = "db.t3.micro"
+
+# PostgreSQL engine version
+postgres_engine_version = "15.4"
+
+# Initial database name
+db_name = "anchorpoint"
+
+# Database master username
+db_username = "anchorpoint_admin"
+
+# Optional: Override auto-generated password (leave empty for random generation)
+# db_password_override = ""
+
+# -----------------------------------------------------------------------------
+# Storage Configuration
+# -----------------------------------------------------------------------------
+
+# Initial storage size in GiB (minimum 20)
+allocated_storage = 20
+
+# Maximum storage for autoscaling (set to 0 to disable)
+max_allocated_storage = 100
+
+# -----------------------------------------------------------------------------
+# Network Configuration
+# -----------------------------------------------------------------------------
+
+# CIDR blocks for application subnets that need database access
+# Replace with your actual subnet CIDR ranges
+# Example: ["10.0.1.0/24", "10.0.2.0/24"]
+app_subnet_cidrs = []
+
+# CIDR blocks for worker subnets that need database access
+# Replace with your actual subnet CIDR ranges
+# Example: ["10.0.3.0/24", "10.0.4.0/24"]
+worker_subnet_cidrs = []
+
+# Optional: Specific VPC ID (defaults to default VPC)
+# vpc_id = "vpc-xxxxxxxx"
+
+# -----------------------------------------------------------------------------
+# Other Settings
+# -----------------------------------------------------------------------------
+
+# Whether to apply changes immediately (true) or during maintenance window (false)
+apply_immediately = false
+
+# =============================================================================
+# Manual QA Steps:
+# =============================================================================
+# 1. Copy and customize:
+#    cp terraform.tfvars.example terraform.tfvars
+#
+# 2. Edit terraform.tfvars with your actual values
+#
+# 3. Initialize and validate:
+#    terraform init
+#    terraform validate
+#
+# 4. Plan and review:
+#    terraform plan -out=tfplan
+#
+# 5. Apply:
+#    terraform apply tfplan
+#
+# 6. Verify resources created:
+#    aws rds describe-db-instances --db-instance-identifier <identifier>
+# =============================================================================

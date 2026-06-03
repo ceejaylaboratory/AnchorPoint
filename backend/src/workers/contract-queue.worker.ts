@@ -1,10 +1,11 @@
 #!/usr/bin/env ts-node
 
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, Queue } from 'bullmq';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import logger from '../utils/logger';
 import { defaultWorkerOptions, QUEUE_NAMES, retryStrategies } from '../config/queue';
 import { ContractJobData, JobResult } from '../services/contract-queue.service';
+import sorobanErrorService from '../services/soroban-error.service';
 
 /**
  * Contract Queue Worker
@@ -13,6 +14,9 @@ import { ContractJobData, JobResult } from '../services/contract-queue.service';
 
 // Stellar server instance
 const server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
+
+// Dead Letter Queue instance
+const dlq = new Queue(QUEUE_NAMES.DEAD_LETTER_QUEUE, { connection: defaultWorkerOptions.connection });
 
 /**
  * Process a contract call job
@@ -59,14 +63,19 @@ async function processContractCall(job: Job<ContractJobData>): Promise<JobResult
   } catch (error: any) {
     logger.error(`Contract call failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     // Check if error is retryable
-    if (isRetryableError(error)) {
+    if (sorobanErrorService.isRetryable(error)) {
       throw error; // Will be retried by BullMQ
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -109,13 +118,18 @@ async function processContractDeploy(job: Job<ContractJobData>): Promise<JobResu
   } catch (error: any) {
     logger.error(`Contract deployment failed: ${job.id}`, error);
     
-    if (isRetryableError(error)) {
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
+    if (sorobanErrorService.isRetryable(error)) {
       throw error;
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -165,14 +179,19 @@ async function processSettlement(job: Job<ContractJobData>): Promise<JobResult> 
   } catch (error: any) {
     logger.error(`Settlement failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     // Settlements should be retried aggressively
-    if (isRetryableError(error)) {
+    if (sorobanErrorService.isRetryable(error)) {
       throw error;
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -226,28 +245,24 @@ async function processTransactionSubmit(job: Job<ContractJobData>): Promise<JobR
   } catch (error: any) {
     logger.error(`Transaction submission failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     // Check for specific Stellar errors
     if (error.response?.data?.extras?.result_codes) {
       const resultCodes = error.response.data.extras.result_codes;
       logger.error('Stellar error codes:', resultCodes);
-      
-      // Handle specific error codes
-      if (resultCodes.transaction === 'tx_too_early') {
-        throw new Error('too_early'); // Will be retried
-      }
-      
-      if (resultCodes.transaction === 'tx_failed') {
-        throw new Error('transaction_failed'); // Will be retried
-      }
     }
 
-    if (isRetryableError(error)) {
+    if (sorobanErrorService.isRetryable(error)) {
       throw error;
     }
 
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -303,9 +318,14 @@ async function processBatchOperation(job: Job<ContractJobData>): Promise<JobResu
   } catch (error: any) {
     logger.error(`Batch operation failed: ${job.id}`, error);
     
+    // Parse error using Soroban error service
+    const errorDetails = sorobanErrorService.getErrorDetails(error);
+    logger.error(`Error details for job ${job.id}:`, errorDetails);
+    
     return {
       success: false,
       error: error.message,
+      errorDetails: sorobanErrorService.formatForApi(error),
       timestamp: new Date(),
     };
   }
@@ -342,26 +362,6 @@ async function processJob(job: Job<ContractJobData>): Promise<JobResult> {
     logger.error(`Job ${job.id} processing error:`, error);
     throw error;
   }
-}
-
-/**
- * Check if an error is retryable
- */
-function isRetryableError(error: any): boolean {
-  const retryableErrors = [
-    'too_early',
-    'transaction_failed',
-    'network_error',
-    'timeout',
-    'ECONNREFUSED',
-    'ETIMEDOUT',
-  ];
-
-  const errorMessage = error.message?.toLowerCase() || '';
-  
-  return retryableErrors.some(retryable => 
-    errorMessage.includes(retryable.toLowerCase())
-  );
 }
 
 /**
@@ -405,9 +405,26 @@ function startWorker() {
     logger.info(`✅ Job ${job.id} completed successfully`);
   });
 
-  worker.on('failed', (job: Job | undefined, error: Error) => {
+  worker.on('failed', async (job: Job | undefined, error: Error) => {
     if (job) {
       logger.error(`❌ Job ${job.id} failed after ${job.attemptsMade} attempts:`, error.message);
+      
+      const maxAttempts = job.opts.attempts || 1;
+      if (job.attemptsMade >= maxAttempts) {
+        logger.info(`Moving job ${job.id} to Dead Letter Queue...`);
+        try {
+          await dlq.add(job.name, {
+            originalJob: job.data,
+            error: error.message,
+            stack: error.stack,
+            failedAt: new Date(),
+            attemptsMade: job.attemptsMade
+          });
+          logger.info(`Successfully moved job ${job.id} to DLQ.`);
+        } catch (dlqError) {
+          logger.error(`Failed to move job ${job.id} to DLQ:`, dlqError);
+        }
+      }
     }
   });
 
@@ -424,17 +441,32 @@ function startWorker() {
   logger.info(`   Concurrency: ${defaultWorkerOptions.concurrency}`);
 
   // Graceful shutdown
-  process.on('SIGTERM', async () => {
-    logger.info('SIGTERM received, closing worker...');
-    await worker.close();
-    process.exit(0);
-  });
+  let isShuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    
+    logger.info(`${signal} received, closing worker gracefully...`);
+    try {
+      // Close the worker, which waits for active jobs to finish
+      await worker.close();
+      
+      // Close the DLQ connection
+      await dlq.close();
+      
+      // Disconnect from Redis
+      await worker.disconnect();
+      
+      logger.info('Worker closed and disconnected successfully');
+      process.exit(0);
+    } catch (error) {
+      logger.error('Error during worker shutdown:', error);
+      process.exit(1);
+    }
+  };
 
-  process.on('SIGINT', async () => {
-    logger.info('SIGINT received, closing worker...');
-    await worker.close();
-    process.exit(0);
-  });
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
   return worker;
 }

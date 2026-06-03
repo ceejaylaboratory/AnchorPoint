@@ -8,11 +8,12 @@ import { Request, Response, NextFunction } from 'express';
 import { BatchPaymentService } from '../services/batch-payment.service';
 import { BatchPaymentError, BatchErrorType } from '../services/batch-payment.types';
 import logger from '../utils/logger';
+import { config } from '../config/env';
 
 // Initialize batch payment service
 const batchService = new BatchPaymentService({
-  horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-  networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+  horizonUrl: config.STELLAR_HORIZON_URL,
+  networkPassphrase: config.STELLAR_NETWORK_PASSPHRASE,
 });
 
 /**
@@ -100,7 +101,7 @@ export const executeBatchPayments = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { payments, sourceSecretKey, baseFee, timeoutInSeconds } = req.body;
+    const { payments, sourceSecretKey, encryptedKey, keyId, baseFee, timeoutInSeconds } = req.body;
 
     // Validate request body
     if (!payments || !Array.isArray(payments)) {
@@ -111,10 +112,10 @@ export const executeBatchPayments = async (
       return;
     }
 
-    if (!sourceSecretKey) {
+    if (!sourceSecretKey && !encryptedKey && !keyId) {
       res.status(400).json({
         success: false,
-        error: 'Source secret key is required',
+        error: 'One of sourceSecretKey, encryptedKey, or keyId is required',
       });
       return;
     }
@@ -142,6 +143,8 @@ export const executeBatchPayments = async (
     const result = await batchService.executeBatch({
       payments,
       sourceSecretKey,
+      encryptedKey,
+      keyId,
       baseFee,
       timeoutInSeconds,
     });
@@ -205,7 +208,7 @@ export const executeChunkedBatchPayments = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { payments, sourceSecretKey, chunkSize } = req.body;
+    const { payments, sourceSecretKey, encryptedKey, keyId, chunkSize } = req.body;
 
     if (!payments || !Array.isArray(payments)) {
       res.status(400).json({
@@ -215,10 +218,10 @@ export const executeChunkedBatchPayments = async (
       return;
     }
 
-    if (!sourceSecretKey) {
+    if (!sourceSecretKey && !encryptedKey && !keyId) {
       res.status(400).json({
         success: false,
-        error: 'Source secret key is required',
+        error: 'One of sourceSecretKey, encryptedKey, or keyId is required',
       });
       return;
     }
@@ -228,7 +231,9 @@ export const executeChunkedBatchPayments = async (
     const results = await batchService.executeBatchInChunks(
       payments,
       sourceSecretKey,
-      chunkSize || 100
+      chunkSize || 100,
+      encryptedKey,
+      keyId
     );
 
     const totalOps = results.reduce((sum, r) => sum + r.totalOps, 0);
@@ -296,7 +301,7 @@ export const retryFailedPayments = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { failedPayments, sourceSecretKey } = req.body;
+    const { failedPayments, sourceSecretKey, encryptedKey, keyId } = req.body;
 
     if (!failedPayments || !Array.isArray(failedPayments)) {
       res.status(400).json({
@@ -306,10 +311,10 @@ export const retryFailedPayments = async (
       return;
     }
 
-    if (!sourceSecretKey) {
+    if (!sourceSecretKey && !encryptedKey && !keyId) {
       res.status(400).json({
         success: false,
-        error: 'Source secret key is required',
+        error: 'One of sourceSecretKey, encryptedKey, or keyId is required',
       });
       return;
     }
@@ -318,7 +323,9 @@ export const retryFailedPayments = async (
 
     const result = await batchService.handlePartialFailure(
       failedPayments,
-      sourceSecretKey
+      sourceSecretKey,
+      encryptedKey,
+      keyId
     );
 
     const statusCode = result.failed.length > 0 ? 207 : 200;

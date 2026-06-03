@@ -1,6 +1,27 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: anchorpoint-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=anchorpoint
+      - POSTGRES_PASSWORD=anchorpoint
+      - POSTGRES_DB=anchorpoint
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anchorpoint"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - anchorpoint-network
+
   backend:
     build:
       context: ./backend
@@ -12,15 +33,15 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3002
-      - DATABASE_URL=file:/app/data/dev.db
+      - DATABASE_URL=postgresql://anchorpoint:anchorpoint@postgres:5432/anchorpoint
       - REDIS_URL=redis://redis:6379
       - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
       - PROMETHEUS_METRICS_PORT=9464
       - OTEL_SERVICE_NAME=anchorpoint-backend
       - OTEL_RESOURCE_ATTRIBUTES=service.name=anchorpoint-backend,service.version=1.0.0
-    volumes:
-      - backend-data:/app/data
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -85,7 +106,7 @@ services:
       - anchorpoint-network
 
 volumes:
-  backend-data:
+  postgres-data:
     driver: local
   redis-data:
     driver: local

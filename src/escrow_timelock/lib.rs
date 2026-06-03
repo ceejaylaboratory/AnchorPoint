@@ -25,12 +25,17 @@ pub struct EscrowTimelock;
 
 #[contractimpl]
 impl EscrowTimelock {
-
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
-        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+        if env
+            .storage()
+            .instance()
+            .has(&soroban_sdk::symbol_short!("sec_reg"))
+        {
             panic!("already set");
         }
-        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
     }
 
     /// Initialize a time-locked escrow contract
@@ -110,9 +115,16 @@ impl EscrowTimelock {
 
     /// Claim funds as the recipient (only after unlock_time or if conditions are met)
     pub fn claim(e: Env) {
-
-        if let Some(registry) = e.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = e.invoke_contract(&registry, &soroban_sdk::Symbol::new(&e, "is_paused"), soroban_sdk::vec![&e]);
+        if let Some(registry) = e
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = e.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&e, "is_paused"),
+                soroban_sdk::vec![&e],
+            );
             if is_paused {
                 panic!("contract is paused");
             }
@@ -159,9 +171,16 @@ impl EscrowTimelock {
 
     /// Request refund as sender (only if unlock_time has passed and recipient hasn't claimed)
     pub fn refund(e: Env) {
-
-        if let Some(registry) = e.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = e.invoke_contract(&registry, &soroban_sdk::Symbol::new(&e, "is_paused"), soroban_sdk::vec![&e]);
+        if let Some(registry) = e
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = e.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&e, "is_paused"),
+                soroban_sdk::vec![&e],
+            );
             if is_paused {
                 panic!("contract is paused");
             }

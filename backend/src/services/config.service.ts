@@ -1,4 +1,4 @@
-import { dynamicConfigSchema, DynamicConfig, initialDynamicConfig } from '../config/env';
+import { dynamicConfigSchema, DynamicConfig, initialDynamicConfig, DashboardUiConfig } from '../config/env';
 import prisma from '../lib/prisma';
 import { redis } from '../lib/redis';
 import logger from '../utils/logger';
@@ -69,6 +69,10 @@ class ConfigService {
     return this.currentConfig;
   }
 
+  public getUiConfig(): DashboardUiConfig {
+    return this.currentConfig.ui;
+  }
+
   public async getHistory() {
     return prisma.systemConfig.findMany({
       orderBy: { version: 'desc' },
@@ -110,6 +114,22 @@ class ConfigService {
     await redis.publish(REDIS_CHANNEL, result.version.toString());
 
     return result;
+  }
+
+  public async updateUiConfig(uiSettings: unknown) {
+    const nextConfig = {
+      ...this.currentConfig,
+      ui: {
+        ...this.currentConfig.ui,
+        ...(uiSettings as Record<string, unknown>),
+        fieldRequirements: {
+          ...this.currentConfig.ui.fieldRequirements,
+          ...((uiSettings as { fieldRequirements?: Record<string, unknown> })?.fieldRequirements ?? {}),
+        },
+      },
+    };
+
+    return this.updateConfig(nextConfig);
   }
 
   public async rollbackToVersion(version: number) {

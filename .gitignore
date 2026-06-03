@@ -25,6 +25,7 @@ coverage/
 *.local
 
 # Editor/System
+.codex
 .vscode/*
 !.vscode/extensions.json
 .idea/

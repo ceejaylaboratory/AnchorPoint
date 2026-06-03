@@ -7,6 +7,7 @@
  */
 
 import { ASSET_MAP } from "./assets";
+import type { FeeType } from "./assets";
 
 export interface FieldDefinition {
   description: string;
@@ -27,6 +28,8 @@ export interface Sep31AssetConfig extends Sep31AssetFields {
   minAmount: number;
   /** Maximum transaction amount (as a numeric string, same unit as the asset). */
   maxAmount: number;
+  /** Strategy used to compute fees for this asset. */
+  feeType: FeeType;
   /** Fixed fee charged per transaction. */
   feeFixed: number;
   /** Percentage fee charged per transaction (e.g. 0.005 = 0.5%). */
@@ -51,6 +54,7 @@ export const SEP31_ASSET_FIELDS: Record<string, Sep31AssetConfig> = {
     // single source of truth; fall back to sensible defaults if not found.
     minAmount: Number(ASSET_MAP["USDC"]?.minAmount ?? "1"),
     maxAmount: Number(ASSET_MAP["USDC"]?.maxAmount ?? "1000000"),
+    feeType: ASSET_MAP["USDC"]?.feeType ?? "tiered",
     feeFixed: ASSET_MAP["USDC"]?.feeFixed ?? 0.5,
     feePercent: ASSET_MAP["USDC"]?.feePercent ?? 0.005,
 
@@ -71,6 +75,7 @@ export const SEP31_ASSET_FIELDS: Record<string, Sep31AssetConfig> = {
     enabled: true,
     minAmount: Number(ASSET_MAP["USD"]?.minAmount ?? "1"),
     maxAmount: Number(ASSET_MAP["USD"]?.maxAmount ?? "1000000"),
+    feeType: ASSET_MAP["USD"]?.feeType ?? "tiered",
     feeFixed: ASSET_MAP["USD"]?.feeFixed ?? 0.5,
     feePercent: ASSET_MAP["USD"]?.feePercent ?? 0.005,
 

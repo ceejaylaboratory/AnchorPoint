@@ -24,14 +24,14 @@ pub fn calculate_dynamic_fee(amount: i128, volume: i128, tiers: Vec<FeeTier>) ->
         }
     }
 
-    (amount * selected_bps) / 10000
+    amount.checked_mul(selected_bps).expect("fee overflow") / 10000
 }
 
 /**
  * Basic fee calculation using basis points.
  */
 pub fn calculate_simple_fee(amount: i128, fee_bps: i128) -> i128 {
-    (amount * fee_bps) / 10000
+    amount.checked_mul(fee_bps).expect("fee overflow") / 10000
 }
 
 #[cfg(test)]

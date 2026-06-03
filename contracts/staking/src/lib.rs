@@ -117,14 +117,19 @@ impl MultiTokenStaking {
                 .get(&DataKey::RewardPerTokenStored(reward_token.clone()))
                 .unwrap_or(0);
             
-            rpt += amount * PRECISION / total_staked;
+            rpt = rpt.checked_add(
+                amount.checked_mul(PRECISION).expect("rpt overflow") / total_staked
+            ).expect("rpt overflow");
             env.storage()
                 .instance()
-                .set(&DataKey::RewardPerTokenStored(reward_token), &rpt);
+                .set(&DataKey::RewardPerTokenStored(reward_token.clone()), &rpt);
         }
 
+        // Topic: event name only; from + amount in data.
         env.events().publish(
-            (symbol_short!("dep_rwd"), from),
+            symbol_short!("dep_rwd"),
+            (from, amount),
+            (symbol_short!("dep_rwd"), from, reward_token),
             amount,
         );
     }
@@ -147,7 +152,7 @@ impl MultiTokenStaking {
         let prev: i128 = Self::_stake_of(&env, &user);
         env.storage()
             .persistent()
-            .set(&DataKey::Stake(user.clone()), &(prev + amount));
+            .set(&DataKey::Stake(user.clone()), &prev.checked_add(amount).expect("stake overflow"));
 
         let total: i128 = env
             .storage()
@@ -156,9 +161,10 @@ impl MultiTokenStaking {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalStaked, &(total + amount));
+            .set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
 
-        env.events().publish((symbol_short!("staked"), user), amount);
+        // Topic: event name only; user + amount in data.
+        env.events().publish(symbol_short!("staked"), (user, amount));
     }
 
     pub fn unstake(env: Env, user: Address, amount: i128) {
@@ -172,7 +178,7 @@ impl MultiTokenStaking {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Stake(user.clone()), &(prev - amount));
+            .set(&DataKey::Stake(user.clone()), &prev.checked_sub(amount).expect("stake underflow"));
 
         let total: i128 = env
             .storage()
@@ -181,7 +187,7 @@ impl MultiTokenStaking {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalStaked, &(total - amount));
+            .set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
         token::Client::new(&env, &stake_token).transfer(
@@ -190,7 +196,8 @@ impl MultiTokenStaking {
             &amount,
         );
 
-        env.events().publish((symbol_short!("unstaked"), user), amount);
+        // Topic: event name only; user + amount in data.
+        env.events().publish(symbol_short!("unstaked"), (user, amount));
     }
 
     // ── Claiming ──────────────────────────────────────────────────────────
@@ -218,7 +225,8 @@ impl MultiTokenStaking {
             );
 
             env.events()
-                .publish((symbol_short!("claimed"), user), reward);
+                .publish(symbol_short!("claimed"), (user, reward));
+                .publish((symbol_short!("claimed"), user, reward_token), reward);
         }
 
         reward
@@ -250,8 +258,10 @@ impl MultiTokenStaking {
                     &reward,
                 );
 
+                // Topic: event name only; user + reward in data.
                 env.events()
-                    .publish((symbol_short!("claimed"), user.clone()), reward);
+                    .publish(symbol_short!("claimed"), (user.clone(), reward));
+                    .publish((symbol_short!("claimed"), user.clone(), reward_token.clone()), reward);
             }
         }
     }
@@ -276,7 +286,7 @@ impl MultiTokenStaking {
             .get(&DataKey::Rewards(user, reward_token))
             .unwrap_or(0);
 
-        accrued + stake * (rpt - user_rpt) / PRECISION
+        accrued + stake.checked_mul(rpt - user_rpt).expect("rewards overflow") / PRECISION
     }
 
     pub fn total_staked(env: Env) -> i128 {
@@ -322,7 +332,7 @@ impl MultiTokenStaking {
             .unwrap_or(0);
 
         let stake = Self::_stake_of(env, user);
-        let earned = stake * (rpt - user_rpt) / PRECISION;
+        let earned = stake.checked_mul(rpt - user_rpt).expect("rewards overflow") / PRECISION;
 
         if earned > 0 {
             let prev: i128 = env
@@ -332,7 +342,7 @@ impl MultiTokenStaking {
                 .unwrap_or(0);
             env.storage()
                 .persistent()
-                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &(prev + earned));
+                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &prev.checked_add(earned).expect("rewards overflow"));
         }
 
         // Snapshot current global rate for this user

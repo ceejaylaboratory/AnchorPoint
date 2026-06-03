@@ -79,6 +79,13 @@ describe('Rate Limit Middleware', () => {
       expect(limiter).toBeDefined();
     });
   });
+
+  describe('publicLimiter', () => {
+    it('should export a shared public Redis-backed limiter', () => {
+      const { publicLimiter } = require('./rate-limit.middleware');
+      expect(publicLimiter).toBeDefined();
+    });
+  });
 });
 
 

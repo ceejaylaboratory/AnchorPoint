@@ -21,8 +21,17 @@ export interface PaymentOperation {
 export interface BatchPaymentRequest {
   /** Array of payment operations to batch (max 100) */
   payments: PaymentOperation[];
-  /** Source account secret key for signing */
-  sourceSecretKey: string;
+  /** Source account secret key for signing (deprecated - use encryptedKey or keyId) */
+  sourceSecretKey?: string;
+  /** Encrypted key for signing (new secure method) */
+  encryptedKey?: {
+    ciphertext: string;
+    keyVersion: string;
+    algorithm: string;
+    timestamp: number;
+  };
+  /** Key ID for vault/KMS retrieval (alternative secure method) */
+  keyId?: string;
   /** Optional base fee in stroops (default: 100) */
   baseFee?: number;
   /** Optional timeout in seconds (default: 300) */

@@ -1,0 +1,118 @@
+# =============================================================================
+# Cert-Manager Helm Values - Issue #419
+# =============================================================================
+# Helm values for installing cert-manager in the AnchorPoint cluster.
+# Install with: helm install cert-manager jetstack/cert-manager -n cert-manager \
+#   --create-namespace -f cert-manager-values.yaml
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Global Configuration
+# -----------------------------------------------------------------------------
+
+# Install cert-manager CRDs (required for Certificates to work)
+installCRDs: true
+
+# Image configuration for cert-manager components
+image:
+  # Repository for cert-manager controller image
+  repository: quay.io/jetstack/cert-manager-controller
+  # Tag for cert-manager controller (use specific version for production)
+  tag: v1.14.2
+  # Pull policy - IfNotPresent for faster startup in dev
+  pullPolicy: IfNotPresent
+
+# -----------------------------------------------------------------------------
+# Namespace Configuration
+# -----------------------------------------------------------------------------
+
+# Namespace where cert-manager will be installed
+namespace: cert-manager
+
+# Resource labels for all cert-manager resources
+commonLabels:
+  app: anchorpoint
+  component: cert-manager
+  environment: testnet
+
+# -----------------------------------------------------------------------------
+# Leader Election Configuration
+# Enable leader election for high availability
+# -----------------------------------------------------------------------------
+
+leaderElection:
+  # Enable leader election for HA deployments
+  enabled: true
+  # Namespace for leader election resources
+  namespace: kube-system
+
+# -----------------------------------------------------------------------------
+# Metrics Configuration
+# Enable Prometheus metrics for cert-manager
+# -----------------------------------------------------------------------------
+
+prometheus:
+  # Enable Prometheus metrics
+  enabled: true
+  # Metrics service monitor for Prometheus Operator
+  servicemonitor:
+    enabled: false
+
+# -----------------------------------------------------------------------------
+# Resource Requests and Limits
+# Prevent resource exhaustion on cluster nodes
+# -----------------------------------------------------------------------------
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+# -----------------------------------------------------------------------------
+# Webhook Configuration (for cert-manager internal validation)
+# -----------------------------------------------------------------------------
+
+webhook:
+  resources:
+    limits:
+      cpu: 100m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+# -----------------------------------------------------------------------------
+# CA Injector Configuration (for injecting CA certificates)
+# -----------------------------------------------------------------------------
+
+cainjector:
+  resources:
+    limits:
+      cpu: 100m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+# =============================================================================
+# Manual QA Steps:
+# =============================================================================
+# 1. Add Jetstack Helm repository:
+#    helm repo add jetstack https://charts.jetstack.io
+#    helm repo update
+#
+# 2. Install cert-manager:
+#    helm install cert-manager jetstack/cert-manager \
+#      -n cert-manager --create-namespace \
+#      -f cert-manager-values.yaml
+#
+# 3. Verify installation:
+#    kubectl get pods -n cert-manager
+#    kubectl get crd | grep cert-manager
+#
+# 4. Check cert-manager logs:
+#    kubectl logs -n cert-manager -l app.kubernetes.io/name=cert-manager
+# =============================================================================

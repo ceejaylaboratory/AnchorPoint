@@ -24,7 +24,11 @@ impl SecurityRegistry {
 
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&DataKey::SuperAdmin).expect("not initialized");
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::SuperAdmin)
+            .expect("not initialized");
         if admin != stored_admin {
             panic!("not super admin");
         }
@@ -33,7 +37,11 @@ impl SecurityRegistry {
 
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&DataKey::SuperAdmin).expect("not initialized");
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::SuperAdmin)
+            .expect("not initialized");
         if admin != stored_admin {
             panic!("not super admin");
         }
@@ -41,7 +49,10 @@ impl SecurityRegistry {
     }
 
     pub fn is_paused(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::IsPaused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::IsPaused)
+            .unwrap_or(false)
     }
 }
 
