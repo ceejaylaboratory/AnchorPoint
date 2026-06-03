@@ -1,16 +1,18 @@
 import { QueueOptions, WorkerOptions, JobsOptions } from 'bullmq';
-import { redis } from '../lib/redis';
 
-/**
- * BullMQ Queue Configuration
- */
-
-// Redis connection for BullMQ
+// Redis connection for BullMQ with resiliency settings (#361)
 export const queueConnection = {
   host: process.env.REDIS_HOST || 'localhost',
   port: parseInt(process.env.REDIS_PORT || '6379', 10),
   password: process.env.REDIS_PASSWORD,
   db: parseInt(process.env.REDIS_DB || '0', 10),
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+  retryStrategy: (times: number) => Math.min(times * 100, 5000),
+  reconnectOnError: (err: Error) => {
+    const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT'];
+    return targetErrors.some((e) => err.message.includes(e));
+  },
 };
 
 // Priority mapping — must be declared before jobTypeConfigs to allow direct references

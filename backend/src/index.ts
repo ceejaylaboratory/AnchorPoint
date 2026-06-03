@@ -6,12 +6,10 @@ import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
 import adminRouter from './api/routes/admin.route';
-import authRouter from './api/routes/auth.route';
 import sep24Router from './api/routes/sep24.route';
 import sep12Router from './api/routes/sep12.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
-import sep31Router from './api/routes/sep31.route';
 import sep40Router from './api/routes/sep40.route';
 import infoRouter from './api/routes/info.route';
 import metricsRouter from './api/routes/metrics.route';
@@ -30,7 +28,7 @@ import { notificationService } from './services/notification.service';
 import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
 import { NotificationType } from '@prisma/client';
 import { validateKmsConfigOnStartup } from './lib/key-management.service';
-import { getBreakerHealthSummary, registerBreakerMetrics } from './resilience';
+import queueDashboardRouter from './api/routes/queue-dashboard.route';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
@@ -38,15 +36,9 @@ notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvide
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 
 const app = express();
-app.disable('x-powered-by'); // Prevent Express from sending the X-Powered-By header
 const PORT = config.PORT;
 
-const corsOptions = {
-  origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-};
-app.use(cors(corsOptions));
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -93,11 +85,7 @@ app.get('/', (req: Request, res: Response) => {
  *                   format: date-time
  */
 app.get('/health', (req: Request, res: Response) => {
-  res.json({ 
-    status: 'UP', 
-    timestamp: new Date().toISOString(),
-    circuitBreakers: getBreakerHealthSummary()
-  });
+  res.json({ status: 'UP', timestamp: new Date().toISOString() });
 });
 
 // Swagger API Documentation
@@ -145,17 +133,20 @@ app.use('/api/relayer', relayerRouter);
 // SEP-40 Swap Rates API
 app.use('/sep40', sep40Router);
 
+// SEP-12 KYC routes
+app.use('/sep12', sep12Router);
+
 // Public endpoints — shared Redis-backed rate limit state
-app.use('/auth', publicLimiter, authRouter);
 app.use('/sep38', publicLimiter, sep38Router);
-app.use('/sep31', publicLimiter, sep31Router);
-app.use('/sep12', publicLimiter, sep12Router);
 app.use('/info', publicLimiter, infoRouter);
 app.use('/sep24', publicLimiter, sep24Router);
 app.use('/sep6', publicLimiter, sep6Router);
 app.use('/metrics', publicLimiter, metricsRouter);
 
 app.use('/api/recurring-payments', recurringPaymentsRouter);
+
+// BullMQ queue monitoring dashboard (#362) — admin-only in production
+app.use('/api/queue-dashboard', queueDashboardRouter);
 
 // Global error handling middleware (must be last)
 app.use(errorHandler);
@@ -172,8 +163,6 @@ if (process.env.NODE_ENV !== 'test') {
       app.listen(PORT, () => {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
-        // Initialize Circuit Breaker Telemetry
-        registerBreakerMetrics();
         feeReportScheduler.start();
       });
     });
