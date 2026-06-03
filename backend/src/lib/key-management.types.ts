@@ -39,6 +39,20 @@ export interface EncryptedKey {
 }
 
 /**
+ * Result of an encryption key rotation operation.
+ * Contains metadata only — never plaintext key material.
+ */
+export interface KeyRotationResult {
+  success: boolean;
+  backend: 'aws-kms' | 'vault';
+  /** Whether a new key version was created or rotation was enabled */
+  rotated: boolean;
+  keyVersion?: string;
+  message: string;
+  timestamp: number;
+}
+
+/**
  * Key Management Error
  * 
  * Structured error type for key management operations.
@@ -105,6 +119,16 @@ export interface IKeyManagementService {
    * @returns true if service is healthy and accessible
    */
   isHealthy(): Promise<boolean>;
+
+  /**
+   * Rotate the encryption key at the vault/KMS backend.
+   *
+   * - AWS KMS: ensures automatic key rotation is enabled (annual rotation).
+   * - Vault: rotates the Transit engine key to a new version.
+   *
+   * Security Note: Never logs or returns plaintext key material.
+   */
+  rotateEncryptionKey(): Promise<KeyRotationResult>;
 }
 
 /**

@@ -1,0 +1,50 @@
+# =============================================================================
+# ClusterIssuer for Let's Encrypt Staging - Issue #419
+# =============================================================================
+# This ClusterIssuer uses the Let's Encrypt staging environment for testing.
+# The staging environment has rate limits that are more forgiving than production.
+#
+# IMPORTANT: Before using, replace 'your-email@example.com' with a valid email.
+# This email is used for ACME registration and certificate expiration notices.
+#
+# To switch to production:
+#   1. Apply cluster-issuer-prod.yaml instead
+#   2. Update certificates to reference 'anchorpoint-prod-issuer'
+#   3. Delete staging certificates to trigger re-issuance
+# =============================================================================
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  # Name referenced by Certificate resources
+  name: anchorpoint-staging-issuer
+  # Consistent labeling for all AnchorPoint resources
+  labels:
+    app: anchorpoint
+    component: cert-manager
+    environment: testnet
+spec:
+  # ACME protocol for Let's Encrypt integration
+  acme:
+    # Server endpoint - Let's Encrypt staging (use for testing)
+    # For production, use: https://acme-v02.api.letsencrypt.org/directory
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    
+    # Email for ACME registration and notifications
+    email: your-email@example.com
+    
+    # Private key for ACME account (stored in Kubernetes)
+    privateKeySecretRef:
+      name: anchorpoint-staging-issuer-account-key
+    
+    # ACME challenge configuration
+    solvers:
+      # HTTP-01 challenge - requires ingress controller with annotation support
+      - http01:
+          ingress:
+            # Ingress class for the solver (nginx required for this configuration)
+            class: nginx
+            # Pod namespace for the ingress controller
+            podNamespace: ingress-nginx
+            # Service type for the ingress controller service
+            serviceType: ClusterIP

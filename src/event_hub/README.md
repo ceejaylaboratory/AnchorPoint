@@ -117,7 +117,7 @@ let event = client.get_event(&1u64);
 
 The Event Hub emits `CrossContractEvent` as part of the standardized `AnchorEvent` enum, which allows off-chain indexers to:
 
-1. **Listen for Events**: Monitor all events published with `symbol_short!("anchor")` and `symbol_short!("x_contract")` topics
+1. **Listen for Events**: Monitor all events published with `symbol_short!("anchor")` and `symbol_short!("xcontract")` topics
 2. **Store Metadata**: Access source contract, timestamp, and event type for filtering
 3. **Process Events**: Decode the `event_data` based on `event_type` for database storage
 4. **Query History**: Use pagination APIs to build complete event histories
@@ -127,7 +127,7 @@ The Event Hub emits `CrossContractEvent` as part of the standardized `AnchorEven
 ```javascript
 // Listen for cross-contract events
 provider.on('contract:event', async (event) => {
-    if (event.topic[0] === 'anchor' && event.topic[1] === 'x_contract') {
+    if (event.topic[0] === 'anchor' && event.topic[1] === 'xcontract') {
         const payload = event.data;
         
         // Store in database

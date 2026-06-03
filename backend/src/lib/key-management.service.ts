@@ -20,6 +20,7 @@ import {
   AwsKmsConfig,
   VaultConfig,
   KeyManagementConfig,
+  KeyRotationResult,
 } from './key-management.types';
 
 /**
@@ -234,6 +235,56 @@ class AwsKmsService implements IKeyManagementService {
     }
   }
 
+  /**
+   * Ensure automatic key rotation is enabled for the AWS KMS key.
+   * AWS rotates symmetric CMKs annually once enabled; old versions remain decryptable.
+   */
+  async rotateEncryptionKey(): Promise<KeyRotationResult> {
+    const timestamp = Date.now();
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { GetKeyRotationStatusCommand, EnableKeyRotationCommand } = require('@aws-sdk/client-kms');
+
+      const statusCommand = new GetKeyRotationStatusCommand({ KeyId: this.keyArn });
+      const statusResponse = await this.kmsClient.send(statusCommand);
+
+      if (statusResponse.KeyRotationEnabled) {
+        logger.info('AWS KMS automatic key rotation is already enabled');
+        return {
+          success: true,
+          backend: 'aws-kms',
+          rotated: false,
+          keyVersion: this.keyArn,
+          message: 'Automatic key rotation already enabled',
+          timestamp,
+        };
+      }
+
+      const enableCommand = new EnableKeyRotationCommand({ KeyId: this.keyArn });
+      await this.kmsClient.send(enableCommand);
+
+      logger.info('AWS KMS automatic key rotation enabled successfully');
+
+      return {
+        success: true,
+        backend: 'aws-kms',
+        rotated: true,
+        keyVersion: this.keyArn,
+        message: 'Automatic key rotation enabled',
+        timestamp,
+      };
+    } catch (error: any) {
+      logger.error(`AWS KMS key rotation failed: ${error?.name ?? error?.message ?? error}`);
+
+      throw new KeyManagementError(
+        KeyManagementErrorType.ENCRYPTION_FAILED,
+        'Failed to configure AWS KMS key rotation',
+        { originalError: error?.message }
+      );
+    }
+  }
+
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -437,6 +488,48 @@ class VaultService implements IKeyManagementService {
     }
   }
 
+  /**
+   * Rotate the Vault Transit engine encryption key to a new version.
+   * Previous versions remain available for decryption.
+   */
+  async rotateEncryptionKey(): Promise<KeyRotationResult> {
+    const timestamp = Date.now();
+
+    try {
+      const response = await this.vaultClient.write(
+        `${this.transitPath}/keys/stellar-keys/rotate`
+      );
+
+      const keyVersion = response.data?.latest_version?.toString() ?? 'unknown';
+
+      logger.info(`Vault Transit key rotated successfully (version ${keyVersion})`);
+
+      return {
+        success: true,
+        backend: 'vault',
+        rotated: true,
+        keyVersion,
+        message: `Transit key rotated to version ${keyVersion}`,
+        timestamp,
+      };
+    } catch (error: any) {
+      logger.error(`Vault key rotation failed: ${error?.message ?? error}`);
+
+      let errorType = KeyManagementErrorType.ENCRYPTION_FAILED;
+      if (error?.statusCode === 403) {
+        errorType = KeyManagementErrorType.UNAUTHORIZED;
+      } else if (error?.statusCode === 404) {
+        errorType = KeyManagementErrorType.KEY_NOT_FOUND;
+      }
+
+      throw new KeyManagementError(
+        errorType,
+        'Failed to rotate Vault Transit encryption key',
+        { originalError: error?.message }
+      );
+    }
+  }
+
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -484,4 +577,99 @@ export function getKeyManagementService(): IKeyManagementService {
 export function initializeKeyManagement(config: KeyManagementConfig): void {
   keyManagementServiceInstance = createKeyManagementService(config);
   logger.info(`Key management service initialized with backend: ${config.backend}`);
+}
+
+/**
+ * Validate AWS KMS / Vault configuration at startup and emit structured
+ * diagnostic log entries.  Never throws — missing config is surfaced as a
+ * warning so the process can still start and serve non-key-management routes.
+ */
+export function validateKmsConfigOnStartup(envConfig: {
+  KEY_MANAGEMENT_BACKEND?: string;
+  AWS_KMS_KEY_ARN?: string;
+  AWS_REGION?: string;
+  VAULT_ADDR?: string;
+  VAULT_TOKEN?: string;
+  VAULT_TRANSIT_PATH?: string;
+}): void {
+  const backend = envConfig.KEY_MANAGEMENT_BACKEND ?? 'aws-kms';
+
+  if (backend === 'aws-kms') {
+    if (!envConfig.AWS_KMS_KEY_ARN) {
+      logger.warn('KMS startup validation: KEY_MANAGEMENT_BACKEND=aws-kms but AWS_KMS_KEY_ARN is not set — key encryption/decryption unavailable', {
+        backend,
+        missingVars: ['AWS_KMS_KEY_ARN'],
+      });
+    } else {
+      const maskedArn = envConfig.AWS_KMS_KEY_ARN.replace(/(?<=.{20}).+(?=.{6})/, '***');
+      logger.info('KMS startup validation: AWS KMS configuration present', {
+        backend,
+        keyArn: maskedArn,
+        region: envConfig.AWS_REGION ?? 'us-east-1 (default)',
+      });
+    }
+    return;
+  }
+
+  if (backend === 'vault') {
+    const missingVars: string[] = [];
+    if (!envConfig.VAULT_ADDR) missingVars.push('VAULT_ADDR');
+    if (!envConfig.VAULT_TOKEN) missingVars.push('VAULT_TOKEN');
+    if (!envConfig.VAULT_TRANSIT_PATH) missingVars.push('VAULT_TRANSIT_PATH');
+
+    if (missingVars.length > 0) {
+      logger.warn('KMS startup validation: KEY_MANAGEMENT_BACKEND=vault but required vars are missing — key encryption/decryption unavailable', {
+        backend,
+        missingVars,
+      });
+    } else {
+      logger.info('KMS startup validation: HashiCorp Vault configuration present', {
+        backend,
+        vaultAddr: envConfig.VAULT_ADDR,
+        transitPath: envConfig.VAULT_TRANSIT_PATH,
+      });
+    }
+    return;
+  }
+
+  logger.warn('KMS startup validation: unrecognised KEY_MANAGEMENT_BACKEND value', { backend });
+}
+
+/**
+ * Build key management configuration from environment variables.
+ * Returns null when required credentials are missing.
+ */
+export function buildKeyManagementConfigFromEnv(env: {
+  KEY_MANAGEMENT_BACKEND: 'aws-kms' | 'vault';
+  AWS_KMS_KEY_ARN?: string;
+  AWS_REGION?: string;
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
+  VAULT_ADDR?: string;
+  VAULT_TOKEN?: string;
+  VAULT_TRANSIT_PATH?: string;
+}): KeyManagementConfig | null {
+  if (env.KEY_MANAGEMENT_BACKEND === 'aws-kms') {
+    if (!env.AWS_KMS_KEY_ARN) {
+      return null;
+    }
+    return {
+      backend: 'aws-kms',
+      keyArn: env.AWS_KMS_KEY_ARN,
+      region: env.AWS_REGION,
+      accessKeyId: env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    };
+  }
+
+  if (!env.VAULT_ADDR || !env.VAULT_TOKEN || !env.VAULT_TRANSIT_PATH) {
+    return null;
+  }
+
+  return {
+    backend: 'vault',
+    address: env.VAULT_ADDR,
+    token: env.VAULT_TOKEN,
+    transitPath: env.VAULT_TRANSIT_PATH,
+  };
 }

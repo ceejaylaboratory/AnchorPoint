@@ -55,7 +55,13 @@ export interface Sep31Transaction {
   refunded: boolean;
   startedAt: string;
   completedAt?: string;
-}
+  // Additional status tracking fields
+  lastStatusUpdate?: string;
+  statusHistory?: Array<{
+    status: Sep31Status;
+    timestamp: string;
+    message?: string;
+  }>;
 
 // ─── Callback Notifier Interface ──────────────────────────────────────────────
 
@@ -275,6 +281,14 @@ export class SEP31Service {
           : record.completedAt
             ? String(record.completedAt)
             : undefined,
+      // Additional status tracking fields
+      lastStatusUpdate:
+        record.updatedAt instanceof Date
+          ? record.updatedAt.toISOString()
+          : record.updatedAt
+            ? String(record.updatedAt)
+            : undefined,
+      statusHistory: [],
     };
   }
 }

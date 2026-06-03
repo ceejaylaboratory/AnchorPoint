@@ -63,11 +63,11 @@ describe('Info Controller', () => {
   });
 
   describe('getInfo - JSON format', () => {
-    it('should return info in JSON format by default', () => {
+    it('should return info in JSON format by default', async () => {
       mockRequest.query = {};
       mockRequest.headers = {};
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       expect(jsonMock).toHaveBeenCalled();
       const response = jsonMock.mock.calls[0][0];
@@ -76,17 +76,17 @@ describe('Info Controller', () => {
       expect(response).toHaveProperty('assets');
     });
 
-    it('should return JSON when Accept header includes application/json', () => {
+    it('should return JSON when Accept header includes application/json', async () => {
       mockRequest.query = {};
       mockRequest.headers = { accept: 'application/json' };
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       expect(jsonMock).toHaveBeenCalled();
     });
 
-    it('should include all assets in the response', () => {
-      getInfo(mockRequest as Request, mockResponse as Response);
+    it('should include all assets in the response', async () => {
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.assets).toHaveLength(2);
@@ -94,8 +94,8 @@ describe('Info Controller', () => {
       expect(response.assets[1].code).toBe('XLM');
     });
 
-    it('should include asset details with correct properties', () => {
-      getInfo(mockRequest as Request, mockResponse as Response);
+    it('should include asset details with correct properties', async () => {
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       const usdcAsset = response.assets.find((a: any) => a.code === 'USDC');
@@ -109,8 +109,8 @@ describe('Info Controller', () => {
       expect(usdcAsset).toHaveProperty('fee_percent', 0.001);
     });
 
-    it('should include fee variations for deposit and withdraw', () => {
-      getInfo(mockRequest as Request, mockResponse as Response);
+    it('should include fee variations for deposit and withdraw', async () => {
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response).toHaveProperty('fee_variations');
@@ -118,34 +118,34 @@ describe('Info Controller', () => {
       expect(response.fee_variations).toHaveProperty('withdraw');
     });
 
-    it('should include only assets that support deposit in fee_variations.deposit', () => {
-      getInfo(mockRequest as Request, mockResponse as Response);
+    it('should include only assets that support deposit in fee_variations.deposit', async () => {
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.fee_variations.deposit).toHaveProperty('USDC');
       expect(response.fee_variations.deposit).toHaveProperty('XLM');
     });
 
-    it('should include only assets that support withdraw in fee_variations.withdraw', () => {
-      getInfo(mockRequest as Request, mockResponse as Response);
+    it('should include only assets that support withdraw in fee_variations.withdraw', async () => {
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.fee_variations.withdraw).toHaveProperty('USDC');
       expect(response.fee_variations.withdraw).not.toHaveProperty('XLM');
     });
 
-    it('should include accounts information', () => {
-      getInfo(mockRequest as Request, mockResponse as Response);
+    it('should include accounts information', async () => {
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.accounts).toHaveProperty('receiving');
     });
 
-    it('should use environment variables for server URLs', () => {
+    it('should use environment variables for server URLs', async () => {
       process.env.AUTH_SERVER = 'https://auth.example.com';
       process.env.TRANSFER_SERVER = 'https://transfer.example.com';
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.auth_server).toBe('https://auth.example.com');
@@ -154,28 +154,28 @@ describe('Info Controller', () => {
   });
 
   describe('getInfo - TOML format', () => {
-    it('should return TOML when format=toml query parameter is set', () => {
+    it('should return TOML when format=toml query parameter is set', async () => {
       mockRequest.query = { format: 'toml' };
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       expect(setHeaderMock).toHaveBeenCalledWith('Content-Type', 'text/toml');
       expect(sendMock).toHaveBeenCalled();
     });
 
-    it('should return TOML when Accept header includes text/toml', () => {
+    it('should return TOML when Accept header includes text/toml', async () => {
       mockRequest.headers = { accept: 'text/toml' };
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       expect(setHeaderMock).toHaveBeenCalledWith('Content-Type', 'text/toml');
       expect(sendMock).toHaveBeenCalled();
     });
 
-    it('should include required fields in TOML output', () => {
+    it('should include required fields in TOML output', async () => {
       mockRequest.query = { format: 'toml' };
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const tomlOutput = sendMock.mock.calls[0][0];
       expect(tomlOutput).toContain('version =');
@@ -185,20 +185,20 @@ describe('Info Controller', () => {
       expect(tomlOutput).toContain('url = "http://localhost:3002"');
     });
 
-    it('should include accounts section in TOML output', () => {
+    it('should include accounts section in TOML output', async () => {
       mockRequest.query = { format: 'toml' };
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const tomlOutput = sendMock.mock.calls[0][0];
       expect(tomlOutput).toContain('[accounts]');
       expect(tomlOutput).toContain('receiving =');
     });
 
-    it('should include assets section in TOML output', () => {
+    it('should include assets section in TOML output', async () => {
       mockRequest.query = { format: 'toml' };
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const tomlOutput = sendMock.mock.calls[0][0];
       expect(tomlOutput).toContain('[[assets]]');
@@ -206,10 +206,10 @@ describe('Info Controller', () => {
       expect(tomlOutput).toContain('code = "XLM"');
     });
 
-    it('should include fee variations section in TOML output', () => {
+    it('should include fee variations section in TOML output', async () => {
       mockRequest.query = { format: 'toml' };
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const tomlOutput = sendMock.mock.calls[0][0];
       expect(tomlOutput).toContain('[fee_variations.deposit]');
@@ -218,30 +218,30 @@ describe('Info Controller', () => {
   });
 
   describe('getInfo - environment variables', () => {
-    it('should use default values when environment variables are not set', () => {
+    it('should use default values when environment variables are not set', async () => {
       delete process.env.AUTH_SERVER;
       delete process.env.FEDERATION_SERVER;
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.horizon_url).toBeDefined();
       expect(response.signing_key).toBeDefined();
     });
 
-    it('should filter out undefined optional fields', () => {
+    it('should filter out undefined optional fields', async () => {
       delete process.env.FEDERATION_SERVER;
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.federation_server).toBeUndefined();
     });
 
-    it('should use TRANSFER_SERVER_SEP24 environment variable or construct default', () => {
+    it('should use TRANSFER_SERVER_SEP24 environment variable or construct default', async () => {
       process.env.TRANSFER_SERVER_SEP24 = 'https://sep24.example.com';
 
-      getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.transfer_server_sep24).toBe('https://sep24.example.com');

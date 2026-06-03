@@ -203,4 +203,82 @@ router.post('/password-reset/confirm', async (req: Request, res: Response) => {
   }
 });
 
+const adminTransactionsQuerySchema = z.object({
+  page: z.string().optional().transform(v => parseInt(v || '1', 10)).pipe(z.number().min(1)),
+  limit: z.string().optional().transform(v => parseInt(v || '10', 10)).pipe(z.number().min(1).max(100)),
+});
+
+/**
+ * @swagger
+ * /admin/transactions:
+ *   get:
+ *     summary: Get all transactions with pagination (Admin only)
+ *     tags: [Admin]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 10
+ *         description: Items per page
+ *     responses:
+ *       200:
+ *         description: A paginated list of transactions
+ *       400:
+ *         description: Invalid query parameters
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/transactions', async (req: Request, res: Response) => {
+  const parsed = adminTransactionsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      status: 'error',
+      message: parsed.error.issues[0]?.message ?? 'Invalid query parameters',
+    });
+  }
+
+  const { page, limit } = parsed.data;
+  const skip = (page - 1) * limit;
+
+  try {
+    const [transactions, total] = await Promise.all([
+      import('../../lib/prisma').then(m => m.default.transaction.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip,
+      })),
+      import('../../lib/prisma').then(m => m.default.transaction.count()),
+    ]);
+
+    return res.json({
+      status: 'success',
+      data: {
+        transactions,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+    });
+  } catch (error: any) {
+    logger.error('Failed to fetch admin transactions', { message: error?.message });
+    return res.status(500).json({
+      status: 'error',
+      message: 'Unable to fetch transactions',
+    });
+  }
+});
+
 export default router;

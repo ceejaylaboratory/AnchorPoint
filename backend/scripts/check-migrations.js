@@ -1,16 +1,34 @@
 #!/usr/bin/env node
+/**
+ * check-migrations.js
+ *
+ * CI/CD migration integrity checker for AnchorPoint.
+ *
+ * Goals
+ * ─────
+ * 1. Generate the Prisma client so downstream commands have the right bindings.
+ * 2. Prevent destructive schema changes from reaching production undetected.
+ * 3. Simulate rollbacks via a shadow database to ensure idempotency.
+ * 4. Detect schema drift between the committed migration history and the
+ *    current schema.prisma definition.
+ *
+ * Environment variables
+ * ─────────────────────
+ * DATABASE_URL        – target database (required)
+ * SHADOW_DATABASE_URL – shadow DB used for migration simulation
+ *                       (defaults to file:./shadow.db)
+ *
+ * Exit codes
+ * ──────────
+ * 0 – all checks passed
+ * 1 – one or more checks failed (fatal)
+ */
+
+'use strict';
+
 const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-
-/**
- * Prisma Migration Integrity Checker
- * 
- * Goals:
- * 1. Prevent destructive changes to production databases (via prisma migrate diff).
- * 2. Simulate rollbacks to ensure idempotency.
- * 3. Check for schema drifts.
- */
 
 const PRISMA_BINARY = 'npx prisma';
 const SCHEMA_PATH = path.join(__dirname, '../prisma/schema.prisma');
@@ -96,20 +114,45 @@ function checkDrift() {
     }
 }
 
+/**
+ * Generate the Prisma client before any migration commands.
+ * This is a no-op if the client is already up to date, but prevents
+ * confusing "PrismaClient not found" errors in fresh CI environments.
+ */
+function generateClient() {
+    console.log('--- Generating Prisma client ---');
+    try {
+        execSync(`${PRISMA_BINARY} generate`, { stdio: 'inherit' });
+        console.log('✅ Prisma client generated.');
+    } catch (error) {
+        console.error('❌ Failed to generate Prisma client.');
+        process.exit(1);
+    }
+}
+
 async function main() {
     console.log('🚀 Starting Database Migration Integrity Check');
-    
-    // Ensure we are in the backend directory
+
+    // Ensure we are in the backend directory so relative paths resolve correctly
     process.chdir(path.join(__dirname, '..'));
 
+    // Validate environment before doing anything else (subprocess so it can exit independently)
     try {
+        execSync('node scripts/validate-migration-env.js', { stdio: 'inherit' });
+    } catch (_) {
+        console.error('❌ Environment validation failed. Aborting migration check.');
+        process.exit(1);
+    }
+
+    try {
+        generateClient();
         checkDrift();
         checkDestructiveChanges();
         simulateMigration();
-        
+
         console.log('\n✨ All migration integrity checks passed!');
     } catch (error) {
-        console.error('\n💥 Migration integrity check failed.');
+        console.error('\n💥 Migration integrity check failed:', error && error.message ? error.message : error);
         process.exit(1);
     }
 }

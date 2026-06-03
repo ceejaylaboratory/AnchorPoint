@@ -1,8 +1,10 @@
 [workspace]
-members = ["yield", "nft_metadata", "liquid_staking", "xlm_wrapper", "registry"]
-members = ["yield", "nft_metadata", "liquid_staking", "swap"]
+members = [
+    "yield", "nft_metadata", "liquid_staking", "xlm_wrapper", 
+    "registry", "swap", "staking", "random_gen", "bridge_stub", 
+    "revenue_distributor", "anchorpoint", "governance"
+]
 resolver = "2"
-members = ["yield", "nft_metadata", "liquid_staking", "staking", "random_gen", "bridge_stub", "revenue_distributor"]
 
 [workspace.package]
 version = "0.0.0"

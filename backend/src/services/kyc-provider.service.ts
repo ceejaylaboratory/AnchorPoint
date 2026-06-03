@@ -43,8 +43,28 @@ export interface IKycProvider {
   parseWebhook(payload: unknown): KycWebhookResult | null;
 }
 
-const normalizeStatus = (rawStatus: string): KycStatus => {
+const getString = (
+  obj: Record<string, unknown> | undefined,
+  ...keys: string[]
+): string | undefined => {
+  if (!obj) return undefined;
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+};
+
+const extractStatusToken = (rawStatus: string): string => {
   const value = rawStatus.toLowerCase();
+  if (value.includes('.')) {
+    return value.split('.').pop() ?? value;
+  }
+  return value.replace(/_/g, '-');
+};
+
+const normalizeStatus = (rawStatus: string): KycStatus => {
+  const value = extractStatusToken(rawStatus);
   if (['approved', 'accepted', 'completed', 'verified', 'clear'].includes(value)) {
     return KycStatus.ACCEPTED;
   }
@@ -55,6 +75,9 @@ const normalizeStatus = (rawStatus: string): KycStatus => {
 
   return KycStatus.PENDING;
 };
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
 
 const timingSafeMatch = (expected: string, actual: string): boolean => {
   const expectedBuffer = Buffer.from(expected);
@@ -67,7 +90,10 @@ const timingSafeMatch = (expected: string, actual: string): boolean => {
 class MockKycProvider implements IKycProvider {
   readonly providerName = 'mock';
 
-  async submitCustomer(data: KycSubmissionInput): Promise<KycSubmissionResult> {
+  async submitCustomer(
+    data: KycSubmissionInput,
+    _documents: Record<string, string> = {}
+  ): Promise<KycSubmissionResult> {
     if (data.email && data.email.includes('reject')) {
       return {
         success: true,
@@ -90,13 +116,19 @@ class MockKycProvider implements IKycProvider {
   }
 
   parseWebhook(payload: unknown): KycWebhookResult | null {
-    if (!payload || typeof payload !== 'object') return null;
-    const body = payload as Record<string, unknown>;
-    const account = typeof body.account === 'string' ? body.account : undefined;
-    const providerRef = typeof body.providerRef === 'string' ? body.providerRef : undefined;
-    const status = typeof body.status === 'string' ? normalizeStatus(body.status) : KycStatus.PENDING;
+    const body = asRecord(payload);
+    if (!body) return null;
 
-    return { account, providerRef, status };
+    const account = getString(body, 'account');
+    const providerRef = getString(body, 'providerRef');
+    if (!account && !providerRef) return null;
+
+    const status = getString(body, 'status');
+    return {
+      account,
+      providerRef,
+      status: status ? normalizeStatus(status) : KycStatus.PENDING,
+    };
   }
 }
 
@@ -163,22 +195,31 @@ class PersonaKycProvider implements IKycProvider {
   }
 
   parseWebhook(payload: unknown): KycWebhookResult | null {
-    if (!payload || typeof payload !== 'object') return null;
-    const body = payload as Record<string, unknown>;
-    const data = body.data as Record<string, unknown> | undefined;
-    const attributes = data?.attributes as Record<string, unknown> | undefined;
+    const body = asRecord(payload);
+    const data = asRecord(body?.data);
+    if (!data) return null;
 
-    if (!data || typeof data !== 'object') return null;
+    const attributes = asRecord(data.attributes);
+    const eventPayload = asRecord(attributes?.payload);
+    const inquiry = asRecord(eventPayload?.data);
+    const inquiryAttributes = asRecord(inquiry?.attributes);
 
-    const providerRef = typeof data.id === 'string' ? data.id : undefined;
+    const providerRef = getString(inquiry, 'id') ?? getString(data, 'id');
     const account =
-      typeof attributes?.referenceId === 'string' ? attributes.referenceId : undefined;
-    const status =
-      typeof attributes?.status === 'string'
-        ? normalizeStatus(attributes.status)
-        : KycStatus.PENDING;
+      getString(inquiryAttributes, 'reference-id', 'referenceId') ??
+      getString(attributes, 'reference-id', 'referenceId');
+    if (!providerRef && !account) return null;
 
-    return { providerRef, account, status };
+    const statusSource =
+      getString(inquiryAttributes, 'status') ??
+      getString(attributes, 'name') ??
+      getString(attributes, 'status');
+
+    return {
+      providerRef,
+      account,
+      status: statusSource ? normalizeStatus(statusSource) : KycStatus.PENDING,
+    };
   }
 }
 
@@ -253,22 +294,19 @@ class ShuftiKycProvider implements IKycProvider {
   }
 
   parseWebhook(payload: unknown): KycWebhookResult | null {
-    if (!payload || typeof payload !== 'object') return null;
-    const body = payload as Record<string, unknown>;
+    const body = asRecord(payload);
+    if (!body) return null;
 
-    const providerRef = typeof body.reference === 'string' ? body.reference : undefined;
-    const account = typeof body.reference === 'string' ? body.reference : undefined;
-    const statusSource =
-      typeof body.verification_status === 'string'
-        ? body.verification_status
-        : typeof body.event === 'string'
-          ? body.event
-          : 'pending';
+    const providerRef = getString(body, 'reference');
+    const account = providerRef;
+    if (!providerRef && !account) return null;
+
+    const statusSource = getString(body, 'verification_status', 'event');
 
     return {
       providerRef,
       account,
-      status: normalizeStatus(statusSource),
+      status: statusSource ? normalizeStatus(statusSource) : KycStatus.PENDING,
     };
   }
 }

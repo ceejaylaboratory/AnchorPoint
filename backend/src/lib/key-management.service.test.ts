@@ -20,6 +20,8 @@ jest.mock('@aws-sdk/client-kms', () => ({
   EncryptCommand: jest.fn().mockImplementation((params) => params),
   DecryptCommand: jest.fn().mockImplementation((params) => params),
   DescribeKeyCommand: jest.fn().mockImplementation((params) => params),
+  GetKeyRotationStatusCommand: jest.fn().mockImplementation((params) => params),
+  EnableKeyRotationCommand: jest.fn().mockImplementation((params) => params),
 }));
 
 describe('Key Management Service', () => {
@@ -257,6 +259,58 @@ describe('Key Management Service', () => {
         const result = await service.isHealthy();
 
         expect(result).toBe(false);
+      });
+    });
+
+    describe('rotateEncryptionKey', () => {
+      it('should enable rotation when not already enabled', async () => {
+        const mockKmsClient = {
+          send: jest
+            .fn()
+            .mockResolvedValueOnce({ KeyRotationEnabled: false })
+            .mockResolvedValueOnce({}),
+        };
+
+        jest.doMock('@aws-sdk/client-kms', () => ({
+          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
+          GetKeyRotationStatusCommand: jest.fn().mockImplementation((params) => params),
+          EnableKeyRotationCommand: jest.fn().mockImplementation((params) => params),
+        }));
+
+        const config = {
+          backend: 'aws-kms' as const,
+          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
+        };
+
+        const service = createKeyManagementService(config);
+        const result = await service.rotateEncryptionKey();
+
+        expect(result.rotated).toBe(true);
+        expect(result.backend).toBe('aws-kms');
+        expect(result.success).toBe(true);
+      });
+
+      it('should skip enable when rotation is already active', async () => {
+        const mockKmsClient = {
+          send: jest.fn().mockResolvedValue({ KeyRotationEnabled: true }),
+        };
+
+        jest.doMock('@aws-sdk/client-kms', () => ({
+          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
+          GetKeyRotationStatusCommand: jest.fn().mockImplementation((params) => params),
+          EnableKeyRotationCommand: jest.fn().mockImplementation((params) => params),
+        }));
+
+        const config = {
+          backend: 'aws-kms' as const,
+          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
+        };
+
+        const service = createKeyManagementService(config);
+        const result = await service.rotateEncryptionKey();
+
+        expect(result.rotated).toBe(false);
+        expect(result.message).toContain('already enabled');
       });
     });
   });

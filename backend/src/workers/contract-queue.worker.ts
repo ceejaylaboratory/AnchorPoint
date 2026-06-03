@@ -1,6 +1,6 @@
 #!/usr/bin/env ts-node
 
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, Queue } from 'bullmq';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import logger from '../utils/logger';
 import { defaultWorkerOptions, QUEUE_NAMES, retryStrategies } from '../config/queue';
@@ -14,6 +14,9 @@ import sorobanErrorService from '../services/soroban-error.service';
 
 // Stellar server instance
 const server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
+
+// Dead Letter Queue instance
+const dlq = new Queue(QUEUE_NAMES.DEAD_LETTER_QUEUE, { connection: defaultWorkerOptions.connection });
 
 /**
  * Process a contract call job
@@ -402,9 +405,26 @@ function startWorker() {
     logger.info(`✅ Job ${job.id} completed successfully`);
   });
 
-  worker.on('failed', (job: Job | undefined, error: Error) => {
+  worker.on('failed', async (job: Job | undefined, error: Error) => {
     if (job) {
       logger.error(`❌ Job ${job.id} failed after ${job.attemptsMade} attempts:`, error.message);
+      
+      const maxAttempts = job.opts.attempts || 1;
+      if (job.attemptsMade >= maxAttempts) {
+        logger.info(`Moving job ${job.id} to Dead Letter Queue...`);
+        try {
+          await dlq.add(job.name, {
+            originalJob: job.data,
+            error: error.message,
+            stack: error.stack,
+            failedAt: new Date(),
+            attemptsMade: job.attemptsMade
+          });
+          logger.info(`Successfully moved job ${job.id} to DLQ.`);
+        } catch (dlqError) {
+          logger.error(`Failed to move job ${job.id} to DLQ:`, dlqError);
+        }
+      }
     }
   });
 
@@ -421,17 +441,32 @@ function startWorker() {
   logger.info(`   Concurrency: ${defaultWorkerOptions.concurrency}`);
 
   // Graceful shutdown
-  process.on('SIGTERM', async () => {
-    logger.info('SIGTERM received, closing worker...');
-    await worker.close();
-    process.exit(0);
-  });
+  let isShuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    
+    logger.info(`${signal} received, closing worker gracefully...`);
+    try {
+      // Close the worker, which waits for active jobs to finish
+      await worker.close();
+      
+      // Close the DLQ connection
+      await dlq.close();
+      
+      // Disconnect from Redis
+      await worker.disconnect();
+      
+      logger.info('Worker closed and disconnected successfully');
+      process.exit(0);
+    } catch (error) {
+      logger.error('Error during worker shutdown:', error);
+      process.exit(1);
+    }
+  };
 
-  process.on('SIGINT', async () => {
-    logger.info('SIGINT received, closing worker...');
-    await worker.close();
-    process.exit(0);
-  });
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
   return worker;
 }

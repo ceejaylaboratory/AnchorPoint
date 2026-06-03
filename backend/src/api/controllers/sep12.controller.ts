@@ -1,11 +1,18 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
+import { StrKey } from '@stellar/stellar-sdk';
 import prisma from '../../lib/prisma';
 import { cryptoService } from '../../services/crypto.service';
 import { kycProvider, KycStatus } from '../../services/kyc-provider.service';
 import { KYCStatus } from '@prisma/client';
+import { AuthRequest } from '../middleware/auth.middleware';
+import logger from '../../utils/logger';
+
+type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
+
+const pack = (enc?: { encryptedData: string; iv: string } | null) =>
+  enc ? `${enc.iv}|${enc.encryptedData}` : null;
 
 export class Sep12Controller {
-
   private toDbStatus(status: KycStatus): KYCStatus {
     switch (status) {
       case KycStatus.ACCEPTED:
@@ -16,62 +23,76 @@ export class Sep12Controller {
         return KYCStatus.PENDING;
     }
   }
-  
-  async putCustomer(req: Request, res: Response) {
+
+  private toSep12Status(status: KycStatus): string {
+    switch (status) {
+      case KycStatus.ACCEPTED:
+        return 'ACCEPTED';
+      case KycStatus.REJECTED:
+        return 'REJECTED';
+      default:
+        return 'PROCESSING';
+    }
+  }
+
+  /**
+   * PUT /sep12/customer
+   * Accepts customer KYC fields (JSON, form-urlencoded, or multipart) and
+   * forwards the submission to the configured KYC provider.
+   */
+  async putCustomer(req: AuthRequest, res: Response) {
     try {
-      const { account, memo, memo_type, first_name, last_name, email_address, ...otherFields } = req.body;
+      const {
+        account,
+        memo: _memo,
+        memo_type: _memoType,
+        first_name,
+        last_name,
+        email_address,
+        ...otherFields
+      } = req.body as Record<string, string>;
 
       if (!account) {
         return res.status(400).json({ error: 'account is required' });
       }
 
-      // In a real app, verify that the account is authenticated (SEP-10).
-      // Find or create User based on account
+      if (!StrKey.isValidEd25519PublicKey(account)) {
+        return res.status(400).json({ error: 'Invalid Stellar account' });
+      }
+
+      if (req.user!.publicKey !== account) {
+        return res.status(403).json({ error: 'Authenticated account does not match request account' });
+      }
+
       let user = await prisma.user.findUnique({ where: { publicKey: account } });
       if (!user) {
         user = await prisma.user.create({ data: { publicKey: account } });
       }
 
-      // Handle File Uploads (Multer puts files in req.files)
-      const uploadedFiles = (req as any).files as
-        | { [fieldname: string]: Array<{ path: string }> }
-        | undefined;
+      const uploadedFiles = (req as AuthRequest & { files?: UploadedFiles }).files;
       const documents: Record<string, string> = {};
       if (uploadedFiles) {
-        Object.keys(uploadedFiles).forEach((field) => {
+        for (const field of Object.keys(uploadedFiles)) {
           documents[field] = uploadedFiles[field][0].path;
-        });
+        }
       }
 
-      // Encrypt PII data
-      const extraFieldsJson = JSON.stringify(otherFields);
-      const encryptedFirstName = first_name ? cryptoService.encrypt(first_name) : null;
-      const encryptedLastName = last_name ? cryptoService.encrypt(last_name) : null;
-      const encryptedEmail = email_address ? cryptoService.encrypt(email_address) : null;
-      const encryptedExtra = Object.keys(otherFields).length > 0 ? cryptoService.encrypt(extraFieldsJson) : null;
+      const extraPayload: Record<string, unknown> = { ...otherFields };
+      if (Object.keys(documents).length > 0) {
+        extraPayload.documents = documents;
+      }
 
-      // We need a single IV for the record, or we can just use the first one and store it, 
-      // but cryptoService returns an IV per encryption. 
-      // A better approach for the schema is to store the combined encrypted string which includes the IV in our format.
-      // Wait, our CryptoService `encrypt` returns `{ encryptedData, iv }`.
-      // Let's store the raw IV from one of them if we had a single IV, but our encrypt function generates a random IV each time.
-      // We can just serialize the object `{ data, iv }` into the DB string, or update the DB to just store the concatenated string.
-      // Actually, since we added `encryptionIV` to the schema, let's use a single IV for all fields by modifying the crypto flow,
-      // or we can just ignore `encryptionIV` column and store the IVs inside a JSON if needed.
-      // Let's just use a generated IV for the whole record to be safe, but our `encrypt` method doesn't take IV as input.
-      // I will just concatenate IV:Data:AuthTag inside the string for simplicity, or just use the first generated IV to fill the schema column.
-
-      // Let's adjust to store JSON in DB for the encrypted fields since they need IV.
-      const pack = (enc?: { encryptedData: string, iv: string } | null) => enc ? `${enc.iv}|${enc.encryptedData}` : null;
-
-      const dbData: any = {
+      const dbData = {
         userId: user.id,
-        firstName: pack(encryptedFirstName),
-        lastName: pack(encryptedLastName),
-        email: pack(encryptedEmail),
-        extraFields: pack(encryptedExtra),
-        documents: documents,
-        status: KYCStatus.PENDING
+        firstName: pack(first_name ? cryptoService.encrypt(first_name) : null),
+        lastName: pack(last_name ? cryptoService.encrypt(last_name) : null),
+        email: pack(email_address ? cryptoService.encrypt(email_address) : null),
+        extraFields: pack(
+          Object.keys(extraPayload).length > 0
+            ? cryptoService.encrypt(JSON.stringify(extraPayload))
+            : null
+        ),
+        status: KYCStatus.PENDING,
       };
 
       const kycCustomer = await prisma.kycCustomer.upsert({
@@ -80,7 +101,6 @@ export class Sep12Controller {
         create: dbData,
       });
 
-      // Submit to 3rd party Provider
       const customerData = {
         account,
         firstName: first_name,
@@ -88,30 +108,45 @@ export class Sep12Controller {
         email: email_address,
         extraFields: otherFields,
       };
-      const providerRes = await kycProvider.submitCustomer(customerData, documents);
 
-      await prisma.kycCustomer.update({
-        where: { id: kycCustomer.id },
-        data: {
-          provider: kycProvider.providerName,
-          providerRef: providerRes.providerRef,
-          status: this.toDbStatus(providerRes.status),
-        },
+      let providerStatus = KycStatus.PENDING;
+      try {
+        const providerRes = await kycProvider.submitCustomer(customerData, documents);
+        providerStatus = providerRes.status;
+
+        await prisma.kycCustomer.update({
+          where: { id: kycCustomer.id },
+          data: {
+            provider: kycProvider.providerName,
+            providerRef: providerRes.providerRef,
+            status: this.toDbStatus(providerRes.status),
+          },
+        });
+      } catch (providerError) {
+        logger.error('SEP-12 customer provider submission failed', {
+          error: providerError instanceof Error ? providerError.message : 'Unknown error',
+          account,
+        });
+      }
+
+      logger.info('SEP-12 customer submitted', {
+        account,
+        status: this.toSep12Status(providerStatus),
       });
 
-      res.status(202).json({
+      return res.status(202).json({
         id: user.publicKey,
-        status: providerRes.status,
-        provider: kycProvider.providerName,
+        status: this.toSep12Status(providerStatus),
       });
-
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: 'Internal Server Error' });
+      logger.error('SEP-12 customer PUT failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
 
-  async getCustomer(req: Request, res: Response) {
+  async getCustomer(req: AuthRequest, res: Response) {
     try {
       const account = req.query.account as string;
       if (!account) return res.status(400).json({ error: 'account is required' });
@@ -121,33 +156,44 @@ export class Sep12Controller {
         return res.status(404).json({ error: 'Customer not found' });
       }
 
-      const unpack = (packed?: string | null) => {
-        if (!packed) return null;
-        const [iv, data] = packed.split('|');
-        return cryptoService.decrypt(data, iv);
-      };
-
       const customer = user.kycCustomer;
-      const responsePayload: any = {
+      const responsePayload: Record<string, unknown> = {
         id: user.publicKey,
         status: customer.status,
       };
 
       if (customer.status === KYCStatus.ACCEPTED) {
         responsePayload.provided_fields = {};
-        if (customer.firstName) responsePayload.provided_fields.first_name = { description: "First Name", status: "ACCEPTED" };
-        if (customer.lastName) responsePayload.provided_fields.last_name = { description: "Last Name", status: "ACCEPTED" };
-        if (customer.email) responsePayload.provided_fields.email_address = { description: "Email", status: "ACCEPTED" };
+        if (customer.firstName) {
+          (responsePayload.provided_fields as Record<string, unknown>).first_name = {
+            description: 'First Name',
+            status: 'ACCEPTED',
+          };
+        }
+        if (customer.lastName) {
+          (responsePayload.provided_fields as Record<string, unknown>).last_name = {
+            description: 'Last Name',
+            status: 'ACCEPTED',
+          };
+        }
+        if (customer.email) {
+          (responsePayload.provided_fields as Record<string, unknown>).email_address = {
+            description: 'Email',
+            status: 'ACCEPTED',
+          };
+        }
       }
 
       res.json(responsePayload);
     } catch (error) {
-      console.error(error);
+      logger.error('SEP-12 customer GET failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
       res.status(500).json({ error: 'Internal Server Error' });
     }
   }
 
-  async deleteCustomer(req: Request, res: Response) {
+  async deleteCustomer(req: AuthRequest, res: Response) {
     try {
       const account = req.params.account;
       if (!account) return res.status(400).json({ error: 'account is required' });
@@ -158,12 +204,14 @@ export class Sep12Controller {
       }
       res.status(200).send();
     } catch (error) {
-      console.error(error);
+      logger.error('SEP-12 customer DELETE failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
       res.status(404).json({ error: 'Customer not found' });
     }
   }
 
-  async handleWebhook(req: Request, res: Response) {
+  async handleWebhook(req: AuthRequest, res: Response) {
     try {
       const signature = req.headers['x-kyc-signature'] as string | undefined;
       const payloadString = JSON.stringify(req.body);
@@ -200,12 +248,14 @@ export class Sep12Controller {
 
       await prisma.kycCustomer.update({
         where: { id: targetCustomer.id },
-        data: { status: this.toDbStatus(event.status) }
+        data: { status: this.toDbStatus(event.status) },
       });
 
       res.status(200).send('OK');
     } catch (error) {
-      console.error(error);
+      logger.error('SEP-12 webhook handling failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
       res.status(500).json({ error: 'Internal Server Error' });
     }
   }
