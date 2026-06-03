@@ -6,9 +6,28 @@
 
 import { BatchPaymentService } from '../services/batch-payment.service';
 import { BatchPaymentError, BatchErrorType, PaymentOperation } from '../services/batch-payment.types';
+import { Horizon } from '@stellar/stellar-sdk';
+
+// Mock key management because these tests exercise validation and transaction assembly paths.
+jest.mock('../lib/key-management.service', () => ({
+  getKeyManagementService: jest.fn(() => ({
+    decryptKey: jest.fn(),
+    getKeyByReference: jest.fn(),
+  })),
+}));
+
+jest.mock('../lib/key-management.types', () => ({
+  KeyManagementError: class KeyManagementError extends Error {},
+}));
 
 // Mock the Stellar SDK
 jest.mock('@stellar/stellar-sdk', () => {
+  const mockValidPublicKeys = new Set([
+    'GCM5WPR4DDR24FSAX5LIEM4J7AI3KOWJYANSXEPKYXCSZOTAYXE75AFN',
+    'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+  ]);
+
   const mockAccount = {
     sequenceNumber: () => '123456789012345678',
   };
@@ -18,13 +37,22 @@ jest.mock('@stellar/stellar-sdk', () => {
     submitTransaction: jest.fn(),
   };
 
+  const mockAsset = Object.assign(
+    jest.fn().mockImplementation((code, issuer) => ({ code, issuer })),
+    {
+      native: jest.fn().mockReturnValue({ code: 'XLM' }),
+    }
+  );
+
   return {
     Keypair: {
       fromSecret: jest.fn().mockReturnValue({
-        publicKey: () => 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        publicKey: () => 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
       }),
     },
-    Server: jest.fn().mockImplementation(() => mockServer),
+    Horizon: {
+      Server: jest.fn().mockImplementation(() => mockServer),
+    },
     TransactionBuilder: jest.fn().mockImplementation(() => ({
       addOperation: jest.fn().mockReturnThis(),
       build: jest.fn().mockReturnValue({
@@ -39,11 +67,9 @@ jest.mock('@stellar/stellar-sdk', () => {
     Operation: {
       payment: jest.fn().mockReturnValue({ type: 'payment' }),
     },
-    Asset: {
-      native: jest.fn().mockReturnValue({ code: 'XLM' }),
-    },
+    Asset: mockAsset,
     StrKey: {
-      isValidEd25519PublicKey: jest.fn((key) => key.startsWith('G') && key.length === 56),
+      isValidEd25519PublicKey: jest.fn((key) => mockValidPublicKeys.has(key)),
     },
     Account: jest.fn(),
   };
@@ -70,14 +96,22 @@ jest.mock('../utils/logger', () => ({
 
 describe('BatchPaymentService', () => {
   let batchService: BatchPaymentService;
+  const validDestination = 'GCM5WPR4DDR24FSAX5LIEM4J7AI3KOWJYANSXEPKYXCSZOTAYXE75AFN';
+  const validAssetIssuer = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+  const getMockServerInstance = (): {
+    submitTransaction: jest.Mock;
+  } =>
+    ((Horizon.Server as unknown as jest.Mock).mock.results[0]?.value ?? {}) as {
+      submitTransaction: jest.Mock;
+    };
 
   const mockPayments: PaymentOperation[] = [
     {
-      destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      destination: validDestination,
       amount: '10.5',
     },
     {
-      destination: 'GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+      destination: validAssetIssuer,
       amount: '20.0',
     },
   ];
@@ -97,8 +131,7 @@ describe('BatchPaymentService', () => {
   describe('executeBatch', () => {
     it('should successfully execute a batch of payments', async () => {
       // Mock successful transaction submission
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       mockServerInstance.submitTransaction = jest.fn().mockResolvedValue({
         hash: 'mock_tx_hash',
         feeCharged: '200',
@@ -118,8 +151,8 @@ describe('BatchPaymentService', () => {
     });
 
     it('should reject batch exceeding maximum operations', async () => {
-      const tooManyPayments: PaymentOperation[] = Array.from({ length: 101 }, (_, i) => ({
-        destination: `GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB${i}`,
+      const tooManyPayments: PaymentOperation[] = Array.from({ length: 101 }, () => ({
+        destination: validDestination,
         amount: '1.0',
       }));
 
@@ -167,10 +200,53 @@ describe('BatchPaymentService', () => {
       });
     });
 
+    it.each([
+      ['secret seed-like value', `S${validDestination.slice(1)}`],
+      ['padded public key', `${validDestination} `],
+      ['lowercase public key', validDestination.toLowerCase()],
+      ['checksum mismatch', `${validDestination.slice(0, -1)}A`],
+      ['muxed account-like value', `M${validDestination.slice(1)}`],
+    ])('should reject destination edge case: %s', async (_caseName, destination) => {
+      await expect(
+        batchService.executeBatch({
+          payments: [
+            {
+              destination,
+              amount: '10.0',
+            },
+          ],
+          sourceSecretKey: mockSecretKey,
+        })
+      ).rejects.toMatchObject({
+        type: BatchErrorType.INVALID_ADDRESS,
+        message: 'Invalid destination Stellar address at index 0',
+      });
+    });
+
+    it('should not echo invalid destination values in errors', async () => {
+      const invalidDestination = `S${validDestination.slice(1)}`;
+
+      try {
+        await batchService.executeBatch({
+          payments: [
+            {
+              destination: invalidDestination,
+              amount: '10.0',
+            },
+          ],
+          sourceSecretKey: mockSecretKey,
+        });
+        throw new Error('Expected invalid destination to be rejected');
+      } catch (error) {
+        expect(error).toBeInstanceOf(BatchPaymentError);
+        expect((error as Error).message).not.toContain(invalidDestination);
+      }
+    });
+
     it('should validate payment amounts', async () => {
       const invalidPayments: PaymentOperation[] = [
         {
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+          destination: validDestination,
           amount: '0',
         },
       ];
@@ -188,14 +264,13 @@ describe('BatchPaymentService', () => {
     it('should handle native XLM payments', async () => {
       const xlmPayments: PaymentOperation[] = [
         {
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+          destination: validDestination,
           amount: '10.0',
           assetCode: 'XLM',
         },
       ];
 
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       mockServerInstance.submitTransaction = jest.fn().mockResolvedValue({
         hash: 'mock_xlm_hash',
         feeCharged: '100',
@@ -213,15 +288,14 @@ describe('BatchPaymentService', () => {
     it('should handle custom asset payments', async () => {
       const customAssetPayments: PaymentOperation[] = [
         {
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+          destination: validDestination,
           amount: '100.0',
           assetCode: 'USDC',
-          assetIssuer: 'GDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
+          assetIssuer: validAssetIssuer,
         },
       ];
 
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       mockServerInstance.submitTransaction = jest.fn().mockResolvedValue({
         hash: 'mock_usdc_hash',
         feeCharged: '100',
@@ -237,8 +311,7 @@ describe('BatchPaymentService', () => {
     });
 
     it('should retry on sequence number conflicts', async () => {
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       
       // Fail first attempt, succeed on second
       mockServerInstance.submitTransaction = jest
@@ -260,8 +333,7 @@ describe('BatchPaymentService', () => {
     });
 
     it('should fail after max retries', async () => {
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       
       mockServerInstance.submitTransaction = jest
         .fn()
@@ -278,13 +350,12 @@ describe('BatchPaymentService', () => {
 
   describe('executeBatchInChunks', () => {
     it('should split large payment list into chunks', async () => {
-      const largePaymentList: PaymentOperation[] = Array.from({ length: 250 }, (_, i) => ({
-        destination: `GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB${i % 10}`,
+      const largePaymentList: PaymentOperation[] = Array.from({ length: 250 }, () => ({
+        destination: validDestination,
         amount: '1.0',
       }));
 
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       mockServerInstance.submitTransaction = jest.fn().mockResolvedValue({
         hash: 'mock_chunk_hash',
         feeCharged: '100',
@@ -306,8 +377,7 @@ describe('BatchPaymentService', () => {
 
   describe('handlePartialFailure', () => {
     it('should retry failed payments successfully', async () => {
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       mockServerInstance.submitTransaction = jest.fn().mockResolvedValue({
         hash: 'mock_retry_success',
         feeCharged: '100',
@@ -325,8 +395,7 @@ describe('BatchPaymentService', () => {
     });
 
     it('should handle retry failure', async () => {
-      const { Server } = require('@stellar/stellar-sdk');
-      const mockServerInstance = Server.mock.results[0]?.value || {};
+      const mockServerInstance = getMockServerInstance();
       mockServerInstance.submitTransaction = jest
         .fn()
         .mockRejectedValue(new Error('Retry failed'));
@@ -351,12 +420,13 @@ describe('BatchPaymentService', () => {
 
   describe('validatePayments', () => {
     it('should reject invalid asset issuer', async () => {
+      const invalidAssetIssuer = `S${validAssetIssuer.slice(1)}`;
       const invalidAssetPayments: PaymentOperation[] = [
         {
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+          destination: validDestination,
           amount: '10.0',
           assetCode: 'USDC',
-          assetIssuer: 'INVALID_ISSUER',
+          assetIssuer: invalidAssetIssuer,
         },
       ];
 
@@ -368,6 +438,17 @@ describe('BatchPaymentService', () => {
       ).rejects.toMatchObject({
         type: BatchErrorType.INVALID_ASSET,
       });
+
+      try {
+        await batchService.executeBatch({
+          payments: invalidAssetPayments,
+          sourceSecretKey: mockSecretKey,
+        });
+        throw new Error('Expected invalid asset issuer to be rejected');
+      } catch (error) {
+        expect(error).toBeInstanceOf(BatchPaymentError);
+        expect((error as Error).message).not.toContain(invalidAssetIssuer);
+      }
     });
   });
 });
