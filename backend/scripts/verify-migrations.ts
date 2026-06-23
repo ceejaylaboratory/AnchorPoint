@@ -178,8 +178,9 @@ class MigrationVerifier {
 
       // Use Prisma migrate diff to detect destructive changes
       try {
+        const shadowUrl = process.env.SHADOW_DATABASE_URL || `file:${this.tempDbPath}.shadow`;
         this.runSilent(
-          `${this.prismaBinary} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code`,
+          `${this.prismaBinary} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "${shadowUrl}" --exit-code`,
           {
             env,
             cwd: path.join(__dirname, '..'),

@@ -60,7 +60,7 @@ function checkDestructiveChanges() {
     
     try {
         // This command will exit with 1 if there are destructive changes
-        execSync(`${PRISMA_BINARY} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code`, { stdio: 'inherit' });
+        execSync(`${PRISMA_BINARY} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "${SHADOW_DB_URL}" --exit-code`, { stdio: 'inherit' });
         console.log('✅ No destructive changes detected.');
     } catch (error) {
         if (error.status === 1) {
