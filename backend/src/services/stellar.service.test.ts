@@ -31,13 +31,13 @@ describe('StellarService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    stellarService = new StellarService();
+    stellarService = new (StellarService as any)();
     mockServer = (stellarService as any).server;
   });
 
   it('should use public network passphrase when configured', () => {
     (config as any).STELLAR_NETWORK = 'public';
-    stellarService = new StellarService();
+    stellarService = new (StellarService as any)();
     expect((stellarService as any).networkPassphrase).toBe(StellarSdk.Networks.PUBLIC);
   });
 
@@ -102,7 +102,7 @@ describe('StellarService', () => {
   it('should apply fee-bump if secret is configured', async () => {
     // Re-initialize with secret
     (config as any).STELLAR_FEE_BUMP_SECRET = 'S_MOCK_SECRET';
-    stellarService = new StellarService();
+    stellarService = new (StellarService as any)();
     mockServer = (stellarService as any).server;
 
     const mockTx = {

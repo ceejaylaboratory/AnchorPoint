@@ -11,6 +11,9 @@ jest.mock('../../lib/prisma', () => ({
     findMany: jest.fn(),
     count: jest.fn(),
   },
+  user: {
+    findUnique: jest.fn().mockResolvedValue({ id: 'user_123', publicKey: 'GBXP...' }),
+  },
   $queryRaw: jest.fn(),
 }));
 

@@ -6,66 +6,63 @@
 
 import request from 'supertest';
 import express from 'express';
-import { recurringPaymentsRouter } from './recurring-payments.route';
-import { RecurringPaymentsService } from '../../services/recurring-payments.service';
 
-// Mock the service
-jest.mock('../../services/recurring-payments.service');
+// Define mock service methods at the top level
+const mockService = {
+  createSchedule: jest.fn(),
+  listSchedules: jest.fn(),
+  updateScheduleStatus: jest.fn(),
+  deleteSchedule: jest.fn(),
+};
 
-// Mock auth middleware
+// Mock the service BEFORE importing the router so that the controller uses the mocked service instance
+jest.mock('../../services/recurring-payments.service', () => ({
+  RecurringPaymentsService: jest.fn().mockImplementation(() => mockService),
+}));
+
+// Mock auth middleware BEFORE importing the router
 jest.mock('../middleware/auth.middleware', () => ({
-  authenticate: (req: any, res: any, next: any) => {
+  authMiddleware: (req: any, res: any, next: any) => {
     req.user = { publicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' };
     next();
   },
 }));
 
+import recurringPaymentsRouter from './recurring-payments.route';
+
 describe('Recurring Payments Routes', () => {
   let app: express.Application;
-  let mockService: jest.Mocked<RecurringPaymentsService>;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockService = {
-      createSchedule: jest.fn().mockResolvedValue({
-        id: 'schedule_1',
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-        assetCode: 'XLM',
-        amount: '10.0',
-        cron: '0 0 * * *',
-        status: 'ACTIVE',
-        nextRunAt: new Date('2026-04-27T00:00:00Z'),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
-      listSchedules: jest.fn().mockResolvedValue([]),
-      getSchedule: jest.fn().mockResolvedValue({
-        id: 'schedule_1',
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-        assetCode: 'XLM',
-        amount: '10.0',
-        cron: '0 0 * * *',
-        status: 'ACTIVE',
-        nextRunAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        runs: [],
-      }),
-      updateSchedule: jest.fn().mockResolvedValue({
-        id: 'schedule_1',
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-        assetCode: 'XLM',
-        amount: '20.0',
-        cron: '0 0 * * *',
-        status: 'ACTIVE',
-        nextRunAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
-      deleteSchedule: jest.fn().mockResolvedValue(undefined),
-    } as any;
 
-    (RecurringPaymentsService as jest.Mock).mockImplementation(() => mockService);
+    mockService.createSchedule.mockResolvedValue({
+      id: 'schedule_1',
+      destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      assetCode: 'XLM',
+      amount: '10.0',
+      cron: '0 0 * * *',
+      status: 'ACTIVE',
+      nextRunAt: new Date('2026-04-27T00:00:00Z'),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockService.listSchedules.mockResolvedValue([]);
+
+    mockService.updateScheduleStatus.mockResolvedValue({
+      id: 'schedule_1',
+      destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      assetCode: 'XLM',
+      amount: '10.0',
+      cron: '0 0 * * *',
+      status: 'PAUSED',
+      nextRunAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    mockService.deleteSchedule.mockResolvedValue(undefined);
 
     app = express();
     app.use(express.json());
@@ -84,7 +81,7 @@ describe('Recurring Payments Routes', () => {
         });
 
       expect(response.status).toBe(201);
-      expect(response.body).toHaveProperty('id');
+      expect(response.body.data).toHaveProperty('id');
       expect(mockService.createSchedule).toHaveBeenCalledWith(
         'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
         expect.objectContaining({
@@ -97,6 +94,7 @@ describe('Recurring Payments Routes', () => {
     });
 
     it('should reject invalid cron expression', async () => {
+      mockService.createSchedule.mockRejectedValueOnce(new Error('Invalid cron expression'));
       const response = await request(app)
         .post('/api/recurring-payments')
         .send({
@@ -110,6 +108,7 @@ describe('Recurring Payments Routes', () => {
     });
 
     it('should reject invalid Stellar address', async () => {
+      mockService.createSchedule.mockRejectedValueOnce(new Error('Invalid destination Stellar address'));
       const response = await request(app)
         .post('/api/recurring-payments')
         .send({
@@ -123,6 +122,7 @@ describe('Recurring Payments Routes', () => {
     });
 
     it('should reject negative amount', async () => {
+      mockService.createSchedule.mockRejectedValueOnce(new Error('Amount must be a positive number'));
       const response = await request(app)
         .post('/api/recurring-payments')
         .send({
@@ -142,41 +142,27 @@ describe('Recurring Payments Routes', () => {
         .get('/api/recurring-payments');
 
       expect(response.status).toBe(200);
-      expect(Array.isArray(response.body)).toBe(true);
+      expect(Array.isArray(response.body.data)).toBe(true);
       expect(mockService.listSchedules).toHaveBeenCalledWith(
         'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
       );
     });
   });
 
-  describe('GET /api/recurring-payments/:id', () => {
-    it('should get a specific schedule', async () => {
+  describe('PATCH /api/recurring-payments/:id/status', () => {
+    it('should update the status of a schedule', async () => {
       const response = await request(app)
-        .get('/api/recurring-payments/schedule_1');
-
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('id', 'schedule_1');
-      expect(mockService.getSchedule).toHaveBeenCalledWith(
-        'schedule_1',
-        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
-      );
-    });
-  });
-
-  describe('PATCH /api/recurring-payments/:id', () => {
-    it('should update a schedule', async () => {
-      const response = await request(app)
-        .patch('/api/recurring-payments/schedule_1')
+        .patch('/api/recurring-payments/schedule_1/status')
         .send({
-          amount: '20.0',
+          status: 'PAUSED',
         });
 
       expect(response.status).toBe(200);
-      expect(response.body.amount).toBe('20.0');
-      expect(mockService.updateSchedule).toHaveBeenCalledWith(
-        'schedule_1',
+      expect(response.body.data.status).toBe('PAUSED');
+      expect(mockService.updateScheduleStatus).toHaveBeenCalledWith(
         'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
-        { amount: '20.0' }
+        'schedule_1',
+        'PAUSED'
       );
     });
   });
@@ -188,8 +174,8 @@ describe('Recurring Payments Routes', () => {
 
       expect(response.status).toBe(204);
       expect(mockService.deleteSchedule).toHaveBeenCalledWith(
-        'schedule_1',
-        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
+        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        'schedule_1'
       );
     });
   });

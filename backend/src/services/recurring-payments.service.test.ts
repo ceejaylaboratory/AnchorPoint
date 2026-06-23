@@ -10,22 +10,27 @@ import { BatchPaymentService } from './batch-payment.service';
 // Mock BatchPaymentService
 jest.mock('./batch-payment.service');
 
-// Mock Prisma
-jest.mock('../lib/prisma', () => ({
-  prisma: {
-    recurringPaymentSchedule: {
-      create: jest.fn(),
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    },
-    recurringPaymentRun: {
-      create: jest.fn(),
-      update: jest.fn(),
-    },
-    $transaction: jest.fn(),
+const mockPrisma = {
+  recurringPaymentSchedule: {
+    create: jest.fn(),
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+    findFirst: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
   },
+  recurringPaymentRun: {
+    create: jest.fn(),
+    update: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  $transaction: jest.fn(),
+};
+
+jest.mock('../lib/prisma', () => ({
+  __esModule: true,
+  default: mockPrisma,
+  prisma: mockPrisma,
 }));
 
 // Mock logger
@@ -40,6 +45,9 @@ jest.mock('../utils/logger', () => ({
 jest.mock('../config/env', () => ({
   STELLAR_DISTRIBUTION_SECRET: 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 }));
+
+const mockUser = 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K';
+const mockDestination = 'GBBD47IF6LWLVNC7F7YSACOA73YI4COI3V5O2S46F7S44GUL44YQY4O2';
 
 describe('RecurringPaymentsService', () => {
   let service: RecurringPaymentsService;
@@ -64,7 +72,7 @@ describe('RecurringPaymentsService', () => {
       const { prisma } = require('../lib/prisma');
       prisma.recurringPaymentSchedule.create.mockResolvedValue({
         id: 'schedule_1',
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        destination: mockDestination,
         assetCode: 'XLM',
         amount: '10.0',
         cron: '0 0 * * *',
@@ -74,8 +82,8 @@ describe('RecurringPaymentsService', () => {
         updatedAt: new Date(),
       });
 
-      const result = await service.createSchedule('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', {
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      const result = await service.createSchedule(mockUser, {
+        destination: mockDestination,
         assetCode: 'XLM',
         amount: '10.0',
         cron: '0 0 * * *',
@@ -87,8 +95,8 @@ describe('RecurringPaymentsService', () => {
 
     it('should validate cron expression', async () => {
       await expect(
-        service.createSchedule('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', {
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        service.createSchedule(mockUser, {
+          destination: mockDestination,
           assetCode: 'XLM',
           amount: '10.0',
           cron: 'invalid-cron',
@@ -98,19 +106,19 @@ describe('RecurringPaymentsService', () => {
 
     it('should validate Stellar address', async () => {
       await expect(
-        service.createSchedule('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', {
+        service.createSchedule(mockUser, {
           destination: 'INVALID_ADDRESS',
           assetCode: 'XLM',
           amount: '10.0',
           cron: '0 0 * * *',
         })
-      ).rejects.toThrow('Invalid Stellar address');
+      ).rejects.toThrow('Invalid destination Stellar address');
     });
 
     it('should validate positive amount', async () => {
       await expect(
-        service.createSchedule('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', {
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        service.createSchedule(mockUser, {
+          destination: mockDestination,
           assetCode: 'XLM',
           amount: '-10.0',
           cron: '0 0 * * *',
@@ -124,11 +132,11 @@ describe('RecurringPaymentsService', () => {
       const { prisma } = require('../lib/prisma');
       prisma.recurringPaymentSchedule.findMany.mockResolvedValue([]);
 
-      const result = await service.listSchedules('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF');
+      const result = await service.listSchedules(mockUser);
 
       expect(result).toEqual([]);
       expect(prisma.recurringPaymentSchedule.findMany).toHaveBeenCalledWith({
-        where: { user: { publicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' } },
+        where: { user: { publicKey: mockUser } },
         orderBy: { createdAt: 'desc' },
       });
     });
@@ -137,9 +145,9 @@ describe('RecurringPaymentsService', () => {
   describe('getSchedule', () => {
     it('should get a specific schedule', async () => {
       const { prisma } = require('../lib/prisma');
-      prisma.recurringPaymentSchedule.findUnique.mockResolvedValue({
+      const mockSchedule = {
         id: 'schedule_1',
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        destination: mockDestination,
         assetCode: 'XLM',
         amount: '10.0',
         cron: '0 0 * * *',
@@ -147,9 +155,11 @@ describe('RecurringPaymentsService', () => {
         nextRunAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
-      });
+      };
+      prisma.recurringPaymentSchedule.findFirst.mockResolvedValue(mockSchedule);
+      prisma.recurringPaymentSchedule.findUnique.mockResolvedValue(mockSchedule);
 
-      const result = await service.getSchedule('schedule_1', 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF');
+      const result = await service.getSchedule('schedule_1', mockUser);
 
       expect(result).toBeDefined();
       expect(prisma.recurringPaymentSchedule.findUnique).toHaveBeenCalledWith({
@@ -162,19 +172,24 @@ describe('RecurringPaymentsService', () => {
   describe('updateSchedule', () => {
     it('should update a schedule', async () => {
       const { prisma } = require('../lib/prisma');
-      prisma.recurringPaymentSchedule.update.mockResolvedValue({
+      const mockSchedule = {
         id: 'schedule_1',
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        destination: mockDestination,
         assetCode: 'XLM',
-        amount: '20.0',
+        amount: '10.0',
         cron: '0 0 * * *',
         status: 'ACTIVE',
         nextRunAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
+      };
+      prisma.recurringPaymentSchedule.findFirst.mockResolvedValue(mockSchedule);
+      prisma.recurringPaymentSchedule.update.mockResolvedValue({
+        ...mockSchedule,
+        amount: '20.0',
       });
 
-      const result = await service.updateSchedule('schedule_1', 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', {
+      const result = await service.updateSchedule('schedule_1', mockUser, {
         amount: '20.0',
       });
 
@@ -186,9 +201,9 @@ describe('RecurringPaymentsService', () => {
   describe('deleteSchedule', () => {
     it('should delete a schedule', async () => {
       const { prisma } = require('../lib/prisma');
-      prisma.recurringPaymentSchedule.delete.mockResolvedValue({
+      const mockSchedule = {
         id: 'schedule_1',
-        destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        destination: mockDestination,
         assetCode: 'XLM',
         amount: '10.0',
         cron: '0 0 * * *',
@@ -196,9 +211,11 @@ describe('RecurringPaymentsService', () => {
         nextRunAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
-      });
+      };
+      prisma.recurringPaymentSchedule.findFirst.mockResolvedValue(mockSchedule);
+      prisma.recurringPaymentSchedule.delete.mockResolvedValue(mockSchedule);
 
-      await service.deleteSchedule('schedule_1', 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF');
+      await service.deleteSchedule(mockUser, 'schedule_1');
 
       expect(prisma.recurringPaymentSchedule.delete).toHaveBeenCalledWith({
         where: { id: 'schedule_1' },
@@ -214,13 +231,13 @@ describe('RecurringPaymentsService', () => {
       prisma.recurringPaymentSchedule.findMany.mockResolvedValue([
         {
           id: 'schedule_1',
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+          destination: mockDestination,
           assetCode: 'XLM',
           amount: '10.0',
           cron: '0 0 * * *',
           status: 'ACTIVE',
           nextRunAt: new Date('2026-04-26T00:00:00Z'),
-          user: { publicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' },
+          user: { publicKey: mockUser },
         },
       ]);
 
@@ -231,7 +248,7 @@ describe('RecurringPaymentsService', () => {
         startedAt: now,
       });
 
-      prisma.$transaction.mockImplementation(async (callbacks) => {
+      prisma.$transaction.mockImplementation(async (callbacks: any[]) => {
         for (const cb of callbacks) {
           await cb();
         }
@@ -251,13 +268,13 @@ describe('RecurringPaymentsService', () => {
       prisma.recurringPaymentSchedule.findMany.mockResolvedValue([
         {
           id: 'schedule_1',
-          destination: 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+          destination: mockDestination,
           assetCode: 'XLM',
           amount: '10.0',
           cron: '0 0 * * *',
           status: 'ACTIVE',
           nextRunAt: new Date('2026-04-26T00:00:00Z'),
-          user: { publicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' },
+          user: { publicKey: mockUser },
         },
       ]);
 
@@ -268,7 +285,7 @@ describe('RecurringPaymentsService', () => {
         startedAt: now,
       });
 
-      prisma.$transaction.mockImplementation(async (callbacks) => {
+      prisma.$transaction.mockImplementation(async (callbacks: any[]) => {
         for (const cb of callbacks) {
           await cb();
         }

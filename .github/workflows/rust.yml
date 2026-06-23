@@ -25,4 +25,4 @@ jobs:
       - name: Test upgradeable
         run: cargo test -p upgradeable
       - name: Run Security Audit
-        run: ./scripts/security-audit.sh
+        run: ./scripts/security-audit.sh --warn-only

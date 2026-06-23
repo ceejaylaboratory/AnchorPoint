@@ -4,7 +4,6 @@
  * Tests for signature-based gasless token approval system
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RelayerService } from './relayer.service';
 import {
   TokenApprovalRequest,

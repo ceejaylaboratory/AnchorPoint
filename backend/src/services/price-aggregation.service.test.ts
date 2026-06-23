@@ -31,7 +31,7 @@ describe('PriceAggregationService', () => {
 
   beforeEach(() => {
     mockRedis = createMockRedis();
-    service = new PriceAggregationService(mockRedis as unknown as Parameters<typeof PriceAggregationService>[0]);
+    service = new PriceAggregationService(mockRedis as any);
     jest.clearAllMocks();
     circuitBreakerRegistry.resetAll();
   });
@@ -178,7 +178,7 @@ describe('PriceAggregationService', () => {
     it('should reset circuit breakers', () => {
       service.resetCircuitBreakers();
 
-      const metrics = service.getCircuitBreakerMetrics();
+      const metrics = service.getCircuitBreakerMetrics() as Record<string, any>;
       expect(metrics['horizon'].state).toBe('CLOSED');
       expect(metrics['external-exchange'].state).toBe('CLOSED');
     });
@@ -245,7 +245,7 @@ describe('PriceAggregationService', () => {
       ];
 
       const customService = new PriceAggregationService(
-        mockRedis as unknown as Parameters<typeof PriceAggregationService>[0],
+        mockRedis as any,
         configs
       );
 

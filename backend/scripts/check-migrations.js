@@ -80,10 +80,8 @@ function simulateMigration() {
     const env = {
         ...process.env,
         DATABASE_URL: SHADOW_DB_URL,
-        // Suppress the schema-level shadowDatabaseUrl so Prisma treats
-        // DATABASE_URL as the primary (and only) target for this run.
-        SHADOW_DATABASE_URL: '',
     };
+    delete env.SHADOW_DATABASE_URL;
 
     console.log('Resetting shadow database before simulation...');
     if (SHADOW_DB_URL.startsWith('file:')) {

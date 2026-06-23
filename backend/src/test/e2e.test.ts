@@ -1,6 +1,8 @@
+process.env.SIGNING_KEY = 'GBBD47IF6LWLVNC7F7YSACOA73YI4COI3V5O2S46F7S44GUL44YQY4O2';
 import request from 'supertest';
 import nock from 'nock';
 import { Keypair } from '@stellar/stellar-sdk';
+import prisma from '../lib/prisma';
 import app from '../index';
 
 // Mock problematic services and middleware
@@ -38,7 +40,13 @@ describe('AnchorPoint E2E Tests - Cross-Border Payment Flow', () => {
   let sep31TransactionId = '';
   let callbackCount = 0;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // Keep the DB deterministic per run.
+    await prisma.transaction.deleteMany();
+    await prisma.quote.deleteMany();
+    await prisma.kycCustomer.deleteMany();
+    await prisma.user.deleteMany();
+
     // Clean up any existing mocks
     nock.cleanAll();
 
@@ -55,6 +63,10 @@ describe('AnchorPoint E2E Tests - Cross-Border Payment Flow', () => {
       }
       return originalFetch(url, init);
     });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
   });
 
   afterEach(() => {
