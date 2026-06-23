@@ -48,6 +48,8 @@ jobs:
       
       - name: Install dependencies
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/testdb"
         run: |
           npm install --ignore-scripts
           npm install @prisma/debug @prisma/engines-version --no-save
@@ -55,16 +57,21 @@ jobs:
       
       - name: Setup test database
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/testdb"
         run: |
-          echo "DATABASE_URL=postgresql://prisma:prisma_password@localhost:5432/testdb" > .env
           npx prisma migrate deploy
       
       - name: Run migration integrity checks
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/testdb"
         run: npx ts-node scripts/migration-integrity-checker.ts
       
       - name: Check for schema drift
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/testdb"
         run: |
           # Use migrate status to detect drift between applied migrations and schema.prisma.
           # If there are unapplied migrations or drift, it exits with a non-zero code.
@@ -92,6 +99,8 @@ jobs:
       - name: Generate migration report
         if: always()
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/testdb"
         run: |
           echo "## Migration Integrity Report" > migration-report.md
           echo "" >> migration-report.md
@@ -157,6 +166,8 @@ jobs:
       
       - name: Install dependencies
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/staging_testdb"
         run: |
           npm install --ignore-scripts
           npm install @prisma/debug @prisma/engines-version --no-save
@@ -164,9 +175,10 @@ jobs:
       
       - name: Create staging database clone
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/staging_testdb"
         run: |
           # Create a test database with production-like schema
-          echo "DATABASE_URL=postgresql://prisma:prisma_password@localhost:5432/staging_testdb" > .env
           npx prisma migrate deploy
           
           # Seed with test data if needed
@@ -184,6 +196,8 @@ jobs:
       
       - name: Verify data integrity
         working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/staging_testdb"
         run: |
           # Run queries to verify data integrity after migration
           npx prisma studio --browser none &

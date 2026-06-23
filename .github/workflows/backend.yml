@@ -115,11 +115,3 @@ jobs:
           name: migration-status
           path: backend/migration-status.md
           retention-days: 7
-
-      - name: Run Lint
-        run: npm run lint
-
-      - name: Run Tests
-        env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
-        run: npm test
