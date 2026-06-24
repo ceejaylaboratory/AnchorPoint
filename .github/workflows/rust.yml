@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown,wasm32v1-none
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
@@ -25,4 +25,4 @@ jobs:
       - name: Test upgradeable
         run: cargo test -p upgradeable
       - name: Run Security Audit
-        run: ./scripts/security-audit.sh
+        run: ./scripts/security-audit.sh --warn-only

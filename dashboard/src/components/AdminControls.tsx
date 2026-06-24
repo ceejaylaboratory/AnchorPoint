@@ -60,7 +60,6 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
         throw new Error('Failed to switch network');
       }
 
-      const data = await response.json();
       setNetwork(targetNetwork);
       showStatus(`Switched Stellar network to ${targetNetwork} successfully.`, false);
     } catch (err) {
