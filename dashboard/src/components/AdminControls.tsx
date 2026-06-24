@@ -103,10 +103,10 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
   };
 
   return (
-    <div className="glass-card p-8">
-      <h3 className="mb-4 text-xl font-bold text-slate-100 flex items-center gap-2">
+    <div className="glass-card p-5 sm:p-8">
+      <h3 className="mb-4 flex flex-col gap-2 text-xl font-bold text-slate-100 sm:flex-row sm:items-center">
         <span>Admin Control Center</span>
-        <span className="rounded bg-rose-500/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-rose-400 border border-rose-500/20">
+        <span className="w-fit rounded border border-rose-500/20 bg-rose-500/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-rose-400">
           Sensitive Actions
         </span>
       </h3>
@@ -134,7 +134,7 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
 
       <div className="space-y-6">
         {/* Switch Stellar Network */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+        <div className="flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <h4 className="font-semibold text-slate-200 flex items-center gap-2">
               <Network size={16} className="text-primary" />
@@ -144,14 +144,14 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
               Switches the blockchain environment that the anchor queries for ledger entries and indexes.
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex min-w-0 shrink-0 items-center gap-2 sm:max-w-xs">
             <label htmlFor="admin-network-select" className="sr-only">Select Stellar Network</label>
             <select
               id="admin-network-select"
               value={network}
               onChange={handleNetworkChangeInitiate}
               disabled={loading}
-              className="input-field text-sm font-medium pr-8"
+              className="input-field w-full pr-8 text-sm font-medium"
             >
               <option value="TESTNET">TESTNET (Stellar Test Network)</option>
               <option value="PUBLIC">PUBLIC (Stellar Main Network)</option>
@@ -161,7 +161,7 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
         </div>
 
         {/* Purge Job Queues */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+        <div className="flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <h4 className="font-semibold text-slate-200 flex items-center gap-2">
               <Trash2 size={16} className="text-rose-400" />
@@ -175,7 +175,7 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
             type="button"
             onClick={() => setIsQueueModalOpen(true)}
             disabled={loading}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-400 transition-all hover:bg-rose-500/25 disabled:opacity-40 shrink-0"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-400 transition-all hover:bg-rose-500/25 disabled:opacity-40 sm:w-auto sm:shrink-0"
           >
             Purge Queues
           </button>

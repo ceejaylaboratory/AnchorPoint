@@ -113,12 +113,12 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
 
   return (
     <div className="space-y-6">
-      <div className="glass-card p-6">
+      <div className="glass-card p-4 sm:p-6">
         <h3 className="mb-6 text-xl font-bold text-slate-100">Notification Preferences</h3>
 
         <div className="space-y-6">
           {/* Email Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+          <div className="flex flex-col gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-blue-500/10 p-2">
                 <Mail size={20} className="text-blue-400" />
@@ -148,7 +148,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           </div>
 
           {/* SMS Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+          <div className="flex flex-col gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-emerald-500/10 p-2">
                 <MessageSquare size={20} className="text-emerald-400" />
@@ -193,7 +193,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           </div>
 
           {/* Push Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+          <div className="flex flex-col gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-purple-500/10 p-2">
                 <Bell size={20} className="text-purple-400" />
@@ -224,7 +224,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
         </div>
 
         {/* Save Button */}
-        <div className="mt-6 flex items-center justify-between">
+        <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             {error && (
               <div className="flex items-center gap-2 text-sm text-red-400">
@@ -242,7 +242,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           <button
             onClick={savePreferences}
             disabled={saving}
-            className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2 font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-2 font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-50 sm:w-auto"
           >
             <Save size={18} />
             {saving ? 'Saving...' : 'Save Preferences'}
@@ -251,7 +251,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
       </div>
 
       {/* Information Card */}
-      <div className="glass-card p-6">
+      <div className="glass-card p-4 sm:p-6">
         <h4 className="mb-3 font-medium text-slate-100">About Webhook Notifications</h4>
         <div className="space-y-2 text-sm text-slate-400">
           <p>

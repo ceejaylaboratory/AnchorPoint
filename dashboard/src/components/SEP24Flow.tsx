@@ -32,7 +32,7 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
   const goToStep = (s: number) => setStep(s);
 
   return (
-    <div className="mx-auto max-w-4xl glass-card p-6 sm:p-8">
+    <div className="mx-auto max-w-4xl glass-card p-4 sm:p-8">
       {/* Live region announces step changes to screen readers */}
       <div aria-live="polite" aria-atomic="true" className="sr-only">
         {`Step ${displayStep} of ${totalSteps}: ${STEP_LABELS[step - 1]}`}
@@ -40,11 +40,11 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
 
       {/* Step indicator */}
       <nav
-        className="mb-12 relative px-4"
+        className="relative mb-8 px-0 sm:mb-12 sm:px-4"
         aria-label={`${flowLabel} progress`}
       >
         {/* Progress track background */}
-        <div className="absolute top-5 left-10 right-10 h-0.5 bg-slate-800 -translate-y-1/2 z-0" aria-hidden="true">
+        <div className="absolute left-6 right-6 top-5 z-0 h-0.5 -translate-y-1/2 bg-slate-800 sm:left-10 sm:right-10" aria-hidden="true">
           <div
             className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500"
             style={{ width: totalSteps > 1 ? `${((displayStep - 1) / (totalSteps - 1)) * 100}%` : '0%' }}
@@ -85,7 +85,7 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                   )}
                 </button>
                 <span
-                  className={`mt-3 text-xs font-semibold tracking-wide transition-colors duration-300 text-center ${
+                  className={`mt-3 hidden text-center text-xs font-semibold tracking-wide transition-colors duration-300 sm:block ${
                     isActive ? 'text-primary' : isCompleted ? 'text-slate-300' : 'text-slate-500'
                   }`}
                 >
@@ -124,7 +124,7 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                     role="listitem"
                     onClick={() => goToStep(isWithdraw ? 2 : 3)}
                     aria-label={`Select ${asset} for ${flowLabel.toLowerCase()}`}
-                    className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 transition-all hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-3 transition-all hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:p-4"
                   >
                     <div className="flex items-center gap-3">
                       <div
@@ -168,7 +168,7 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
               />
               <button
                 onClick={() => goToStep(1)}
-                className="text-sm text-slate-500 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded"
+                className="rounded text-sm text-slate-500 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
               >
                 ← Back to asset selection
               </button>
@@ -211,16 +211,16 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
             key="step-complete"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="py-12 text-center"
+            className="py-8 text-center sm:py-12"
           >
             <div
-              className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500"
+              className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500 sm:h-20 sm:w-20"
               role="img"
               aria-label="Transaction submitted successfully"
             >
               <CheckCircle2 size={40} aria-hidden="true" />
             </div>
-            <h2 className="mb-2 font-display text-3xl font-bold">Transaction Initiated</h2>
+            <h2 className="mb-2 font-display text-2xl font-bold sm:text-3xl">Transaction Initiated</h2>
             <p className="mb-8 text-slate-400">
               Your {flowLabel.toLowerCase()} request has been submitted with {uiConfig.brandName} branding and field
               rules pulled from the backend.

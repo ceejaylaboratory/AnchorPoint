@@ -12,7 +12,7 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
   return (
     <div className="space-y-6">
       {/* Dev Toggle for previewing states */}
-      <div className="flex items-center gap-3 p-4 glass-card border-dashed border-slate-700/50 overflow-x-auto">
+      <div className="flex items-center gap-3 overflow-x-auto p-3 glass-card border-dashed border-slate-700/50 sm:p-4">
         <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center shrink-0">Preview State:</span>
         {(['not_started', 'pending', 'approved', 'rejected'] as KycState[]).map((s) => (
           <button
@@ -29,7 +29,7 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
         ))}
       </div>
 
-      <div className="glass-card p-8 md:p-16 text-center relative overflow-hidden">
+      <div className="glass-card relative overflow-hidden p-5 text-center sm:p-8 md:p-16">
         {/* Background ambient glow based on state */}
         <div 
           className={`absolute top-0 left-1/2 -translate-x-1/2 w-[150%] md:w-full h-48 blur-[100px] opacity-10 pointer-events-none transition-colors duration-700 ${
@@ -41,12 +41,12 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
 
         {kycState === 'not_started' && (
           <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
-            <ShieldCheck size={64} className="mb-6 text-primary" aria-hidden="true" />
+            <ShieldCheck size={52} className="mb-5 text-primary sm:mb-6 sm:h-16 sm:w-16" aria-hidden="true" />
             <h3 className="text-2xl font-display font-bold text-slate-100">Identity Verification</h3>
             <p className="mt-3 text-slate-400 max-w-lg leading-relaxed">
               Current KYC requirements are being sourced from the active backend configuration. Complete your verification to unlock all features.
             </p>
-            <div className="mt-10 w-full max-w-xl text-left bg-slate-900/50 p-6 rounded-2xl border border-slate-800/50">
+            <div className="mt-8 w-full max-w-xl rounded-2xl border border-slate-800/50 bg-slate-900/50 p-4 text-left sm:mt-10 sm:p-6">
               <RequirementList title="Required Information" fields={uiConfig.fieldRequirements.kyc} />
             </div>
             <button className="mt-8 btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
@@ -57,11 +57,11 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
 
         {kycState === 'pending' && (
           <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
-            <div className="flex h-24 w-24 items-center justify-center rounded-full bg-amber-500/10 mb-8 border border-amber-500/20 shadow-[0_0_40px_-10px_rgba(245,158,11,0.2)]">
+            <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full border border-amber-500/20 bg-amber-500/10 shadow-[0_0_40px_-10px_rgba(245,158,11,0.2)] sm:mb-8 sm:h-24 sm:w-24">
               <Clock size={40} className="text-amber-400 animate-pulse" aria-hidden="true" />
             </div>
-            <h3 className="text-3xl font-display font-bold text-slate-100">Verification in Progress</h3>
-            <p className="mt-4 text-slate-400 max-w-lg text-lg leading-relaxed">
+            <h3 className="font-display text-2xl font-bold text-slate-100 sm:text-3xl">Verification in Progress</h3>
+            <p className="mt-4 max-w-lg text-base leading-relaxed text-slate-400 sm:text-lg">
               Your identity information is currently being reviewed by our compliance team. This typically takes 1-2 business days.
             </p>
             <div className="mt-8 px-5 py-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-amber-200 text-sm max-w-md shadow-inner">
@@ -72,11 +72,11 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
 
         {kycState === 'approved' && (
           <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
-            <div className="flex h-24 w-24 items-center justify-center rounded-full bg-emerald-500/10 mb-8 border border-emerald-500/20 shadow-[0_0_40px_-10px_rgba(16,185,129,0.2)]">
+            <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 shadow-[0_0_40px_-10px_rgba(16,185,129,0.2)] sm:mb-8 sm:h-24 sm:w-24">
               <CheckCircle2 size={48} className="text-emerald-400" aria-hidden="true" />
             </div>
-            <h3 className="text-3xl font-display font-bold text-slate-100">Identity Verified</h3>
-            <p className="mt-4 text-slate-400 max-w-lg text-lg leading-relaxed">
+            <h3 className="font-display text-2xl font-bold text-slate-100 sm:text-3xl">Identity Verified</h3>
+            <p className="mt-4 max-w-lg text-base leading-relaxed text-slate-400 sm:text-lg">
               Your identity has been successfully verified. You now have full access to deposit and withdrawal features.
             </p>
             <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md">
@@ -100,16 +100,16 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
 
         {kycState === 'rejected' && (
           <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
-            <div className="flex h-24 w-24 items-center justify-center rounded-full bg-rose-500/10 mb-8 border border-rose-500/20 shadow-[0_0_40px_-10px_rgba(244,63,94,0.3)]">
+            <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full border border-rose-500/20 bg-rose-500/10 shadow-[0_0_40px_-10px_rgba(244,63,94,0.3)] sm:mb-8 sm:h-24 sm:w-24">
               <XCircle size={48} className="text-rose-500" aria-hidden="true" />
             </div>
-            <h3 className="text-3xl font-display font-bold text-slate-100">Verification Failed</h3>
-            <p className="mt-4 text-slate-400 max-w-lg text-lg leading-relaxed">
+            <h3 className="font-display text-2xl font-bold text-slate-100 sm:text-3xl">Verification Failed</h3>
+            <p className="mt-4 max-w-lg text-base leading-relaxed text-slate-400 sm:text-lg">
               We were unable to verify your identity with the provided information. This may happen if documents are unclear, expired, or details mismatch.
             </p>
 
-            <div className="mt-10 w-full max-w-lg text-left">
-              <div className="flex items-start gap-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-5 shadow-inner">
+            <div className="mt-8 w-full max-w-lg text-left sm:mt-10">
+              <div className="flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 shadow-inner sm:gap-4 sm:p-5">
                 <AlertTriangle size={24} className="text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
                 <div>
                   <h4 className="text-sm font-semibold text-rose-200 tracking-wide">Reason for Rejection</h4>
@@ -120,7 +120,7 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
               </div>
             </div>
 
-            <div className="mt-10 flex flex-col sm:flex-row gap-4 w-full max-w-lg justify-center">
+            <div className="mt-8 flex w-full max-w-lg flex-col justify-center gap-4 sm:mt-10 sm:flex-row">
               <button 
                 onClick={() => setKycState('not_started')}
                 className="flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-lg bg-rose-600 hover:bg-rose-500 px-8 py-3 text-sm font-medium text-white shadow-lg shadow-rose-500/20 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50"

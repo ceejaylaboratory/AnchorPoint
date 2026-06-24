@@ -123,7 +123,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       {/* Stats Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="glass-card p-4">
@@ -169,11 +169,11 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
       {/* Controls */}
       <div className="glass-card p-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Filter size={18} className="text-slate-400" />
             <span className="text-sm font-medium text-slate-300">Filter:</span>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex">
               {(['all', 'PENDING', 'SENT', 'FAILED'] as const).map((f) => (
                 <button
                   key={f}
@@ -190,11 +190,11 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:flex">
             <button
               onClick={() => fetchNotifications(true)}
               disabled={refreshing}
-              className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
+              className="flex items-center justify-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
             >
               <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
               Refresh
@@ -203,7 +203,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             {onOpenPreferences && (
               <button
                 onClick={onOpenPreferences}
-                className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
+                className="flex items-center justify-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
               >
                 <Settings size={16} />
                 Preferences
@@ -248,12 +248,12 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05 }}
-                className="p-6 transition-colors hover:bg-slate-800/30"
-              >
-                <div className="flex items-start gap-4">
+              className="p-4 transition-colors hover:bg-slate-800/30 sm:p-6"
+            >
+                <div className="flex items-start gap-3 sm:gap-4">
                   <div className="mt-1">{getStatusIcon(notification.status)}</div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                       <p className="text-sm text-slate-200">{notification.message}</p>
                       {getStatusBadge(notification.status)}
                     </div>

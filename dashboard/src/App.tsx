@@ -130,14 +130,22 @@ const App = () => {
         } as React.CSSProperties
       }
     >
+      {sidebarOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation menu overlay"
+          className="fixed inset-0 z-40 bg-slate-950/70 backdrop-blur-sm lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <aside
         data-testid="sidebar"
         id="main-sidebar"
         aria-label="Main navigation"
-        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-800 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0`}
+        className={`fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-2rem))] transform border-r border-slate-800 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:w-64 lg:translate-x-0`}
       >
-        <div className="p-6">
-          <div className="mb-10 flex items-center gap-3">
+        <div className="p-5 sm:p-6">
+          <div className="mb-8 flex items-center gap-3 sm:mb-10">
             <LogoMark uiConfig={uiConfig} />
             <div className="min-w-0">
               <h1 className="truncate font-display text-xl font-bold tracking-tight">
@@ -154,7 +162,10 @@ const App = () => {
               {menuItems.map((item) => (
                 <li key={item.id}>
                   <button
-                    onClick={() => setActiveTab(item.id)}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setSidebarOpen(false);
+                    }}
                     aria-current={activeTab === item.id ? 'page' : undefined}
                     className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                       activeTab === item.id
@@ -171,7 +182,7 @@ const App = () => {
           </nav>
         </div>
 
-        <div className="absolute bottom-0 w-full border-t border-slate-800 p-6">
+        <div className="absolute bottom-0 w-full border-t border-slate-800 p-5 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-full bg-slate-800" aria-hidden="true" />
             <div className="flex-1 overflow-hidden">
@@ -189,18 +200,18 @@ const App = () => {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-800 bg-background/50 px-4 sm:px-6 lg:px-8 backdrop-blur-md">
+        <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-background/80 px-3 py-3 backdrop-blur-md sm:px-6 lg:px-8">
           <button
             aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={sidebarOpen}
             aria-controls="main-sidebar"
-            className="lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded"
+            className="rounded p-2 -ml-2 lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             {sidebarOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
           </button>
 
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-4">
             <div
               data-testid="backend-status"
               className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex"
@@ -226,23 +237,23 @@ const App = () => {
               apiBaseUrl={apiBaseUrl}
               onViewAll={() => setActiveTab('notifications')}
             />
-            <button className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+            <button className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:px-4">
               <Wallet size={18} aria-hidden="true" />
-              <span className="text-sm font-medium">Connect Wallet</span>
+              <span className="hidden text-sm font-medium sm:inline">Connect Wallet</span>
             </button>
           </div>
         </header>
 
         <section
-          className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
+          className="mx-auto w-full max-w-7xl px-3 py-5 sm:px-6 sm:py-8 lg:px-8"
           aria-label={menuItems.find((m) => m.id === activeTab)?.label}
         >
-          <div className="mb-8 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div>
-              <h2 className="font-display text-3xl font-bold">
+          <div className="mb-6 flex flex-col gap-3 sm:mb-8 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <h2 className="font-display text-2xl font-bold sm:text-3xl">
                 {menuItems.find((m) => m.id === activeTab)?.label}
               </h2>
-              <p className="mt-1 text-slate-400">
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400 sm:text-base">
                 {activeTab === 'dashboard' &&
                   'Manage anchor operations, branding, and flow requirements from a single backend-driven surface.'}
                 {activeTab === 'deposit' && 'Initiate a new on-ramp transaction via SEP-24.'}
@@ -257,7 +268,7 @@ const App = () => {
             {loadingState === 'error' ? (
               <div
                 data-testid="config-warning"
-                className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+                className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
                 role="alert"
               >
                 <AlertCircle size={16} aria-hidden="true" />
@@ -291,9 +302,9 @@ const App = () => {
                 )}
                 {activeTab === 'kyc' && <KycStatusView uiConfig={uiConfig} />}
                 {activeTab === 'settings' && (
-                  <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+                  <div className="grid grid-cols-1 gap-5 sm:gap-6 xl:grid-cols-[0.95fr_1.05fr]">
                     <div className="space-y-6">
-                      <div className="glass-card p-8">
+                      <div className="glass-card p-5 sm:p-8">
                         <h3 className="mb-4 text-xl font-bold">Branding Configuration</h3>
                         <div className="space-y-6">
                           <div>
@@ -327,7 +338,7 @@ const App = () => {
                               <label htmlFor="primary-color-hex" className="mb-2 block text-sm font-medium text-slate-400">
                                 Primary Color
                               </label>
-                              <div className="flex gap-2">
+                              <div className="flex min-w-0 gap-2">
                                 <input
                                   type="color"
                                   value={uiConfig.primaryColor}
@@ -341,7 +352,7 @@ const App = () => {
                                   value={uiConfig.primaryColor}
                                   readOnly
                                   aria-readonly="true"
-                                  className="input-field flex-1"
+                                  className="input-field min-w-0 flex-1"
                                 />
                               </div>
                             </div>
@@ -349,7 +360,7 @@ const App = () => {
                               <label htmlFor="accent-color-hex" className="mb-2 block text-sm font-medium text-slate-400">
                                 Accent Color
                               </label>
-                              <div className="flex gap-2">
+                              <div className="flex min-w-0 gap-2">
                                 <input
                                   type="color"
                                   value={uiConfig.accentColor}
@@ -363,7 +374,7 @@ const App = () => {
                                   value={uiConfig.accentColor}
                                   readOnly
                                   aria-readonly="true"
-                                  className="input-field flex-1"
+                                  className="input-field min-w-0 flex-1"
                                 />
                               </div>
                             </div>

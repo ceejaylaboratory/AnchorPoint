@@ -111,7 +111,7 @@ export const TransactionHistory = () => {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative w-full sm:max-w-sm sm:flex-1">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" aria-hidden="true" />
           <input
             type="search"
@@ -123,13 +123,13 @@ export const TransactionHistory = () => {
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
           <label htmlFor="status-filter" className="sr-only">Filter by status</label>
           <select
             id="status-filter"
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value as TransactionStatus | 'All'); setPage(1); }}
-            className="input-field text-sm"
+            className="input-field w-full text-sm sm:w-auto"
           >
             {statusOptions.map((s) => (
               <option key={s} value={s}>{s === 'All' ? 'All Statuses' : s}</option>
@@ -141,7 +141,7 @@ export const TransactionHistory = () => {
             id="page-size"
             value={pageSize}
             onChange={(e) => { setPageSize(Number(e.target.value) as typeof pageSize); setPage(1); }}
-            className="input-field text-sm"
+            className="input-field w-full text-sm sm:w-auto"
           >
             {PAGE_SIZE_OPTIONS.map((n) => (
               <option key={n} value={n}>{n} / page</option>
@@ -151,8 +151,8 @@ export const TransactionHistory = () => {
       </div>
 
       {/* Table */}
-      <div className="glass-card overflow-x-auto">
-        <table className="w-full text-left" aria-label="Transaction history">
+      <div className="glass-card overflow-hidden">
+        <table className="responsive-table w-full text-left" aria-label="Transaction history">
           <caption className="sr-only">
             Transaction history — {sorted.length} result{sorted.length !== 1 ? 's' : ''}
           </caption>
@@ -186,7 +186,7 @@ export const TransactionHistory = () => {
                   key={tx.id}
                   className="transition-colors hover:bg-slate-900/50"
                 >
-                  <td className="flex items-center gap-2 p-4">
+                  <td className="flex items-center gap-2 p-4" data-label="Type">
                     {tx.type === 'Deposit' ? (
                       <ArrowDownLeft size={16} className="text-emerald-400" aria-hidden="true" />
                     ) : (
@@ -194,15 +194,15 @@ export const TransactionHistory = () => {
                     )}
                     {tx.type}
                   </td>
-                  <td className="p-4">{tx.asset}</td>
-                  <td className="p-4 font-mono">${fmtAmount(tx.amount)}</td>
-                  <td className="p-4">
+                  <td className="p-4" data-label="Asset">{tx.asset}</td>
+                  <td className="p-4 font-mono" data-label="Amount">${fmtAmount(tx.amount)}</td>
+                  <td className="p-4" data-label="Status">
                     <TransactionStatusBadge status={tx.status} />
                   </td>
-                  <td className="p-4 text-sm text-slate-400">
+                  <td className="p-4 text-sm text-slate-400" data-label="Date">
                     <time dateTime={tx.date}>{tx.date}</time>
                   </td>
-                  <td className="p-4 font-mono text-xs text-slate-500">{tx.reference}</td>
+                  <td className="p-4 font-mono text-xs text-slate-500" data-label="Reference">{tx.reference}</td>
                 </tr>
               ))
             )}
@@ -211,13 +211,13 @@ export const TransactionHistory = () => {
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between text-sm text-slate-400">
+      <div className="flex flex-col gap-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
         <span aria-live="polite" aria-atomic="true">
           {sorted.length === 0
             ? 'No results'
             : `Showing ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, sorted.length)} of ${sorted.length}`}
         </span>
-        <div className="flex items-center gap-1" role="navigation" aria-label="Pagination">
+        <div className="flex flex-wrap items-center gap-1" role="navigation" aria-label="Pagination">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage === 1}
