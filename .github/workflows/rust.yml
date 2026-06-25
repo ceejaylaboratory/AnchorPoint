@@ -3,8 +3,20 @@ name: Rust Contracts CI
 on:
   push:
     branches: ["**"]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "contracts/**"
+      - "scripts/security-audit.sh"
   pull_request:
     branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "contracts/**"
+      - "scripts/security-audit.sh"
 
 jobs:
   test:
