@@ -7,6 +7,7 @@ import {
   getChallenge as getChallengeFromRedis, 
   removeChallenge,
   signToken,
+  verifyToken,
   validateMultiKeySignatures,
   SignerInfo,
   SignatureInfo,
@@ -241,6 +242,48 @@ export const getToken = async (
     });
   }
 }
+
+/**
+ * POST /auth/refresh
+ * SEP-10 Token Refresh Endpoint
+ * Refreshes an existing valid JWT token
+ */
+export const refreshToken = async (
+  req: Request,
+  res: Response,
+  redisService: RedisService
+): Promise<Response> => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing or invalid authorization header' });
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  try {
+    const decoded = verifyToken(token);
+    
+    let multiKeyData: MultiKeyVerifiedToken | undefined;
+    if ('signers' in decoded) {
+      multiKeyData = decoded as MultiKeyVerifiedToken;
+    }
+    
+    // Issue a new token
+    const newToken = signToken(decoded.sub, multiKeyData);
+
+    const response: TokenResponse = {
+      token: newToken,
+      type: 'bearer',
+      expires_in: 3600,
+      authLevel: multiKeyData?.authLevel,
+      signers: multiKeyData?.signers
+    };
+
+    return res.json(response);
+  } catch (error) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+};
 
 /**
  * Validate hardware wallet signature
