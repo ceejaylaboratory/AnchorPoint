@@ -88,6 +88,38 @@ export function validateTransactionRequest(
     });
   }
 
+  // ── sender ≠ receiver ─────────────────────────────────────────────────
+  if (body.sender_id && body.receiver_id && body.sender_id === body.receiver_id) {
+    errors.push({
+      field: "receiver_id",
+      message: "sender_id and receiver_id must refer to different customers.",
+    });
+  }
+
+  if (
+    body.sender_info &&
+    body.receiver_info &&
+    !body.sender_id &&
+    !body.receiver_id
+  ) {
+    const senderKey = [
+      body.sender_info.first_name?.trim().toLowerCase(),
+      body.sender_info.last_name?.trim().toLowerCase(),
+      body.sender_info.email?.trim().toLowerCase(),
+    ].join('|');
+    const receiverKey = [
+      body.receiver_info.first_name?.trim().toLowerCase(),
+      body.receiver_info.last_name?.trim().toLowerCase(),
+      body.receiver_info.email?.trim().toLowerCase(),
+    ].join('|');
+    if (senderKey === receiverKey && senderKey !== '||') {
+      errors.push({
+        field: "receiver_info",
+        message: "sender_info and receiver_info must refer to different customers.",
+      });
+    }
+  }
+
   // ── memo_type ──────────────────────────────────────────────────────────
   if (body.memo_type && !VALID_MEMO_TYPES.has(body.memo_type)) {
     errors.push({

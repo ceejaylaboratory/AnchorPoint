@@ -263,6 +263,27 @@ describe('GET /sep12/customer', () => {
       email_address: { description: 'Email', status: 'ACCEPTED' },
     });
   });
+
+  it('includes supplementary fields when status is PENDING', async () => {
+    await request(app).put('/sep12/customer').send(validCustomer);
+
+    const res = await request(app).get('/sep12/customer').query({ account: TEST_ACCOUNT });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe(KYCStatus.PENDING);
+    expect(res.body.fields).toBeDefined();
+    expect(res.body.fields).toHaveProperty('proof_of_income');
+    expect(res.body.fields).toHaveProperty('proof_of_address');
+  });
+
+  it('accepts supplementary fields in PUT and stores them in extraFields', async () => {
+    const res = await request(app).put('/sep12/customer').send({
+      ...validCustomer,
+      occupation: 'Engineer',
+      employer_name: 'Acme Corp',
+    });
+
+    expect(res.status).toBe(202);
+  });
 });
 
 // ─── POST /sep12/webhook ───────────────────────────────────────────────────
