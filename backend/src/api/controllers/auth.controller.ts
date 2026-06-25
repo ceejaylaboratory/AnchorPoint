@@ -24,7 +24,8 @@ import { config } from '../../config/env';
 import { NetworkType } from '../../config/networks';
 import logger from '../../utils/logger';
 
-const CLIENT_DOMAIN_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9\-._]*\.[a-zA-Z]{2,}$/;
+// RFC 1123 compliant hostname: no consecutive dots/hyphens, labels must start/end with alphanumeric
+const CLIENT_DOMAIN_REGEX = /^(?!-)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.(?!-)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.(?!-)(?:[a-zA-Z]{2,}|xn--[a-zA-Z0-9]+)(?:-[a-zA-Z0-9]+)*$/;
 
 function validateClientDomain(domain: string): boolean {
   const trimmed = domain.trim();
@@ -206,21 +207,6 @@ export const getToken = async (
       });
     }
 
-    // Hardware wallet specific validation
-    try {
-      // Check if this is a hardware wallet transaction (Trezor/Ledger)
-      // Hardware wallets typically use different signing patterns
-      const isHardwareWallet = await validateHardwareWalletSignature(transaction, networkType);
-      if (isHardwareWallet) {
-        logger.info('Hardware wallet signature detected', { account, hardwareWallet: true });
-      }
-    } catch (error) {
-      logger.warn('Hardware wallet validation failed', { 
-        account, 
-        error: error instanceof Error ? error.message : String(error) 
-      });
-      // Continue with normal validation even if hardware wallet validation fails
-    }
 
     // Get the stored challenge
     const storedChallenge = await getChallengeFromRedis(redisService, account);
@@ -306,48 +292,3 @@ export const refreshToken = async (
   }
 };
 
-/**
- * Validate hardware wallet signature
- * @param transaction Signed transaction XDR
- * @param networkType Stellar network type
- * @returns Promise<boolean> Whether this is a hardware wallet signature
- */
-async function validateHardwareWalletSignature(
-  transaction: string,
-  networkType: NetworkType
-): Promise<boolean> {
-  try {
-    // Hardware wallets typically use different signing patterns
-    // Check for common hardware wallet signatures
-    const transactionObj = JSON.parse(transaction);
-    
-    // For Trezor/Ledger, check if the transaction has specific hardware wallet indicators
-    // This is a simplified check - real implementation would be more sophisticated
-    if (transactionObj && typeof transactionObj === 'object') {
-      // Look for hardware wallet specific fields
-      const hasHardwareIndicators = (
-        transactionObj.hardwareWallet ||
-        transactionObj.trezor ||
-        transactionObj.ledger ||
-        transactionObj.signerType === 'hardware'
-      );
-      
-      return hasHardwareIndicators;
-    }
-    
-    return false;
-  } catch (error) {
-    // If parsing fails, it might be a valid XDR string
-    // Try to parse as XDR instead
-    try {
-      // In real implementation, we'd use Stellar SDK to parse XDR
-      // For now, just check if it looks like XDR
-      if (transaction.length > 100 && transaction.length < 2000) {
-        return true; // Assume hardware wallet for longer transactions
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
-}
