@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ShieldCheck, ExternalLink, Lock, AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -33,6 +33,21 @@ export const InteractiveWebview = ({
   const [webviewState, setWebviewState] = useState<WebviewState>('idle');
   const [loadStep, setLoadStep] = useState(0);
   const [simulatedField, setSimulatedField] = useState('');
+
+  // Handle Interactive Window Resize Messages (SEP-24)
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        if (event.data?.type === 'resize' || (typeof event.data === 'string' && event.data.includes('resize'))) {
+          console.log('Interactive window resize message received', event.data);
+        }
+      } catch (e) {
+        // Ignore parsing errors
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   const handleLaunch = () => {
     setWebviewState('loading');
