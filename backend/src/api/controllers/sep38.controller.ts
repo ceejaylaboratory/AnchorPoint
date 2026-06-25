@@ -13,6 +13,7 @@ export interface PriceQuote {
   destination_asset: string;
   destination_amount: number;
   price: number;
+  fee: number;
   expiration_time: number;
   context?: string;
   cached?: boolean;
@@ -48,6 +49,23 @@ const FALLBACK_PRICES: Record<string, number> = {
   BTC: 45000.0,
   ETH: 2500.0,
 };
+
+export interface VolumeTier {
+  maxAmount: number;
+  feePercent: number;
+}
+
+const DEFAULT_VOLUME_TIERS: VolumeTier[] = [
+  { maxAmount: 1_000,      feePercent: 0.003 },
+  { maxAmount: 10_000,     feePercent: 0.002 },
+  { maxAmount: 100_000,    feePercent: 0.001 },
+  { maxAmount: Infinity,   feePercent: 0.0005 },
+];
+
+export function computeVolumeFee(amount: number, tiers: VolumeTier[] = DEFAULT_VOLUME_TIERS): number {
+  const tier = tiers.find((t) => amount <= t.maxAmount) ?? tiers[tiers.length - 1];
+  return parseFloat((amount * tier.feePercent).toFixed(7));
+}
 
 /**
  * Supported assets configuration
@@ -140,6 +158,7 @@ export class Sep38Controller {
         destination_asset: destinationAsset,
         destination_amount: sourceAmount,
         price: 1.0,
+        fee: computeVolumeFee(sourceAmount),
         expiration_time: Math.floor(Date.now() / 1000) + 60,
         confidence: 1.0,
         sources_used: 0,
@@ -261,6 +280,7 @@ export class Sep38Controller {
         destination_asset: destAsset,
         destination_amount: parseFloat(destinationAmount.toFixed(7)),
         price: parseFloat(crossRate.toFixed(7)),
+        fee: computeVolumeFee(sourceAmount),
         expiration_time: Math.floor(Date.now() / 1000) + 60,
         confidence: parseFloat(avgConfidence.toFixed(4)),
         sources_used: Math.min(sourcePriceData.aggregatedFrom, destPriceData.aggregatedFrom),
@@ -306,6 +326,7 @@ export class Sep38Controller {
       destination_asset: destAsset,
       destination_amount: parseFloat(destinationAmount.toFixed(7)),
       price: parseFloat(crossRate.toFixed(7)),
+      fee: computeVolumeFee(sourceAmount),
       expiration_time: Math.floor(Date.now() / 1000) + 60,
       confidence: 0.5,
       sources_used: 0,
