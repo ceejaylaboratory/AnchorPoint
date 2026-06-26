@@ -254,6 +254,26 @@ model SystemConfig {
 
   @@index([isActive])
   @@index([createdAt])
+enum UploadStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+}
+
+model UploadRecord {
+  id         String       @id @default(uuid())
+  account    String
+  fieldName  String
+  storageKey String
+  status     UploadStatus @default(PENDING)
+  expiresAt  DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@index([account])
+  @@index([status])
+}
+
 enum JobStatus {
   PENDING
   ACTIVE
