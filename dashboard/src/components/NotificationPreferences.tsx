@@ -105,7 +105,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
     return (
       <div className="glass-card p-8">
         <div className="flex items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-primary" />
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-500 border-t-primary-text" />
         </div>
       </div>
     );
@@ -118,7 +118,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
 
         <div className="space-y-6">
           {/* Email Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-500 bg-slate-800/50 p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-blue-500/10 p-2">
                 <Mail size={20} className="text-blue-400" />
@@ -133,14 +133,14 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             <button
               onClick={() => handleToggle('emailEnabled')}
               className={`relative h-6 w-11 rounded-full transition-colors ${
-                preferences.emailEnabled ? 'bg-primary' : 'bg-slate-700'
+                preferences.emailEnabled ? 'bg-primary' : 'bg-slate-600'
               }`}
               role="switch"
               aria-checked={preferences.emailEnabled}
               aria-label="Toggle email notifications"
             >
               <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-primary-foreground transition-transform ${
                   preferences.emailEnabled ? 'translate-x-5' : 'translate-x-0.5'
                 }`}
               />
@@ -148,7 +148,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           </div>
 
           {/* SMS Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-500 bg-slate-800/50 p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-emerald-500/10 p-2">
                 <MessageSquare size={20} className="text-emerald-400" />
@@ -178,14 +178,14 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             <button
               onClick={() => handleToggle('smsEnabled')}
               className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
-                preferences.smsEnabled ? 'bg-primary' : 'bg-slate-700'
+                preferences.smsEnabled ? 'bg-primary' : 'bg-slate-600'
               }`}
               role="switch"
               aria-checked={preferences.smsEnabled}
               aria-label="Toggle SMS notifications"
             >
               <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-primary-foreground transition-transform ${
                   preferences.smsEnabled ? 'translate-x-5' : 'translate-x-0.5'
                 }`}
               />
@@ -193,7 +193,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           </div>
 
           {/* Push Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-500 bg-slate-800/50 p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-purple-500/10 p-2">
                 <Bell size={20} className="text-purple-400" />
@@ -208,14 +208,14 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             <button
               onClick={() => handleToggle('pushEnabled')}
               className={`relative h-6 w-11 rounded-full transition-colors ${
-                preferences.pushEnabled ? 'bg-primary' : 'bg-slate-700'
+                preferences.pushEnabled ? 'bg-primary' : 'bg-slate-600'
               }`}
               role="switch"
               aria-checked={preferences.pushEnabled}
               aria-label="Toggle push notifications"
             >
               <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-primary-foreground transition-transform ${
                   preferences.pushEnabled ? 'translate-x-5' : 'translate-x-0.5'
                 }`}
               />
@@ -242,7 +242,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           <button
             onClick={savePreferences}
             disabled={saving}
-            className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2 font-medium text-white transition-colors hover:bg-primary/90 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2 font-medium text-primary-foreground transition-colors hover:brightness-110 disabled:opacity-50"
           >
             <Save size={18} />
             {saving ? 'Saving...' : 'Save Preferences'}

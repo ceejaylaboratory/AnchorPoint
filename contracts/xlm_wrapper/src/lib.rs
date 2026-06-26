@@ -81,7 +81,7 @@ impl XLMWrapper {
         
         // Receive native XLM from user
         let contract_addr = env.current_contract_address();
-        token::StellarAssetClient::new(&env, &contract_addr)
+        token::Client::new(&env, &contract_addr)
             .transfer(&from, &contract_addr, &amount);
         
         // Mint wXLM to user (1:1 ratio)
@@ -130,7 +130,7 @@ impl XLMWrapper {
         
         // Send native XLM back to user
         let contract_addr = env.current_contract_address();
-        token::StellarAssetClient::new(&env, &contract_addr)
+        token::Client::new(&env, &contract_addr)
             .transfer(&contract_addr, &from, &amount);
         
         env.events()
@@ -294,7 +294,7 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().set(&DataKey::AMMAuthorized(amm_address), &true);
+        env.storage().instance().set(&DataKey::AMMAuthorized(amm_address.clone()), &true);
         env.events()
             .publish((symbol_short!("amm_auth"), amm_address), true);
     }
@@ -305,9 +305,9 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().remove(&DataKey::AMMAuthorized(amm_address));
+        env.storage().instance().remove(&DataKey::AMMAuthorized(amm_address.clone()));
         env.events()
-            .publish((symbol_short!("amm_revoke"), amm_address), true);
+            .publish((symbol_short!("amm_revok"), amm_address), true);
     }
 
     /// Check if an address is authorized for AMM interactions
@@ -329,7 +329,7 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().set(&DataKey::LendingAuthorized(lending_address), &true);
+        env.storage().instance().set(&DataKey::LendingAuthorized(lending_address.clone()), &true);
         env.events()
             .publish((symbol_short!("lend_auth"), lending_address), true);
     }
@@ -340,9 +340,9 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().remove(&DataKey::LendingAuthorized(lending_address));
+        env.storage().instance().remove(&DataKey::LendingAuthorized(lending_address.clone()));
         env.events()
-            .publish((symbol_short!("lend_revoke"), lending_address), true);
+            .publish((symbol_short!("lend_revk"), lending_address), true);
     }
 
     /// Check if an address is authorized for Lending interactions

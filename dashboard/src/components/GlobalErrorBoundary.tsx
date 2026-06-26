@@ -38,14 +38,14 @@ export class GlobalErrorBoundary extends Component<Props, State> {
             </div>
             
             <div className="space-y-2">
-              <h1 className="text-2xl font-bold font-display text-white">System Error</h1>
+              <h1 className="text-2xl font-bold font-display text-slate-50">System Error</h1>
               <p className="text-slate-400 text-sm">
                 An unexpected error occurred while rendering the application interface. Our team has been notified.
               </p>
             </div>
             
             {this.state.error && (
-              <div className="w-full bg-slate-950/80 rounded-lg p-4 mt-2 text-left overflow-x-auto border border-slate-800">
+              <div className="w-full bg-slate-950/80 rounded-lg p-4 mt-2 text-left overflow-x-auto border border-slate-600">
                 <p className="text-xs font-mono text-red-300/80 break-words whitespace-pre-wrap">
                   {this.state.error.toString()}
                 </p>

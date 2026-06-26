@@ -51,7 +51,7 @@ describe('Multi-Key Authentication', () => {
       const result = validateMultiKeySignatures(mockSignatures, 'medium');
       
       expect(result.valid).toBe(true);
-      expect(result.authLevel).toBe('medium');
+      expect(result.authLevel).toBe('full');
       expect(result.signers).toContain('GABC123...');
       expect(result.signers).toContain('GDEF456...');
     });

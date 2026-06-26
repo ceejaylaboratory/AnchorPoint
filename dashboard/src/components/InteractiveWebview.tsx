@@ -19,8 +19,8 @@ interface InteractiveWebviewProps {
 
 const SIMULATED_STEPS = [
   { label: 'Establishing secure channel…', duration: 800 },
-  { label: 'Loading anchor KYC flow…',     duration: 900 },
-  { label: 'Rendering interactive form…',  duration: 700 },
+  { label: 'Loading anchor KYC flow…', duration: 900 },
+  { label: 'Rendering interactive form…', duration: 700 },
 ];
 
 export const InteractiveWebview = ({
@@ -34,7 +34,6 @@ export const InteractiveWebview = ({
   const [loadStep, setLoadStep] = useState(0);
   const [simulatedField, setSimulatedField] = useState('');
 
-  // Handle Interactive Window Resize Messages (SEP-24)
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       try {
@@ -74,18 +73,17 @@ export const InteractiveWebview = ({
 
   return (
     <div className="space-y-3">
-      {/* Security header */}
       <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5">
-        <Lock size={13} className="text-emerald-400 shrink-0" aria-hidden="true" />
+        <Lock size={13} className="shrink-0 text-emerald-400" aria-hidden="true" />
         <p className="text-xs text-emerald-300">
-          Secure SEP-24 session — content served by {anchorName}
+          Secure SEP-24 session - content served by {anchorName}
         </p>
         {interactiveUrl && (
           <a
             href={interactiveUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-auto text-xs text-emerald-400 hover:underline inline-flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 rounded"
+            className="ml-auto inline-flex items-center gap-1 rounded text-xs text-emerald-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
             aria-label={`Open ${anchorName} interactive flow in a new tab`}
           >
             Open in tab <ExternalLink size={11} aria-hidden="true" />
@@ -93,17 +91,14 @@ export const InteractiveWebview = ({
         )}
       </div>
 
-      {/* Webview panel */}
       <div
-        className="relative aspect-video rounded-xl border border-slate-700 bg-slate-950 overflow-hidden"
+        className="relative aspect-video overflow-hidden rounded-xl border border-slate-700 bg-slate-950"
         role="region"
         aria-label={`${title} interactive panel`}
         aria-live="polite"
         aria-busy={webviewState === 'loading'}
       >
         <AnimatePresence mode="wait">
-
-          {/* Idle state */}
           {webviewState === 'idle' && (
             <motion.div
               key="idle"
@@ -124,13 +119,13 @@ export const InteractiveWebview = ({
               <button
                 onClick={handleLaunch}
                 className="btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                aria-label={`Launch ${anchorName} KYC portal`}
               >
                 Launch KYC Portal
               </button>
             </motion.div>
           )}
 
-          {/* Loading state */}
           {webviewState === 'loading' && (
             <motion.div
               key="loading"
@@ -155,7 +150,6 @@ export const InteractiveWebview = ({
             </motion.div>
           )}
 
-          {/* Active / form state */}
           {webviewState === 'active' && (
             <motion.div
               key="active"
@@ -164,7 +158,6 @@ export const InteractiveWebview = ({
               exit={{ opacity: 0 }}
               className="absolute inset-0 flex flex-col"
             >
-              {/* Simulated browser chrome */}
               <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-900 px-4 py-2">
                 <div className="flex gap-1.5" aria-hidden="true">
                   <span className="h-2.5 w-2.5 rounded-full bg-rose-500/60" />
@@ -172,16 +165,15 @@ export const InteractiveWebview = ({
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/60" />
                 </div>
                 <div className="flex flex-1 items-center gap-2 rounded bg-slate-800 px-3 py-1">
-                  <Lock size={10} className="text-emerald-400 shrink-0" aria-hidden="true" />
-                  <span className="text-xs text-slate-400 truncate">
+                  <Lock size={10} className="shrink-0 text-emerald-400" aria-hidden="true" />
+                  <span className="truncate text-xs text-slate-400">
                     {interactiveUrl ?? `https://kyc.${anchorName.toLowerCase().replace(/\s+/g, '')}.example/sep24`}
                   </span>
                 </div>
               </div>
 
-              {/* Simulated KYC form content */}
               <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">
-                <p className="text-sm font-semibold text-slate-200">{anchorName} — Identity Verification</p>
+                <p className="text-sm font-semibold text-slate-200">{anchorName} - Identity Verification</p>
                 <div className="w-full max-w-xs space-y-3">
                   <div>
                     <label htmlFor="webview-fullname" className="mb-1 block text-xs text-slate-400">
@@ -197,9 +189,9 @@ export const InteractiveWebview = ({
                     />
                   </div>
                   <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                    <AlertTriangle size={12} className="text-amber-400 shrink-0" aria-hidden="true" />
+                    <AlertTriangle size={12} className="shrink-0 text-amber-400" aria-hidden="true" />
                     <p className="text-[11px] text-amber-300">
-                      Demo mode — no real data is collected.
+                      Demo mode - no real data is collected.
                     </p>
                   </div>
                 </div>
@@ -223,7 +215,6 @@ export const InteractiveWebview = ({
             </motion.div>
           )}
 
-          {/* Approved state */}
           {webviewState === 'approved' && (
             <motion.div
               key="approved"
@@ -235,11 +226,10 @@ export const InteractiveWebview = ({
                 <CheckCircle2 size={36} className="text-emerald-400" aria-hidden="true" />
               </div>
               <p className="font-medium text-emerald-300">Verification Approved</p>
-              <p className="text-sm text-slate-500">Continuing to next step…</p>
+              <p className="text-sm text-slate-500">Continuing to next step...</p>
             </motion.div>
           )}
 
-          {/* Rejected state */}
           {webviewState === 'rejected' && (
             <motion.div
               key="rejected"
@@ -253,13 +243,12 @@ export const InteractiveWebview = ({
               <p className="font-medium text-rose-300">Verification Cancelled</p>
               <button
                 onClick={() => setWebviewState('idle')}
-                className="text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded"
+                className="rounded text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
               >
                 Try again
               </button>
             </motion.div>
           )}
-
         </AnimatePresence>
       </div>
     </div>

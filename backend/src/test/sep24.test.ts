@@ -61,7 +61,7 @@ describe('POST /sep24/transactions/deposit/interactive', () => {
   it('returns 200 with interactive_customer_info_needed for a supported asset', async () => {
     const res = await request(app)
       .post(`${BASE}/deposit/interactive`)
-      .send({ asset_code: 'USDC', account: 'GACCOUNT123', amount: '50.00' });
+      .send({ asset_code: 'USDC', account: 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K', amount: '50.00' });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.type).toBe('interactive_customer_info_needed');
@@ -71,7 +71,7 @@ describe('POST /sep24/transactions/deposit/interactive', () => {
     expect(parsed.pathname).toBe('/kyc-deposit');
     expect(parsed.searchParams.get('transaction_id')).toBe(res.body.id);
     expect(parsed.searchParams.get('asset_code')).toBe('USDC');
-    expect(parsed.searchParams.get('account')).toBe('GACCOUNT123');
+    expect(parsed.searchParams.get('account')).toBe('GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K');
     expect(parsed.searchParams.get('amount')).toBe('50.00');
   });
 
@@ -173,7 +173,7 @@ describe('POST /sep24/transactions/withdraw/interactive', () => {
   it('returns 200 with interactive_customer_info_needed for a supported asset', async () => {
     const res = await request(app)
       .post(`${BASE}/withdraw/interactive`)
-      .send({ asset_code: 'USD', account: 'GWALLET', amount: '200' });
+      .send({ asset_code: 'USD', account: 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K', amount: '200' });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.type).toBe('interactive_customer_info_needed');
@@ -182,7 +182,7 @@ describe('POST /sep24/transactions/withdraw/interactive', () => {
     const parsed = new URL(res.body.url);
     expect(parsed.pathname).toBe('/kyc-withdraw');
     expect(parsed.searchParams.get('asset_code')).toBe('USD');
-    expect(parsed.searchParams.get('account')).toBe('GWALLET');
+    expect(parsed.searchParams.get('account')).toBe('GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K');
     expect(parsed.searchParams.get('amount')).toBe('200');
   });
 
@@ -268,13 +268,13 @@ describe('POST /sep24/transactions/withdraw/interactive', () => {
       .post(`${BASE}/withdraw/interactive`)
       .send({
         asset_code: 'USDC',
-        account: 'GTEST',
+        account: 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K',
         amount: '75.50',
         lang: 'de',
       });
 
     const parsed = new URL(res.body.url);
-    expect(parsed.searchParams.get('account')).toBe('GTEST');
+    expect(parsed.searchParams.get('account')).toBe('GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K');
     expect(parsed.searchParams.get('amount')).toBe('75.50');
     expect(parsed.searchParams.get('lang')).toBe('de');
   });

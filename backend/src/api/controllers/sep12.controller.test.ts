@@ -64,6 +64,12 @@ jest.mock('../../utils/logger', () => ({
   },
 }));
 
+jest.mock('@stellar/stellar-sdk', () => ({
+  StrKey: {
+    isValidEd25519PublicKey: jest.fn((account: string) => account === VALID_ACCOUNT),
+  },
+}));
+
 import { sep12Controller } from './sep12.controller';
 
 const makeRes = (): Response => {

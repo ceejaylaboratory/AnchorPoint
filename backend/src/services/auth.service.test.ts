@@ -6,7 +6,7 @@ jest.mock('jsonwebtoken', () => ({
   verify: jest.fn()
 }));
 
-jest.mock('crypto', () => ({
+jest.mock('node:crypto', () => ({
   randomBytes: jest.fn()
 }));
 
@@ -15,7 +15,7 @@ const loadAuthService = () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const jwtMock = require('jsonwebtoken') as typeof jwt;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const cryptoMock = require('crypto');
+  const cryptoMock = require('node:crypto');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require('./auth.service') as typeof import('./auth.service');
   return { ...mod, jwtMock, cryptoMock };

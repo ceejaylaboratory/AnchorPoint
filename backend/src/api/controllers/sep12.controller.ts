@@ -61,9 +61,8 @@ export class Sep12Controller {
       }
 
       if (req.user && req.user.publicKey !== account) {
-        logger.debug('Authenticated account differs from request account (delegated KYC submission)', {
-          authKey: req.user.publicKey,
-          requestKey: account,
+        return res.status(403).json({
+          error: 'Authenticated account does not match request account',
         });
       }
 

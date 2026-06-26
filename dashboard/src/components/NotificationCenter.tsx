@@ -132,7 +132,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               <p className="text-sm text-slate-400">Total</p>
               <p className="text-2xl font-bold text-slate-100">{stats.total}</p>
             </div>
-            <Bell size={24} className="text-slate-500" />
+            <Bell size={24} className="text-slate-400" />
           </div>
         </div>
 
@@ -180,7 +180,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                   onClick={() => setFilter(f)}
                   className={`rounded-lg px-3 py-1 text-sm font-medium transition-colors ${
                     filter === f
-                      ? 'bg-primary text-white'
+                      ? 'bg-primary text-primary-foreground'
                       : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                   }`}
                 >
@@ -217,7 +217,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
       <div className="glass-card">
         {loading ? (
           <div className="flex items-center justify-center p-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-500 border-t-primary-text" />
           </div>
         ) : error ? (
           <div className="p-8 text-center">
@@ -232,16 +232,16 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           </div>
         ) : filteredNotifications.length === 0 ? (
           <div className="p-12 text-center">
-            <Bell size={48} className="mx-auto mb-4 text-slate-600" />
+            <Bell size={48} className="mx-auto mb-4 text-slate-400" />
             <p className="text-lg font-medium text-slate-400">
               {filter === 'all' ? 'No notifications yet' : `No ${filter.toLowerCase()} notifications`}
             </p>
-            <p className="mt-2 text-sm text-slate-500">
+            <p className="mt-2 text-sm text-slate-400">
               Webhook events and transaction updates will appear here
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-800">
+          <div className="divide-y divide-slate-600">
             {filteredNotifications.map((notification, index) => (
               <motion.div
                 key={notification.id}
@@ -257,7 +257,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                       <p className="text-sm text-slate-200">{notification.message}</p>
                       {getStatusBadge(notification.status)}
                     </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
                       <span className="flex items-center gap-1">
                         <span className="font-medium">Type:</span>
                         <span className="capitalize">{notification.type.toLowerCase()}</span>

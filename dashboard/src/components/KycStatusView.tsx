@@ -12,16 +12,16 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
   return (
     <div className="space-y-6">
       {/* Dev Toggle for previewing states */}
-      <div className="flex items-center gap-3 p-4 glass-card border-dashed border-slate-700/50 overflow-x-auto">
-        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center shrink-0">Preview State:</span>
+      <div className="flex items-center gap-3 p-4 glass-card border-dashed border-slate-500 overflow-x-auto">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center shrink-0">Preview State:</span>
         {(['not_started', 'pending', 'approved', 'rejected'] as KycState[]).map((s) => (
           <button
             key={s}
             onClick={() => setKycState(s)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 shrink-0 ${
+            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text shrink-0 ${
               kycState === s
-                ? 'bg-primary/20 border-primary/50 text-primary shadow-sm shadow-primary/10'
-                : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-600 hover:text-slate-300'
+                ? 'bg-primary/20 border-primary/40 text-primary-text shadow-sm shadow-primary/10'
+                : 'bg-slate-900/50 border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'
             }`}
           >
             {s.replace('_', ' ').toUpperCase()}
@@ -41,15 +41,15 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
 
         {kycState === 'not_started' && (
           <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
-            <ShieldCheck size={64} className="mb-6 text-primary" aria-hidden="true" />
+            <ShieldCheck size={64} className="mb-6 text-primary-text" aria-hidden="true" />
             <h3 className="text-2xl font-display font-bold text-slate-100">Identity Verification</h3>
             <p className="mt-3 text-slate-400 max-w-lg leading-relaxed">
               Current KYC requirements are being sourced from the active backend configuration. Complete your verification to unlock all features.
             </p>
-            <div className="mt-10 w-full max-w-xl text-left bg-slate-900/50 p-6 rounded-2xl border border-slate-800/50">
+            <div className="mt-10 w-full max-w-xl text-left bg-slate-900/50 p-6 rounded-2xl border border-slate-600">
               <RequirementList title="Required Information" fields={uiConfig.fieldRequirements.kyc} />
             </div>
-            <button className="mt-8 btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+            <button className="mt-8 btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text">
               Start Verification
             </button>
           </div>
@@ -80,8 +80,8 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
               Your identity has been successfully verified. You now have full access to deposit and withdrawal features.
             </p>
             <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md">
-              <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/80 shadow-sm">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Account Status</p>
+              <div className="p-5 rounded-xl border border-slate-600 bg-slate-900/80 shadow-sm">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Account Status</p>
                 <div className="flex items-center justify-center gap-2 text-emerald-400 font-medium">
                   <span className="relative flex h-2.5 w-2.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -90,8 +90,8 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
                   Level 2 Verified
                 </div>
               </div>
-              <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/80 shadow-sm">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Daily Limits</p>
+              <div className="p-5 rounded-xl border border-slate-600 bg-slate-900/80 shadow-sm">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Daily Limits</p>
                 <p className="text-slate-200 font-medium">$50,000.00</p>
               </div>
             </div>
@@ -130,7 +130,7 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
               </button>
               <a 
                 href={`mailto:${uiConfig.supportEmail || 'support@example.com'}`}
-                className="flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-700 px-8 py-3 text-sm font-medium text-slate-300 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/50"
+                className="flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-lg border border-slate-500 bg-slate-800/80 hover:bg-slate-700 px-8 py-3 text-sm font-medium text-slate-300 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/50"
               >
                 <Mail size={16} aria-hidden="true" />
                 Contact Support

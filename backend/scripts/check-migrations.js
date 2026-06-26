@@ -60,7 +60,7 @@ function checkDestructiveChanges() {
     
     try {
         // This command will exit with 1 if there are destructive changes
-        execSync(`${PRISMA_BINARY} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code`, { stdio: 'inherit' });
+        execSync(`${PRISMA_BINARY} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "${SHADOW_DB_URL}" --exit-code`, { stdio: 'inherit' });
         console.log('✅ No destructive changes detected.');
     } catch (error) {
         if (error.status === 1) {
@@ -74,22 +74,33 @@ function checkDestructiveChanges() {
 
 function simulateMigration() {
     console.log('--- Simulating migrations on shadow database ---');
-    // 1. Reset shadow DB
-    // 2. Apply all migrations
-    // 3. Check if schema matches schema.prisma
-    
-    const env = { DATABASE_URL: SHADOW_DB_URL };
-    
-    console.log('Cleaning shadow database...');
+    // Apply all migrations to the SHADOW database by overriding DATABASE_URL.
+    // We must NOT pass SHADOW_DATABASE_URL here – when Prisma sees both vars it
+    // cross-checks them and errors if they resolve to the same logical DB.
+    const env = {
+        ...process.env,
+        DATABASE_URL: SHADOW_DB_URL,
+    };
+    delete env.SHADOW_DATABASE_URL;
+
+    console.log('Resetting shadow database before simulation...');
     if (SHADOW_DB_URL.startsWith('file:')) {
         const dbPath = path.join(__dirname, '../prisma', SHADOW_DB_URL.replace('file:', ''));
         if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    } else {
+        // For PostgreSQL: reset using migrate reset --force so any existing
+        // schema is dropped before re-applying all migrations from scratch.
+        try {
+            execSync(`${PRISMA_BINARY} migrate reset --force`, { stdio: 'inherit', env });
+        } catch (_) {
+            // reset can fail if DB is truly empty — that's fine, continue.
+        }
     }
 
     console.log('Applying migrations to shadow database...');
     // Use migrate deploy instead of migrate dev to apply existing migrations without creating new ones
     run(`${PRISMA_BINARY} migrate deploy`, { env });
-    
+
     console.log('✅ Migration simulation successful.');
 }
 

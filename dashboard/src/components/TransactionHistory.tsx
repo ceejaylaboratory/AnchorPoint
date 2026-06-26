@@ -47,8 +47,8 @@ const fmtAmount = (n: number) =>
 const SortIcon = ({ col, sortKey, dir }: { col: SortKey; sortKey: SortKey; dir: SortDir }) => {
   if (col !== sortKey) return <ChevronsUpDown size={13} className="text-slate-600" aria-hidden="true" />;
   return dir === 'asc'
-    ? <ChevronUp size={13} className="text-primary" aria-hidden="true" />
-    : <ChevronDown size={13} className="text-primary" aria-hidden="true" />;
+    ? <ChevronUp size={13} className="text-primary-text" aria-hidden="true" />
+    : <ChevronDown size={13} className="text-primary-text" aria-hidden="true" />;
 };
 
 export const TransactionHistory = () => {
@@ -117,7 +117,7 @@ export const TransactionHistory = () => {
       {/* Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative flex-1 max-w-sm">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" aria-hidden="true" />
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
           <input
             type="search"
             placeholder="Search by ID, type, asset, reference…"
@@ -181,12 +181,12 @@ export const TransactionHistory = () => {
             Transaction history — {sorted.length} result{sorted.length !== 1 ? 's' : ''}
           </caption>
           <thead>
-            <tr className="border-b border-slate-800 text-sm text-slate-400">
+            <tr className="border-b border-slate-600 text-sm text-slate-400">
               {HEADERS.map(({ key, label }) => (
                 <th key={key} scope="col" className="p-4 font-medium">
                   <button
                     onClick={() => handleSort(key)}
-                    className="inline-flex items-center gap-1 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded"
+                    className="inline-flex items-center gap-1 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text rounded"
                     aria-label={`Sort by ${label}${sortKey === key ? `, currently ${sortDir}ending` : ''}`}
                   >
                     {label}
@@ -197,10 +197,10 @@ export const TransactionHistory = () => {
               <th scope="col" className="p-4 font-medium text-slate-400">Reference</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-slate-600">
             {paginated.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-500">
+                <td colSpan={6} className="p-8 text-center text-slate-400">
                   No transactions match your filters.
                 </td>
               </tr>
@@ -226,7 +226,7 @@ export const TransactionHistory = () => {
                   <td className="p-4 text-sm text-slate-400">
                     <time dateTime={tx.date}>{tx.date}</time>
                   </td>
-                  <td className="p-4 font-mono text-xs text-slate-500">{tx.reference}</td>
+                  <td className="p-4 font-mono text-xs text-slate-400">{tx.reference}</td>
                 </tr>
               ))
             )}
@@ -246,7 +246,7 @@ export const TransactionHistory = () => {
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage === 1}
             aria-label="Previous page"
-            className="rounded p-1.5 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="rounded p-1.5 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
           >
             <ChevronLeft size={16} aria-hidden="true" />
           </button>
@@ -268,7 +268,7 @@ export const TransactionHistory = () => {
             return pages.map((p, idx) => {
               if (p === '...') {
                 return (
-                  <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs text-slate-500">
+                  <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs text-slate-400">
                     ...
                   </span>
                 );
@@ -279,7 +279,7 @@ export const TransactionHistory = () => {
                   onClick={() => setPage(p as number)}
                   aria-label={`Page ${p}`}
                   aria-current={p === safePage ? 'page' : undefined}
-                  className={`min-w-[2rem] rounded px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                  className={`min-w-[2rem] rounded px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
                     p === safePage
                       ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200'
@@ -294,7 +294,7 @@ export const TransactionHistory = () => {
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={safePage === totalPages}
             aria-label="Next page"
-            className="rounded p-1.5 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="rounded p-1.5 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
           >
             <ChevronRight size={16} aria-hidden="true" />
           </button>

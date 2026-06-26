@@ -50,10 +50,62 @@ const defaultUiConfig: UiConfig = {
 };
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:3002';
+const darkSurface = '#020617';
+const lightText = '#ffffff';
+const fallbackPrimaryText = '#93c5fd';
+const fallbackAccentText = '#5eead4';
+
+const hexToRgb = (hexColor: string): [number, number, number] | null => {
+  const normalized = hexColor.replace('#', '').trim();
+  const hex = normalized.length === 3
+    ? normalized.split('').map((char) => `${char}${char}`).join('')
+    : normalized;
+
+  if (!/^[0-9a-f]{6}$/i.test(hex)) {
+    return null;
+  }
+
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+};
+
+const relativeLuminance = (hexColor: string): number => {
+  const rgb = hexToRgb(hexColor);
+  if (!rgb) {
+    return 0;
+  }
+
+  const [red, green, blue] = rgb.map((channel) => {
+    const scaled = channel / 255;
+    return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+  });
+
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+};
+
+const contrastRatio = (foreground: string, background: string): number => {
+  const foregroundLuminance = relativeLuminance(foreground);
+  const backgroundLuminance = relativeLuminance(background);
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+  const darker = Math.min(foregroundLuminance, backgroundLuminance);
+
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+const getAccessibleTextColor = (brandColor: string, fallbackColor: string) => (
+  contrastRatio(brandColor, darkSurface) >= 4.5 ? brandColor : fallbackColor
+);
+
+const getAccessibleForeground = (backgroundColor: string) => (
+  contrastRatio(lightText, backgroundColor) >= 4.5 ? lightText : darkSurface
+);
 
 const TabFallback = () => (
   <div className="flex h-48 items-center justify-center" role="status" aria-label="Loading content">
-    <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-primary" />
+    <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-500 border-t-primary-text" />
   </div>
 );
 
@@ -126,7 +178,10 @@ const App = () => {
       style={
         {
           ['--primary' as string]: uiConfig.primaryColor,
+          ['--primary-foreground' as string]: getAccessibleForeground(uiConfig.primaryColor),
+          ['--primary-text' as string]: getAccessibleTextColor(uiConfig.primaryColor, fallbackPrimaryText),
           ['--accent' as string]: uiConfig.accentColor,
+          ['--accent-text' as string]: getAccessibleTextColor(uiConfig.accentColor, fallbackAccentText),
         } as React.CSSProperties
       }
     >
@@ -134,7 +189,7 @@ const App = () => {
         data-testid="sidebar"
         id="main-sidebar"
         aria-label="Main navigation"
-        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-800 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0`}
+        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-600 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0`}
       >
         <div className="p-6">
           <div className="mb-10 flex items-center gap-3">
@@ -143,7 +198,7 @@ const App = () => {
               <h1 className="truncate font-display text-xl font-bold tracking-tight">
                 {uiConfig.brandName}
               </h1>
-              <p className="truncate text-xs uppercase tracking-[0.2em] text-slate-500">
+              <p className="truncate text-xs uppercase tracking-[0.2em] text-slate-400">
                 Anchor dashboard
               </p>
             </div>
@@ -156,9 +211,9 @@ const App = () => {
                   <button
                     onClick={() => setActiveTab(item.id)}
                     aria-current={activeTab === item.id ? 'page' : undefined}
-                    className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
                       activeTab === item.id
-                        ? 'border border-primary/20 bg-primary/10 text-primary'
+                        ? 'border border-primary/40 bg-primary/10 text-primary-text'
                         : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
                     }`}
                   >
@@ -171,12 +226,12 @@ const App = () => {
           </nav>
         </div>
 
-        <div className="absolute bottom-0 w-full border-t border-slate-800 p-6">
+        <div className="absolute bottom-0 w-full border-t border-slate-600 p-6">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-full bg-slate-800" aria-hidden="true" />
             <div className="flex-1 overflow-hidden">
               <p className="truncate text-sm font-medium">Institutional Admin</p>
-              <p className="truncate text-xs text-slate-500">
+              <p className="truncate text-xs text-slate-400">
                 {loadingState === 'ready'
                   ? 'Backend config synced'
                   : loadingState === 'error'
@@ -189,12 +244,12 @@ const App = () => {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-800 bg-background/50 px-4 sm:px-6 lg:px-8 backdrop-blur-md">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-600 bg-background/50 px-4 sm:px-6 lg:px-8 backdrop-blur-md">
           <button
             aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={sidebarOpen}
             aria-controls="main-sidebar"
-            className="lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded"
+            className="lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text rounded"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             {sidebarOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
@@ -203,7 +258,7 @@ const App = () => {
           <div className="flex items-center gap-4">
             <div
               data-testid="backend-status"
-              className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex"
+              className="hidden items-center gap-2 rounded-full border border-slate-500 bg-slate-900 px-3 py-1.5 md:flex"
               role="status"
               aria-live="polite"
               aria-label={
@@ -226,7 +281,7 @@ const App = () => {
               apiBaseUrl={apiBaseUrl}
               onViewAll={() => setActiveTab('notifications')}
             />
-            <button className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+            <button className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-900 px-4 py-2 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text">
               <Wallet size={18} aria-hidden="true" />
               <span className="text-sm font-medium">Connect Wallet</span>
             </button>

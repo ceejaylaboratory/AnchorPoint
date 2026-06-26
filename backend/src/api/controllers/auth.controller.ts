@@ -189,7 +189,7 @@ export const getToken = async (
     try {
       // Check if this is a hardware wallet transaction (Trezor/Ledger)
       // Hardware wallets typically use different signing patterns
-      const isHardwareWallet = await validateHardwareWalletSignature(transaction, networkType);
+      const isHardwareWallet = await validateHardwareWalletSignature(transaction);
       if (isHardwareWallet) {
         logger.info('Hardware wallet signature detected', { account, hardwareWallet: true });
       }
@@ -251,7 +251,6 @@ export const getToken = async (
 export const refreshToken = async (
   req: Request,
   res: Response,
-  redisService: RedisService
 ): Promise<Response> => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -288,12 +287,10 @@ export const refreshToken = async (
 /**
  * Validate hardware wallet signature
  * @param transaction Signed transaction XDR
- * @param networkType Stellar network type
  * @returns Promise<boolean> Whether this is a hardware wallet signature
  */
 async function validateHardwareWalletSignature(
   transaction: string,
-  networkType: NetworkType
 ): Promise<boolean> {
   try {
     // Hardware wallets typically use different signing patterns

@@ -150,6 +150,7 @@ describe('CircuitBreaker', () => {
         failureThreshold: 1,
         resetTimeoutMs: 100,
         halfOpenMaxCalls: 2,
+        successThreshold: 3,
       });
 
       // Open the circuit
@@ -158,8 +159,10 @@ describe('CircuitBreaker', () => {
       // Wait for timeout
       await new Promise((resolve) => setTimeout(resolve, 150));
 
-      // Make max allowed calls
+      // First call moves the breaker into half-open and counts as allowed
       await breaker.execute(() => Promise.resolve('1'));
+
+      // Second call is still allowed because halfOpenMaxCalls is 2
       await breaker.execute(() => Promise.resolve('2'));
 
       // Next call should be rejected

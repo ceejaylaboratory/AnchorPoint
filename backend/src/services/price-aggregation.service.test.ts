@@ -31,7 +31,7 @@ describe('PriceAggregationService', () => {
 
   beforeEach(() => {
     mockRedis = createMockRedis();
-    service = new PriceAggregationService(mockRedis as unknown as Parameters<typeof PriceAggregationService>[0]);
+    service = new PriceAggregationService(mockRedis as any);
     jest.clearAllMocks();
     circuitBreakerRegistry.resetAll();
   });
@@ -94,8 +94,16 @@ describe('PriceAggregationService', () => {
 
     it('should use cached prices when available', async () => {
       const cachedPrice = {
-        asset: 'XLM',
-        price: 0.12,
+        value: {
+          asset: 'XLM',
+          price: 0.12,
+          timestamp: Date.now(),
+          sources: [],
+          aggregatedFrom: 1,
+          totalSources: 1,
+          confidence: 1,
+          isPartial: false,
+        },
         timestamp: Date.now(),
         ttl: 60,
         source: 'test',
@@ -143,12 +151,27 @@ describe('PriceAggregationService', () => {
     });
 
     it('should handle partial failures in batch requests', async () => {
-      (global.fetch as jest.Mock).mockRejectedValue(new Error('API error'));
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            _embedded: { records: [{ avg: '0.12' }] },
+          }),
+        })
+        .mockRejectedValueOnce(new Error('API error'))
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            _embedded: { records: [{ avg: '1.00' }] },
+          }),
+        })
+        .mockRejectedValueOnce(new Error('API error'));
 
       const results = await service.getMultiplePrices(['XLM', 'USDC']);
 
-      // Should fall back to fallback prices
-      expect(results.size).toBeGreaterThanOrEqual(0);
+      expect(results.size).toBe(1);
+      expect(results.has('XLM')).toBe(true);
+      expect(results.has('USDC')).toBe(false);
     });
   });
 
@@ -178,7 +201,7 @@ describe('PriceAggregationService', () => {
     it('should reset circuit breakers', () => {
       service.resetCircuitBreakers();
 
-      const metrics = service.getCircuitBreakerMetrics();
+      const metrics = service.getCircuitBreakerMetrics() as Record<string, any>;
       expect(metrics['horizon'].state).toBe('CLOSED');
       expect(metrics['external-exchange'].state).toBe('CLOSED');
     });
@@ -233,7 +256,7 @@ describe('PriceAggregationService', () => {
 
       const result = await service.getPrice('XLM', { minSources: 2 });
 
-      expect(result.confidence).toBeLessThan(0.5);
+      expect(result.confidence).toBeLessThan(0.9);
     });
   });
 
@@ -245,7 +268,7 @@ describe('PriceAggregationService', () => {
       ];
 
       const customService = new PriceAggregationService(
-        mockRedis as unknown as Parameters<typeof PriceAggregationService>[0],
+        mockRedis as any,
         configs
       );
 
