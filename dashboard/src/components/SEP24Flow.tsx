@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RequirementList } from './RequirementList';
 import { WithdrawalForm } from './WithdrawalForm';
 import { InteractiveWebview } from './InteractiveWebview';
+import { AssetDropdown } from './AssetDropdown';
+import type { AssetOption } from './AssetDropdown';
 import type { UiConfig } from '../types';
 
 const STEP_LABELS = [
@@ -13,16 +15,33 @@ const STEP_LABELS = [
   'Transaction Complete',
 ] as const;
 
-// Deposit keeps a 3-step flow; withdrawal adds a form step (step 2).
 const DEPOSIT_STEPS = [1, 3, 4] as const;
 const WITHDRAW_STEPS = [1, 2, 3, 4] as const;
 
+const ASSET_OPTIONS: AssetOption[] = [
+  {
+    code: 'USDC',
+    name: 'USD Coin',
+    subtitle: 'Dollar-backed liquidity for institutional settlement',
+  },
+  {
+    code: 'EURT',
+    name: 'Euro Token',
+    subtitle: 'Euro-denominated transfer rail for SEP-24 flows',
+  },
+  {
+    code: 'ARST',
+    name: 'ARS Token',
+    subtitle: 'Argentine peso corridor asset for local payouts',
+  },
+];
+
 export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig: UiConfig }) => {
   const [step, setStep] = useState(1);
+  const [selectedAsset, setSelectedAsset] = useState(ASSET_OPTIONS[0].code);
   const transactionFields = uiConfig.fieldRequirements[type];
   const flowLabel = type === 'deposit' ? 'Deposit' : 'Withdrawal';
 
-  // For display, map logical step to the label index
   const isWithdraw = type === 'withdraw';
   const visibleSteps = isWithdraw ? WITHDRAW_STEPS : DEPOSIT_STEPS;
   const totalSteps = visibleSteps.length;
@@ -33,31 +52,25 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
 
   return (
     <div className="mx-auto max-w-4xl glass-card p-6 sm:p-8">
-      {/* Live region announces step changes to screen readers */}
       <div aria-live="polite" aria-atomic="true" className="sr-only">
         {`Step ${displayStep} of ${totalSteps}: ${STEP_LABELS[step - 1]}`}
       </div>
 
-      {/* Step indicator */}
-      <nav
-        className="mb-12 relative px-4"
-        aria-label={`${flowLabel} progress`}
-      >
-        {/* Progress track background */}
-        <div className="absolute top-5 left-10 right-10 h-0.5 bg-slate-600 -translate-y-1/2 z-0" aria-hidden="true">
+      <nav className="relative mb-12 px-4" aria-label={`${flowLabel} progress`}>
+        <div className="absolute left-10 right-10 top-5 z-0 h-0.5 -translate-y-1/2 bg-slate-800" aria-hidden="true">
           <div
             className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500"
             style={{ width: totalSteps > 1 ? `${((displayStep - 1) / (totalSteps - 1)) * 100}%` : '0%' }}
           />
         </div>
 
-        <ol className="relative z-10 flex justify-between list-none p-0 m-0 w-full">
+        <ol className="relative z-10 m-0 flex w-full list-none justify-between p-0">
           {visibleSteps.map((s, idx) => {
             const isCompleted = step > s;
             const isActive = step === s;
             const isFuture = step < s;
             return (
-              <li key={s} className="flex flex-col items-center flex-1">
+              <li key={s} className="flex flex-1 flex-col items-center">
                 <button
                   type="button"
                   onClick={() => {
@@ -66,12 +79,12 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                     }
                   }}
                   disabled={isFuture}
-                  className={`flex h-10 w-10 items-center justify-center rounded-full font-bold transition-all duration-300 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
+                  className={`relative flex h-10 w-10 items-center justify-center rounded-full font-bold transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                     isCompleted
-                      ? 'bg-gradient-to-r from-primary to-accent text-primary-foreground shadow-lg shadow-primary/30 scale-105 hover:scale-110 cursor-pointer'
-                    : isActive
-                      ? 'bg-slate-900 border-2 border-primary text-primary-text shadow-lg shadow-primary/20 scale-110 ring-4 ring-primary/20 cursor-default'
-                      : 'bg-slate-950 border border-slate-600 text-slate-400 cursor-not-allowed'
+                      ? 'cursor-pointer scale-105 bg-gradient-to-r from-primary to-accent text-primary-foreground shadow-lg shadow-primary/30 hover:scale-110'
+                      : isActive
+                        ? 'cursor-default scale-110 border-2 border-primary bg-slate-900 text-primary shadow-lg shadow-primary/20 ring-4 ring-primary/20'
+                        : 'cursor-not-allowed border border-slate-800 bg-slate-950 text-slate-600'
                   }`}
                   aria-label={`Step ${idx + 1} of ${totalSteps}: ${STEP_LABELS[s - 1]}${
                     isActive ? ' (current)' : isCompleted ? ' (completed)' : ''
@@ -85,8 +98,8 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                   )}
                 </button>
                 <span
-                  className={`mt-3 text-xs font-semibold tracking-wide transition-colors duration-300 text-center ${
-                    isActive ? 'text-primary-text' : isCompleted ? 'text-slate-300' : 'text-slate-400'
+                  className={`mt-3 text-center text-xs font-semibold tracking-wide transition-colors duration-300 ${
+                    isActive ? 'text-primary' : isCompleted ? 'text-slate-300' : 'text-slate-500'
                   }`}
                 >
                   {STEP_LABELS[s - 1]}
@@ -98,8 +111,6 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
       </nav>
 
       <AnimatePresence mode="wait">
-
-        {/* Step 1 — Asset selection (both deposit and withdrawal) */}
         {step === 1 && (
           <motion.div
             key="step-select-asset"
@@ -113,40 +124,48 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
               <p className="text-slate-400">
                 The anchor is supplying the field requirements for this flow from the backend configuration.
               </p>
-              <ul
-                className="grid grid-cols-1 gap-3 p-0 m-0 list-none"
-                aria-label={`Available assets for ${flowLabel.toLowerCase()}`}
-              >
+              <ul className="grid list-none grid-cols-1 gap-3 p-0 m-0" aria-label={`Available assets for ${flowLabel.toLowerCase()}`}>
                 {(['USDC', 'EURT', 'ARST'] as const).map((asset) => (
                   <li key={asset}>
                     <button
                       onClick={() => goToStep(isWithdraw ? 2 : 3)}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-500 bg-slate-900 p-4 transition-all hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+                      aria-label={`Select ${asset} for ${flowLabel.toLowerCase()}`}
+                      className="flex w-full items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 transition-all hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                     >
                       <div className="flex items-center gap-3">
                         <div
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary-text"
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary"
                           aria-hidden="true"
                         >
                           {asset[0]}
                         </div>
                         <span>{asset}</span>
                       </div>
-                      <ArrowUpRight size={18} className="text-slate-400" aria-hidden="true" />
+                      <ArrowUpRight size={18} className="text-slate-500" aria-hidden="true" />
                     </button>
                   </li>
                 ))}
               </ul>
+              <AssetDropdown
+                label={`${flowLabel} asset`}
+                options={ASSET_OPTIONS}
+                value={selectedAsset}
+                onChange={setSelectedAsset}
+              />
+              <button
+                type="button"
+                onClick={() => goToStep(isWithdraw ? 2 : 3)}
+                className="btn-primary inline-flex w-full items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:w-auto"
+              >
+                Continue with {selectedAsset}
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </button>
             </div>
 
-            <RequirementList
-              title={`${flowLabel} Requirements`}
-              fields={transactionFields}
-            />
+            <RequirementList title={`${flowLabel} Requirements`} fields={transactionFields} />
           </motion.div>
         )}
 
-        {/* Step 2 — Withdrawal details form (withdrawal only) */}
         {step === 2 && isWithdraw && (
           <motion.div
             key="step-withdrawal-form"
@@ -160,25 +179,18 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
               <p className="text-slate-400">
                 All fields are validated before proceeding. Required fields are marked accordingly.
               </p>
-              <WithdrawalForm
-                fields={transactionFields}
-                onSubmit={() => goToStep(3)}
-              />
+              <WithdrawalForm fields={transactionFields} onSubmit={() => goToStep(3)} />
               <button
                 onClick={() => goToStep(1)}
-                className="text-sm text-slate-400 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text rounded"
+                className="rounded text-sm text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:text-slate-300"
               >
                 ← Back to asset selection
               </button>
             </div>
-            <RequirementList
-              title="Withdrawal Requirements"
-              fields={transactionFields}
-            />
+            <RequirementList title="Withdrawal Requirements" fields={transactionFields} />
           </motion.div>
         )}
 
-        {/* Step 3 — Identity Verification (KYC interactive webview) */}
         {step === 3 && (
           <motion.div
             key="step-kyc"
@@ -203,7 +215,6 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
           </motion.div>
         )}
 
-        {/* Step 4 — Transaction complete */}
         {step === 4 && (
           <motion.div
             key="step-complete"
@@ -231,7 +242,6 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
             </button>
           </motion.div>
         )}
-
       </AnimatePresence>
     </div>
   );
