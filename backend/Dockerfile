@@ -13,7 +13,8 @@ FROM base AS deps
 ENV NODE_ENV=development
 
 # Copy only dependency manifests first to maximize Docker cache reuse
-COPY package*.json ./
+COPY package.json ./
+COPY package-lock.json ./
 RUN npm ci
 
 # -----------------------------------------------------------------------------

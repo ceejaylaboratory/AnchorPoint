@@ -7,7 +7,16 @@ if (!process.env.DATABASE_URL) {
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
 
-const prisma = new PrismaClient();
+declare global {
+  // eslint-disable-next-line no-var
+  var __prisma: PrismaClient | undefined;
+}
+
+const prisma = global.__prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== 'production') {
+  global.__prisma = prisma;
+}
 
 type PrismaMiddlewareParams = {
   model?: string;

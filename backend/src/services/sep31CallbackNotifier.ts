@@ -1,5 +1,6 @@
 import logger from "../utils/logger";
 import type { Sep31Transaction, CallbackNotifier } from "./sep31.service";
+import { alertEmailService } from "./alert-email.service";
 
 // ─── HTTP client abstraction (injectable for testing) ─────────────────────────
 
@@ -33,6 +34,20 @@ export const createCallbackNotifier = (
   httpClient: HttpClient = defaultHttpClient,
 ): CallbackNotifier => ({
   async notify(transaction: Sep31Transaction): Promise<void> {
+    // Trigger automated payment update notification dispatches (SEP-31)
+    try {
+      await alertEmailService.sendSystemAlert('admin@example.com', {
+        metric: 'sep31_status_change',
+        value: 1,
+        threshold: 0,
+        description: `Transaction ${transaction.id} status changed to ${transaction.status}`,
+        timestamp: new Date().toISOString()
+      });
+      logger.info(`Transactional email dispatched for SEP-31 status change: ${transaction.id}`);
+    } catch (err) {
+      logger.warn('Failed to dispatch transactional email', { error: err });
+    }
+
     if (!transaction.callbackUrl) return;
 
     const controller = new AbortController();

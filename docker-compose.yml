@@ -56,7 +56,7 @@ services:
       - NODE_ENV=production
       - PORT=3002
       - DATABASE_URL=postgresql://${POSTGRES_USER:-anchorpoint}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local environment or .env file}@postgres:5432/${POSTGRES_DB:-anchorpoint}
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in your local environment or .env file}@redis:6379
       - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
       - PROMETHEUS_METRICS_PORT=9464
       - OTEL_SERVICE_NAME=anchorpoint-backend
@@ -81,10 +81,13 @@ services:
     container_name: anchorpoint-redis
     ports:
       - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your local environment or .env file}
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in your local environment or .env file}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3

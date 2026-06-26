@@ -19,6 +19,7 @@ export interface PriceQuote {
   confidence?: number;
   sources_used?: number;
   is_partial?: boolean;
+  routing_path?: string[];
 }
 
 export interface QuoteResponse extends PriceQuote {
@@ -246,6 +247,14 @@ export class Sep38Controller {
       const avgConfidence = (sourcePriceData.confidence + destPriceData.confidence) / 2;
       const isPartial = sourcePriceData.isPartial || destPriceData.isPartial;
 
+      // Multi-path payment routing check
+      let routingPath: string[] | undefined;
+      if (sourceAsset !== 'USDC' && destAsset !== 'USDC') {
+        routingPath = [sourceAsset, 'USDC', destAsset];
+      } else {
+        routingPath = [sourceAsset, destAsset];
+      }
+
       const quote: PriceQuote = {
         source_asset: sourceAsset,
         source_amount: sourceAmount,
@@ -256,6 +265,7 @@ export class Sep38Controller {
         confidence: parseFloat(avgConfidence.toFixed(4)),
         sources_used: Math.min(sourcePriceData.aggregatedFrom, destPriceData.aggregatedFrom),
         is_partial: isPartial,
+        routing_path: routingPath,
       };
 
       if (context) {
@@ -300,6 +310,7 @@ export class Sep38Controller {
       confidence: 0.5,
       sources_used: 0,
       is_partial: true,
+      routing_path: sourceAsset !== 'USDC' && destAsset !== 'USDC' ? [sourceAsset, 'USDC', destAsset] : [sourceAsset, destAsset],
     };
 
     if (context) {
