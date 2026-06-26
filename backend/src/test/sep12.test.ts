@@ -105,12 +105,22 @@ const prismaMock = {
       kycById.set(created.id, created);
       return created;
     }),
-    update: jest.fn(async ({ where, data }: { where: { id: string }; data: Partial<StoredKycCustomer> }) => {
+    update: jest.fn(async ({ where, data, include }: { where: { id: string }; data: Partial<StoredKycCustomer>; include?: { user?: { select: { publicKey: boolean } } } }) => {
       const existing = kycById.get(where.id);
       if (!existing) throw new Error('KycCustomer not found');
       const updated: StoredKycCustomer = { ...existing, ...data };
       kycByUserId.set(updated.userId, updated);
       kycById.set(updated.id, updated);
+
+      if (include?.user) {
+        const user = usersById.get(updated.userId);
+        return {
+          ...updated,
+          updatedAt: new Date(),
+          user: user ? { publicKey: user.publicKey } : null,
+        };
+      }
+
       return updated;
     }),
     findFirst: jest.fn(async ({ where }: { where: { provider?: string; providerRef?: string } }) => {

@@ -1,9 +1,11 @@
 import {
+  buildKycStatusChangedPayload,
   buildTransactionStatusChangedPayload,
   signWebhookPayload,
   updateTransactionStatusAndNotify,
   verifyWebhookSignature,
   WebhookService,
+  type KycWebhookRecord,
   type TransactionWebhookRecord,
 } from './webhook.service';
 
@@ -16,6 +18,19 @@ const baseTransaction: TransactionWebhookRecord = {
   status: 'COMPLETED',
   externalId: 'ext_123',
   stellarTxId: 'stellar_123',
+  createdAt: new Date('2026-03-30T10:00:00.000Z'),
+  updatedAt: new Date('2026-03-30T10:05:00.000Z'),
+  user: {
+    publicKey: 'GBPUBLICKEY123',
+  },
+};
+
+const baseKycCustomer: KycWebhookRecord = {
+  id: 'kyc_123',
+  userId: 'user_123',
+  provider: 'mock',
+  providerRef: 'mock_123',
+  status: 'ACCEPTED',
   createdAt: new Date('2026-03-30T10:00:00.000Z'),
   updatedAt: new Date('2026-03-30T10:05:00.000Z'),
   user: {
@@ -46,6 +61,26 @@ describe('Webhook Service', () => {
         status: 'COMPLETED',
         externalId: 'ext_123',
         stellarTxId: 'stellar_123',
+        createdAt: '2026-03-30T10:00:00.000Z',
+        updatedAt: '2026-03-30T10:05:00.000Z',
+      },
+    });
+  });
+
+  it('builds a KYC status changed payload with provider identifiers', () => {
+    const payload = buildKycStatusChangedPayload(baseKycCustomer, 'PENDING');
+
+    expect(payload).toEqual({
+      event: 'kyc.status_changed',
+      occurredAt: expect.any(String),
+      previousStatus: 'PENDING',
+      customer: {
+        id: 'kyc_123',
+        userId: 'user_123',
+        account: 'GBPUBLICKEY123',
+        provider: 'mock',
+        providerRef: 'mock_123',
+        status: 'ACCEPTED',
         createdAt: '2026-03-30T10:00:00.000Z',
         updatedAt: '2026-03-30T10:05:00.000Z',
       },
@@ -120,6 +155,55 @@ describe('Webhook Service', () => {
     ).toBe(true);
   });
 
+  it('sends signed KYC status changed webhook events', async () => {
+    const httpClient = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => 'ok',
+    });
+
+    const service = new WebhookService(
+      {
+        url: 'https://example.com/webhooks',
+        secret: 'super-secret',
+        timeoutMs: 1000,
+        maxRetries: 2,
+        retryDelayMs: 50,
+      },
+      {
+        httpClient,
+        sleep: jest.fn(),
+        logger: {
+          info: jest.fn(),
+          warn: jest.fn(),
+          error: jest.fn(),
+        },
+      }
+    );
+
+    const result = await service.sendKycStatusChanged(baseKycCustomer, 'PENDING');
+
+    expect(result).toEqual({
+      delivered: true,
+      attempts: 1,
+      statusCode: 200,
+      responseBody: 'ok',
+    });
+    expect(httpClient).toHaveBeenCalledTimes(1);
+
+    const [, request] = httpClient.mock.calls[0] as [string, { headers: Record<string, string>; body: string }];
+    expect(request.headers['x-anchorpoint-event']).toBe('kyc.status_changed');
+    expect(request.body).toContain('"event":"kyc.status_changed"');
+    expect(
+      verifyWebhookSignature(
+        request.body,
+        'super-secret',
+        request.headers['x-anchorpoint-timestamp'],
+        request.headers['x-anchorpoint-signature']
+      )
+    ).toBe(true);
+  });
+
   it('does not retry permanent client errors', async () => {
     const httpClient = jest.fn().mockResolvedValue({
       ok: false,
@@ -179,6 +263,11 @@ describe('Webhook Service', () => {
     );
 
     await expect(service.sendTransactionStatusChanged(baseTransaction, 'COMPLETED')).resolves.toEqual({
+      delivered: false,
+      attempts: 0,
+      skipped: true,
+    });
+    await expect(service.sendKycStatusChanged(baseKycCustomer, 'ACCEPTED')).resolves.toEqual({
       delivered: false,
       attempts: 0,
       skipped: true,

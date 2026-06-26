@@ -29,6 +29,10 @@ const providerMock = {
   parseWebhook: jest.fn(),
 };
 
+const webhookServiceMock = {
+  sendKycStatusChanged: jest.fn(),
+};
+
 const cryptoMock = {
   encrypt: jest.fn((v: string) => ({ encryptedData: `${v}:enc`, iv: 'iv1' })),
   decrypt: jest.fn((v: string) => v),
@@ -47,6 +51,11 @@ jest.mock('../../services/kyc-provider.service', () => ({
     REJECTED: 'REJECTED',
   },
   kycProvider: providerMock,
+}));
+
+jest.mock('../../services/webhook.service', () => ({
+  __esModule: true,
+  defaultWebhookService: webhookServiceMock,
 }));
 
 jest.mock('../../services/crypto.service', () => ({
@@ -77,6 +86,12 @@ const makeRes = (): Response => {
 describe('Sep12Controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    webhookServiceMock.sendKycStatusChanged.mockResolvedValue({
+      delivered: true,
+      attempts: 1,
+      statusCode: 200,
+      responseBody: 'ok',
+    });
   });
 
   describe('putCustomer', () => {
@@ -272,7 +287,67 @@ describe('Sep12Controller', () => {
     });
   });
 
-  it('updates customer KYC status via webhook providerRef lookup', async () => {
+  it('updates customer KYC status via webhook providerRef lookup and dispatches a partner webhook', async () => {
+    const req = {
+      headers: { 'x-kyc-signature': 'mock-valid-signature' },
+      body: { providerRef: 'mock_abc', status: 'accepted' },
+    } as unknown as Request;
+    const res = makeRes();
+    const existingCustomer = {
+      id: 'k1',
+      userId: 'u1',
+      provider: 'mock',
+      providerRef: 'mock_abc',
+      status: 'PENDING',
+      createdAt: new Date('2026-03-30T10:00:00.000Z'),
+      updatedAt: new Date('2026-03-30T10:00:00.000Z'),
+      user: { publicKey: VALID_ACCOUNT },
+    };
+    const updatedCustomer = {
+      ...existingCustomer,
+      status: 'ACCEPTED',
+      updatedAt: new Date('2026-03-30T10:05:00.000Z'),
+    };
+
+    providerMock.verifyWebhookSignature.mockReturnValue(true);
+    providerMock.parseWebhook.mockReturnValue({
+      providerRef: 'mock_abc',
+      status: 'ACCEPTED',
+    });
+    prismaMock.kycCustomer.findFirst.mockResolvedValue(existingCustomer);
+    prismaMock.kycCustomer.update.mockResolvedValue(updatedCustomer);
+
+    await sep12Controller.handleWebhook(req, res);
+
+    expect(prismaMock.kycCustomer.findFirst).toHaveBeenCalledWith({
+      where: {
+        provider: 'mock',
+        providerRef: 'mock_abc',
+      },
+      include: {
+        user: {
+          select: {
+            publicKey: true,
+          },
+        },
+      },
+    });
+    expect(prismaMock.kycCustomer.update).toHaveBeenCalledWith({
+      where: { id: 'k1' },
+      data: { status: 'ACCEPTED' },
+      include: {
+        user: {
+          select: {
+            publicKey: true,
+          },
+        },
+      },
+    });
+    expect(webhookServiceMock.sendKycStatusChanged).toHaveBeenCalledWith(updatedCustomer, 'PENDING');
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('does not dispatch a partner webhook when provider status is unchanged', async () => {
     const req = {
       headers: { 'x-kyc-signature': 'mock-valid-signature' },
       body: { providerRef: 'mock_abc', status: 'accepted' },
@@ -284,14 +359,21 @@ describe('Sep12Controller', () => {
       providerRef: 'mock_abc',
       status: 'ACCEPTED',
     });
-    prismaMock.kycCustomer.findFirst.mockResolvedValue({ id: 'k1' });
+    prismaMock.kycCustomer.findFirst.mockResolvedValue({
+      id: 'k1',
+      userId: 'u1',
+      provider: 'mock',
+      providerRef: 'mock_abc',
+      status: 'ACCEPTED',
+      createdAt: new Date('2026-03-30T10:00:00.000Z'),
+      updatedAt: new Date('2026-03-30T10:05:00.000Z'),
+      user: { publicKey: VALID_ACCOUNT },
+    });
 
     await sep12Controller.handleWebhook(req, res);
 
-    expect(prismaMock.kycCustomer.update).toHaveBeenCalledWith({
-      where: { id: 'k1' },
-      data: { status: 'ACCEPTED' },
-    });
+    expect(prismaMock.kycCustomer.update).not.toHaveBeenCalled();
+    expect(webhookServiceMock.sendKycStatusChanged).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
