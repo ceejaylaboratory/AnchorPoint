@@ -19,7 +19,7 @@ test.describe('dashboard cross-browser smoke coverage', () => {
 
     await page.getByRole('button', { name: 'Deposit' }).click();
     await expect(page.getByTestId('active-view')).toContainText('Deposit Assets');
-    await page.getByRole('button', { name: 'USDC' }).click();
+    await page.getByRole('button', { name: 'Continue with USDC' }).click();
 
     await page.getByRole('button', { name: /Launch .* KYC portal/i }).click();
     await page.getByLabel('Full Name').fill('Jane Doe');

@@ -124,7 +124,6 @@ export const InteractiveWebview = ({
               <button
                 onClick={handleLaunch}
                 className="btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-                aria-label={`Launch ${anchorName} KYC portal`}
               >
                 Launch KYC Portal
               </button>

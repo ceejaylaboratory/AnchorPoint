@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RequirementList } from './RequirementList';
 import { WithdrawalForm } from './WithdrawalForm';
 import { InteractiveWebview } from './InteractiveWebview';
+import { AssetDropdown } from './AssetDropdown';
+import type { AssetOption } from './AssetDropdown';
 import type { UiConfig } from '../types';
 
 const STEP_LABELS = [
@@ -17,8 +19,27 @@ const STEP_LABELS = [
 const DEPOSIT_STEPS = [1, 3, 4] as const;
 const WITHDRAW_STEPS = [1, 2, 3, 4] as const;
 
+const ASSET_OPTIONS: AssetOption[] = [
+  {
+    code: 'USDC',
+    name: 'USD Coin',
+    subtitle: 'Dollar-backed liquidity for institutional settlement',
+  },
+  {
+    code: 'EURT',
+    name: 'Euro Token',
+    subtitle: 'Euro-denominated transfer rail for SEP-24 flows',
+  },
+  {
+    code: 'ARST',
+    name: 'ARS Token',
+    subtitle: 'Argentine peso corridor asset for local payouts',
+  },
+];
+
 export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig: UiConfig }) => {
   const [step, setStep] = useState(1);
+  const [selectedAsset, setSelectedAsset] = useState(ASSET_OPTIONS[0].code);
   const transactionFields = uiConfig.fieldRequirements[type];
   const flowLabel = type === 'deposit' ? 'Deposit' : 'Withdrawal';
 
@@ -113,28 +134,45 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
               <p className="text-slate-400">
                 The anchor is supplying the field requirements for this flow from the backend configuration.
               </p>
-              <div
-                className="grid grid-cols-1 gap-3"
+              <ul
+                className="grid grid-cols-1 gap-3 p-0 m-0 list-none"
+                aria-label={`Available assets for ${flowLabel.toLowerCase()}`}
               >
                 {(['USDC', 'EURT', 'ARST'] as const).map((asset) => (
-                  <button
-                    key={asset}
-                    onClick={() => goToStep(isWithdraw ? 2 : 3)}
-                    className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-3 transition-all hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:p-4"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary"
-                        aria-hidden="true"
-                      >
-                        {asset[0]}
+                  <li key={asset}>
+                    <button
+                      onClick={() => goToStep(isWithdraw ? 2 : 3)}
+                      aria-label={`Select ${asset} for ${flowLabel.toLowerCase()}`}
+                      className="flex w-full items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 transition-all hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary"
+                          aria-hidden="true"
+                        >
+                          {asset[0]}
+                        </div>
+                        <span>{asset}</span>
                       </div>
-                      <span>{asset}</span>
-                    </div>
-                    <ArrowUpRight size={18} className="text-slate-500" aria-hidden="true" />
-                  </button>
+                      <ArrowUpRight size={18} className="text-slate-500" aria-hidden="true" />
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
+              <AssetDropdown
+                label={`${flowLabel} asset`}
+                options={ASSET_OPTIONS}
+                value={selectedAsset}
+                onChange={setSelectedAsset}
+              />
+              <button
+                type="button"
+                onClick={() => goToStep(isWithdraw ? 2 : 3)}
+                className="btn-primary inline-flex w-full items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:w-auto"
+              >
+                Continue with {selectedAsset}
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </button>
             </div>
 
             <RequirementList
