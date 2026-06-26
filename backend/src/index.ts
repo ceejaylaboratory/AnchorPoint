@@ -39,7 +39,14 @@ notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvi
 const app = express();
 const PORT = config.PORT;
 
-app.use(cors());
+const corsOptions = {
+  origin: process.env.PRODUCTION_CORS_ORIGINS ? process.env.PRODUCTION_CORS_ORIGINS.split(',') : [],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200,
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

@@ -87,6 +87,9 @@ jobs:
           path: backend/migration-status.md
           retention-days: 7
 
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Run Lint
         run: npm run lint
 

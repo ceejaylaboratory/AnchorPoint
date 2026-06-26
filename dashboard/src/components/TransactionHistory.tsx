@@ -54,6 +54,8 @@ const SortIcon = ({ col, sortKey, dir }: { col: SortKey; sortKey: SortKey; dir: 
 export const TransactionHistory = () => {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TransactionStatus | 'All'>('All');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [page, setPage] = useState(1);
@@ -70,14 +72,17 @@ export const TransactionHistory = () => {
     return ALL_TRANSACTIONS.filter((tx) => {
       const matchesQuery =
         !q ||
+        tx.id.toLowerCase().includes(q) ||
         tx.type.toLowerCase().includes(q) ||
         tx.asset.toLowerCase().includes(q) ||
         tx.reference.toLowerCase().includes(q) ||
         tx.status.toLowerCase().includes(q);
       const matchesStatus = statusFilter === 'All' || tx.status === statusFilter;
-      return matchesQuery && matchesStatus;
+      const matchesFrom = !dateFrom || tx.date >= dateFrom;
+      const matchesTo = !dateTo || tx.date <= dateTo;
+      return matchesQuery && matchesStatus && matchesFrom && matchesTo;
     });
-  }, [query, statusFilter]);
+  }, [query, statusFilter, dateFrom, dateTo]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -115,7 +120,7 @@ export const TransactionHistory = () => {
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" aria-hidden="true" />
           <input
             type="search"
-            placeholder="Search by type, asset, reference…"
+            placeholder="Search by ID, type, asset, reference…"
             value={query}
             onChange={(e) => { setQuery(e.target.value); setPage(1); }}
             aria-label="Search transactions"
@@ -124,6 +129,26 @@ export const TransactionHistory = () => {
         </div>
 
         <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="date-from" className="sr-only">From date</label>
+          <input
+            id="date-from"
+            type="date"
+            value={dateFrom}
+            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            aria-label="Filter from date"
+            className="input-field text-sm"
+          />
+          <label htmlFor="date-to" className="sr-only">To date</label>
+          <input
+            id="date-to"
+            type="date"
+            value={dateTo}
+            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            aria-label="Filter to date"
+            className="input-field text-sm"
+          />
+
           <label htmlFor="status-filter" className="sr-only">Filter by status</label>
           <select
             id="status-filter"
