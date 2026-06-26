@@ -18,7 +18,7 @@
     "@stellar/stellar-sdk": "^14.6.1",
     "axios": "^1.13.6",
     "clsx": "^2.1.1",
-    "framer-motion": "^11.18.2",
+    "framer-motion": "^12.40.0",
     "lucide-react": "^0.446.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
