@@ -1,9 +1,60 @@
 import { useState } from 'react';
-import { ShieldCheck, XCircle, AlertTriangle, RefreshCw, Mail, CheckCircle2, Clock } from 'lucide-react';
+import { ShieldCheck, XCircle, AlertTriangle, RefreshCw, Mail, CheckCircle2, Clock, FileWarning, User, MapPin, Camera } from 'lucide-react';
 import type { UiConfig } from '../types';
 import { RequirementList } from './RequirementList';
 
 export type KycState = 'not_started' | 'pending' | 'approved' | 'rejected';
+
+type RejectionCategory = 'Document' | 'Identity' | 'Address' | 'Selfie';
+
+type KycRejectionReason = {
+  code: string;
+  category: RejectionCategory;
+  field: string;
+  description: string;
+  action: string;
+  severity: 'high' | 'medium';
+};
+
+const CATEGORY_ICON: Record<RejectionCategory, React.ReactNode> = {
+  Document: <FileWarning size={14} aria-hidden="true" />,
+  Identity: <User size={14} aria-hidden="true" />,
+  Address: <MapPin size={14} aria-hidden="true" />,
+  Selfie: <Camera size={14} aria-hidden="true" />,
+};
+
+const KYC_REJECTION_REASONS: KycRejectionReason[] = [
+  {
+    code: 'DOC_BLURRY',
+    category: 'Document',
+    field: 'Proof of Identity',
+    description:
+      'The submitted identity document appears blurry or unreadable. All text, including name and document number, must be clearly legible.',
+    action:
+      'Retake the photo in good lighting so that all four corners and all printed text are fully visible.',
+    severity: 'high',
+  },
+  {
+    code: 'SELFIE_MISMATCH',
+    category: 'Selfie',
+    field: 'Selfie Verification',
+    description:
+      'The selfie photo does not match the identity document photo with sufficient confidence.',
+    action:
+      'Submit a clear, well-lit selfie facing the camera directly without glasses, hats, or face coverings.',
+    severity: 'high',
+  },
+  {
+    code: 'ADDR_OUTDATED',
+    category: 'Address',
+    field: 'Proof of Address',
+    description:
+      'The provided proof of address is older than 90 days and cannot be accepted under current compliance rules.',
+    action:
+      'Provide a utility bill, bank statement, or official government letter dated within the last 90 days.',
+    severity: 'medium',
+  },
+];
 
 export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
   // For demo/testing purposes, default to 'rejected' as per issue #343
@@ -105,19 +156,55 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
             </div>
             <h3 className="text-3xl font-display font-bold text-slate-100">Verification Failed</h3>
             <p className="mt-4 text-slate-400 max-w-lg text-lg leading-relaxed">
-              We were unable to verify your identity with the provided information. This may happen if documents are unclear, expired, or details mismatch.
+              We were unable to verify your identity. Please review each issue below and resubmit with the corrected documents.
             </p>
 
-            <div className="mt-10 w-full max-w-lg text-left">
-              <div className="flex items-start gap-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-5 shadow-inner">
-                <AlertTriangle size={24} className="text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
-                <div>
-                  <h4 className="text-sm font-semibold text-rose-200 tracking-wide">Reason for Rejection</h4>
-                  <p className="mt-2 text-sm text-rose-200/80 leading-relaxed">
-                    The submitted proof of identity document appears to be blurry or unreadable. Please ensure all text is legible and all four corners of the document are visible before re-submitting.
-                  </p>
-                </div>
+            <div className="mt-8 w-full max-w-lg text-left space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle size={15} className="text-rose-400 shrink-0" aria-hidden="true" />
+                <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+                  Rejection Details &mdash; {KYC_REJECTION_REASONS.length} issue{KYC_REJECTION_REASONS.length !== 1 ? 's' : ''} found
+                </h4>
               </div>
+
+              {KYC_REJECTION_REASONS.map((reason) => (
+                <div
+                  key={reason.code}
+                  className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4"
+                  role="listitem"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex flex-col items-center gap-1.5 shrink-0 pt-0.5">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                          reason.severity === 'high'
+                            ? 'bg-rose-500/25 text-rose-300'
+                            : 'bg-amber-500/20 text-amber-300'
+                        }`}
+                      >
+                        {reason.code}
+                      </span>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-rose-200">{reason.field}</p>
+                        <span className="flex items-center gap-1 text-xs text-slate-500">
+                          {CATEGORY_ICON[reason.category]}
+                          {reason.category}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-sm text-slate-400 leading-relaxed">
+                        {reason.description}
+                      </p>
+                      <p className="mt-2 text-xs text-slate-500 leading-relaxed flex items-start gap-1.5">
+                        <span className="text-primary font-semibold shrink-0">Fix:</span>
+                        {reason.action}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
 
             <div className="mt-10 flex flex-col sm:flex-row gap-4 w-full max-w-lg justify-center">
