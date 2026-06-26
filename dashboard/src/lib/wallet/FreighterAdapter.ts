@@ -1,5 +1,18 @@
 import { WalletAdapter } from './types';
 
+type FreighterApi = {
+  isConnected(): Promise<boolean>;
+  getPublicKey(): Promise<string>;
+  getNetwork(): Promise<string>;
+  signTransaction(xdr: string, options: { network: string }): Promise<string>;
+};
+
+declare global {
+  interface Window {
+    freighterApi?: FreighterApi;
+  }
+}
+
 export class FreighterAdapter implements WalletAdapter {
   id = 'freighter';
   name = 'Freighter';
@@ -7,7 +20,7 @@ export class FreighterAdapter implements WalletAdapter {
 
   async isInstalled(): Promise<boolean> {
     // Check if the Freighter extension is injected
-    return typeof window !== 'undefined' && !!(window as any).freighterApi;
+    return typeof window !== 'undefined' && !!window.freighterApi;
   }
 
   async connect(): Promise<{ publicKey: string; network: string }> {
@@ -16,7 +29,11 @@ export class FreighterAdapter implements WalletAdapter {
       throw new Error('Freighter is not installed');
     }
     
-    const api = (window as any).freighterApi;
+    const api = window.freighterApi;
+    if (!api) {
+      throw new Error('Freighter is not installed');
+    }
+
     try {
       if (await api.isConnected()) {
         const publicKey = await api.getPublicKey();
@@ -41,7 +58,11 @@ export class FreighterAdapter implements WalletAdapter {
       throw new Error('Freighter is not installed');
     }
 
-    const api = (window as any).freighterApi;
+    const api = window.freighterApi;
+    if (!api) {
+      throw new Error('Freighter is not installed');
+    }
+
     try {
       const signedXdr = await api.signTransaction(xdr, { network });
       return signedXdr;

@@ -25,7 +25,10 @@ jest.mock('../api/middleware/rate-limit.middleware', () => ({
   publicLimiter: (req: any, res: any, next: any) => next(),
 }));
 
-describe('AnchorPoint E2E - Cross-border payment flow (KYC → SEP-38 quote → SEP-31 settlement)', () => {
+const hasPostgresDatasource = /^postgres(ql)?:\/\//i.test(process.env.DATABASE_URL || '');
+const e2eSuite = hasPostgresDatasource ? describe : describe.skip;
+
+e2eSuite('AnchorPoint E2E - Cross-border payment flow (KYC → SEP-38 quote → SEP-31 settlement)', () => {
   const clientPublicKey = 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K';
   const receiverPublicKey = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
@@ -238,4 +241,3 @@ describe('AnchorPoint E2E - Cross-border payment flow (KYC → SEP-38 quote → 
     );
   });
 });
-

@@ -18,7 +18,7 @@ export const LogoMark = ({ uiConfig }: { uiConfig: UiConfig }) => {
       role="img"
       aria-label={`${uiConfig.brandName} logo`}
     >
-      <Building2 size={24} className="text-white" aria-hidden="true" />
+      <Building2 size={24} className="text-primary-foreground" aria-hidden="true" />
     </div>
   );
 };

@@ -1,9 +1,8 @@
 import { Request, Response } from 'express';
 import { getInfo } from './info.controller';
-import { ASSETS } from '../../config/assets';
 
-jest.mock('../../config/assets', () => ({
-  ASSETS: [
+jest.mock('../../config/assets', () => {
+  const mockAssets = [
     {
       code: 'USDC',
       issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
@@ -31,8 +30,12 @@ jest.mock('../../config/assets', () => ({
       depositEnabled: true,
       withdrawEnabled: false
     }
-  ]
-}));
+  ];
+  return {
+    ASSETS: mockAssets,
+    getIssuer: (code: string) => mockAssets.find(a => a.code === code)?.issuer,
+  };
+});
 
 describe('Info Controller', () => {
   let mockRequest: Partial<Request>;
@@ -60,6 +63,7 @@ describe('Info Controller', () => {
     jest.clearAllMocks();
     process.env.STELLAR_NETWORK = 'testnet';
     process.env.BASE_URL = 'http://localhost:3002';
+    process.env.SIGNING_KEY = 'GBBD47IF6LWLVNC7F7YSACOA73YI4COI3V5O2S46F7S44GUL44YQY4O2';
   });
 
   describe('getInfo - JSON format', () => {

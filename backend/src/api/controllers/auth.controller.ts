@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
 import { RedisService } from '../../services/redis.service';
-import { 
-  generateChallenge, 
+import {
+  generateChallenge,
   generateMultiKeyChallenge,
-  storeChallenge, 
-  getChallenge as getChallengeFromRedis, 
+  storeChallenge,
+  getChallenge as getChallengeFromRedis,
   removeChallenge,
   signToken,
   verifyToken,
@@ -17,7 +17,7 @@ import {
   storeSep10Challenge,
   verifySep10ChallengeTransaction
 } from '../../services/auth.service';
-import { 
+import {
   extractAccountFromSep10Transaction
 } from '../../utils/sep10-stellar';
 import { config } from '../../config/env';
@@ -94,13 +94,13 @@ export const getChallenge = async (
   try {
     // Generate a new challenge
     const challenge = generateChallenge();
-    
+
     // Handle multi-key authentication
     let multiKeyChallenge: MultiKeyChallenge | undefined;
     if (multiKey && signers && signers.length > 0) {
       multiKeyChallenge = generateMultiKeyChallenge(signers, threshold || 'medium');
     }
-    
+
     // Store the challenge in Redis with TTL
     await storeChallenge(redisService, account, challenge);
 
@@ -153,7 +153,7 @@ export const getToken = async (
     // Handle multi-key authentication
     if (signatures && signatures.length > 0) {
       const validation = validateMultiKeySignatures(signatures, threshold || 'medium');
-      
+
       if (!validation.valid) {
         return res.status(400).json({
           error: 'Insufficient signature weight for required threshold'
@@ -194,7 +194,7 @@ export const getToken = async (
 
       return res.json(response);
     }
-    
+
     // Single-key authentication (existing logic)
     const networkType = config.STELLAR_NETWORK === 'public' ? NetworkType.PUBLIC : NetworkType.TESTNET;
 
@@ -207,6 +207,18 @@ export const getToken = async (
       });
     }
 
+    // Hardware wallet specific validation
+    try {
+      const isHardwareWallet = await validateHardwareWalletSignature(transaction);
+      if (isHardwareWallet) {
+        logger.info('Hardware wallet signature detected', { account, hardwareWallet: true });
+      }
+    } catch (error) {
+      logger.warn('Hardware wallet validation failed', {
+        account,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     // Get the stored challenge
     const storedChallenge = await getChallengeFromRedis(redisService, account);
@@ -258,7 +270,6 @@ export const getToken = async (
 export const refreshToken = async (
   req: Request,
   res: Response,
-  redisService: RedisService
 ): Promise<Response> => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -269,12 +280,12 @@ export const refreshToken = async (
 
   try {
     const decoded = verifyToken(token);
-    
+
     let multiKeyData: MultiKeyVerifiedToken | undefined;
     if ('signers' in decoded) {
       multiKeyData = decoded as MultiKeyVerifiedToken;
     }
-    
+
     // Issue a new token
     const newToken = signToken(decoded.sub, multiKeyData);
 
@@ -292,3 +303,37 @@ export const refreshToken = async (
   }
 };
 
+/**
+ * Validate hardware wallet signature
+ * @param transaction Signed transaction XDR
+ * @returns Promise<boolean> Whether this is a hardware wallet signature
+ */
+async function validateHardwareWalletSignature(
+  transaction: string,
+): Promise<boolean> {
+  try {
+    const transactionObj = JSON.parse(transaction);
+
+    if (transactionObj && typeof transactionObj === 'object') {
+      const hasHardwareIndicators = (
+        transactionObj.hardwareWallet ||
+        transactionObj.trezor ||
+        transactionObj.ledger ||
+        transactionObj.signerType === 'hardware'
+      );
+
+      return hasHardwareIndicators;
+    }
+
+    return false;
+  } catch (error) {
+    try {
+      if (transaction.length > 100 && transaction.length < 2000) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+}

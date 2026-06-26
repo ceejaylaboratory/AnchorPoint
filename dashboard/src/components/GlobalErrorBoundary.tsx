@@ -38,14 +38,14 @@ export class GlobalErrorBoundary extends Component<Props, State> {
             </div>
             
             <div className="space-y-2">
-              <h1 className="text-2xl font-bold font-display text-white">System Error</h1>
+              <h1 className="text-2xl font-bold font-display text-slate-50">System Error</h1>
               <p className="text-slate-400 text-sm">
                 An unexpected error occurred while rendering the application interface. Our team has been notified.
               </p>
             </div>
             
             {this.state.error && (
-              <div className="w-full bg-slate-950/80 rounded-lg p-4 mt-2 text-left overflow-x-auto border border-slate-800">
+              <div className="w-full bg-slate-950/80 rounded-lg p-4 mt-2 text-left overflow-x-auto border border-slate-600">
                 <p className="text-xs font-mono text-red-300/80 break-words whitespace-pre-wrap">
                   {this.state.error.toString()}
                 </p>
@@ -54,7 +54,7 @@ export class GlobalErrorBoundary extends Component<Props, State> {
             
             <button
               onClick={this.handleReload}
-              className="mt-6 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium transition-all hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/20 active:scale-95 w-full sm:w-auto border border-blue-500"
+              className="action-button mt-6 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/20 w-full sm:w-auto border border-blue-500"
             >
               <RefreshCcw size={18} />
               Reload Application
