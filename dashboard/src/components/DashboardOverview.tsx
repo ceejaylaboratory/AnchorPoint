@@ -1,4 +1,5 @@
 import { LogoMark } from './LogoMark';
+import { VolumeChart } from './VolumeChart';
 import type { UiConfig } from '../types';
 
 export const DashboardOverview = ({ uiConfig }: { uiConfig: UiConfig }) => (
@@ -25,12 +26,8 @@ export const DashboardOverview = ({ uiConfig }: { uiConfig: UiConfig }) => (
     </div>
 
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.5fr_1fr]">
-      <div
-        className="glass-card flex h-64 items-center justify-center p-6"
-        role="img"
-        aria-label="Volume chart (placeholder)"
-      >
-        <p className="italic text-slate-500">Volume Chart Placeholder</p>
+      <div className="glass-card h-64 p-6">
+        <VolumeChart />
       </div>
       <div className="glass-card p-6">
         <h3 className="font-display text-xl font-bold">Anchor Branding</h3>
