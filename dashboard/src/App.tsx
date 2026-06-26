@@ -17,6 +17,7 @@ import type { UiConfig } from './types';
 import { LogoMark } from './components/LogoMark';
 import { RequirementList } from './components/RequirementList';
 import { NotificationBell } from './components/NotificationBell';
+import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 
 // Lazy-load heavy tab views so they are only fetched when first visited
 const DashboardOverview = lazy(() => import('./components/DashboardOverview'));
@@ -230,6 +231,10 @@ const App = () => {
               <Wallet size={18} aria-hidden="true" />
               <span className="text-sm font-medium">Connect Wallet</span>
             </button>
+            <UserAvatarDropdown
+              onSettings={() => setActiveTab('settings')}
+              onNotifications={() => setActiveTab('notifications')}
+            />
           </div>
         </header>
 
