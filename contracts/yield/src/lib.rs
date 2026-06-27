@@ -345,10 +345,23 @@ impl YieldDistribution {
 mod tests {
     use super::*;
     use soroban_sdk::{
+        contract, contractimpl, symbol_short,
         testutils::Address as _,
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env,
     };
+
+    #[contract]
+    pub struct MockRegistry;
+    #[contractimpl]
+    impl MockRegistry {
+        pub fn is_paused(env: Env) -> bool {
+            env.storage().instance().get(&symbol_short!("paused")).unwrap_or(false)
+        }
+        pub fn set_paused(env: Env, paused: bool) {
+            env.storage().instance().set(&symbol_short!("paused"), &paused);
+        }
+    }
 
     fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let env = Env::default();
@@ -464,5 +477,19 @@ mod tests {
         client.claim(&alice);
         let reward_client = TokenClient::new(&env, &reward_token);
         assert_eq!(reward_client.balance(&alice), 1_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_pause_deposit_rewards() {
+        let (env, contract_id, admin, _alice, _bob, _) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+
+        let registry_id = env.register(MockRegistry, ());
+        let registry_client = MockRegistryClient::new(&env, &registry_id);
+        registry_client.set_paused(&true);
+
+        client.set_security_registry(&registry_id);
+        client.deposit_rewards(&admin, &1_000);
     }
 }

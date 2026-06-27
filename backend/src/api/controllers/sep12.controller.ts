@@ -14,9 +14,6 @@ type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 
 const ALLOWED_CONTENT_TYPES = (process.env.UPLOAD_ALLOWED_CONTENT_TYPES ?? 'image/jpeg,image/png,application/pdf').split(',');
 const UPLOAD_URL_EXPIRY_SECONDS = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
-const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
-
-type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
@@ -299,14 +296,9 @@ export class Sep12Controller {
       }
 
       const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
-      const record = uploadStore.create(account, field_name, '', content_type, expiresAt);
-      const storageKey = `${KEY_PREFIX}/${account}/${field_name}/${record.uploadId}`;
-      uploadStore.setStatus(record.uploadId, 'PENDING');
-      // Persist the computed storage key back onto the record via a second set
-      const storedRecord = uploadStore.get(record.uploadId)!;
-      (storedRecord as any).storageKey = storageKey;
+      const record = uploadStore.create(account, field_name, content_type, expiresAt);
 
-      const url = await storageProvider.generatePresignedPutUrl(storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
+      const url = await storageProvider.generatePresignedPutUrl(record.storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
 
       logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
 
@@ -345,7 +337,7 @@ export class Sep12Controller {
         return res.status(403).json({ error: 'account does not match upload record' });
       }
 
-      const exists = await storageProvider.objectExists((record as any).storageKey ?? `${KEY_PREFIX}/${account}/${record.fieldName}/${upload_id}`);
+      const exists = await storageProvider.objectExists(record.storageKey);
       if (!exists) {
         return res.status(422).json({ error: 'File not found in storage; upload may not have completed' });
       }
