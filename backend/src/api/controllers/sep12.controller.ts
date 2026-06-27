@@ -15,9 +15,6 @@ type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 const ALLOWED_CONTENT_TYPES = (process.env.UPLOAD_ALLOWED_CONTENT_TYPES ?? 'image/jpeg,image/png,application/pdf').split(',');
 const UPLOAD_URL_EXPIRY_SECONDS = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
 const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
-
-type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
-
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
 

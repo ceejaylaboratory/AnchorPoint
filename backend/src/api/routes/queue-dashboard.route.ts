@@ -12,7 +12,8 @@ const queues = Object.values(QUEUE_NAMES).map(
   (name) => new BullMQAdapter(new Queue(name, { connection: queueConnection }))
 );
 
-createBullBoard({ queues, serverAdapter });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+createBullBoard({ queues: queues as any, serverAdapter });
 
 const router = Router();
 router.use('/', serverAdapter.getRouter());
