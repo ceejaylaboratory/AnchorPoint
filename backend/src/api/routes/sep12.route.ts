@@ -3,6 +3,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { sep12Controller } from '../controllers/sep12.controller';
+import { authMiddleware } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -60,5 +61,14 @@ router.delete('/customer/:account', sep12Controller.deleteCustomer);
  *     tags: [SEP-12]
  */
 router.post('/webhook', sep12Controller.handleWebhook);
+
+/**
+ * @swagger
+ * /sep12/customer/{id}/confirm:
+ *   post:
+ *     summary: Confirm upload ownership — session account must match record account
+ *     tags: [SEP-12]
+ */
+router.post('/customer/:id/confirm', authMiddleware, (req, res) => sep12Controller.confirmUpload(req as any, res));
 
 export default router;

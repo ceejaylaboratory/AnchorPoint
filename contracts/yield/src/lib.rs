@@ -98,17 +98,9 @@ impl YieldDistribution {
             .get(&DataKey::TotalStaked)
             .unwrap_or(0);
 
-        // Transfer reward tokens into the contract
         let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
-        token::Client::new(&env, &reward_token).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
 
-        // If nobody is staking yet, rewards accumulate but can't be distributed —
-        // they will be claimable once the first stake occurs (reward_per_token
-        // stays 0 until then, so the deposited tokens sit idle).
+        // CEI: update state before external token transfer
         if total_staked > 0 {
             let mut rpt: i128 = env
                 .storage()
@@ -124,10 +116,15 @@ impl YieldDistribution {
                 .set(&DataKey::RewardPerTokenStored, &rpt);
         }
 
-        // Topic: event name only; from + amount in data.
+        // External interaction last
+        token::Client::new(&env, &reward_token).transfer(
+            &from,
+            &env.current_contract_address(),
+            &amount,
+        );
+
         env.events()
             .publish(symbol_short!("dep_rwd"), (from, amount));
-            .publish((symbol_short!("dep_rwd"), from, reward_token), amount);
     }
 
     // ── Staking ───────────────────────────────────────────────────────────
@@ -149,12 +146,8 @@ impl YieldDistribution {
         Self::_update_reward(&env, &user);
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
-        token::Client::new(&env, &stake_token).transfer(
-            &user,
-            &env.current_contract_address(),
-            &amount,
-        );
 
+        // CEI: update state before external token transfer
         let prev: i128 = Self::_stake_of(&env, &user);
         env.storage()
             .persistent()
@@ -169,7 +162,13 @@ impl YieldDistribution {
             .instance()
             .set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
 
-        // Topic: event name only; user + amount in data.
+        // External interaction last
+        token::Client::new(&env, &stake_token).transfer(
+            &user,
+            &env.current_contract_address(),
+            &amount,
+        );
+
         env.events()
             .publish(symbol_short!("staked"), (user, amount));
     }
@@ -251,10 +250,8 @@ impl YieldDistribution {
                 &reward,
             );
 
-            // Topic: event name only; user + reward in data.
             env.events()
                 .publish(symbol_short!("claimed"), (user, reward));
-                .publish((symbol_short!("claimed"), user, reward_token), reward);
         }
 
         reward

@@ -3,6 +3,7 @@ import prisma from '../../lib/prisma';
 import { cryptoService } from '../../services/crypto.service';
 import { kycProvider, KycStatus } from '../../services/kyc-provider.service';
 import { KYCStatus } from '@prisma/client';
+import { AuthRequest } from '../middleware/auth.middleware';
 
 export class Sep12Controller {
 
@@ -160,6 +161,35 @@ export class Sep12Controller {
     } catch (error) {
       console.error(error);
       res.status(404).json({ error: 'Customer not found' });
+    }
+  }
+
+  async confirmUpload(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const authenticatedAccount = req.user?.publicKey;
+
+      if (!authenticatedAccount) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      const kycRecord = await prisma.kycCustomer.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+
+      if (!kycRecord) {
+        return res.status(404).json({ error: 'Upload record not found' });
+      }
+
+      if (kycRecord.user.publicKey !== authenticatedAccount) {
+        return res.status(403).json({ error: 'Forbidden: account mismatch' });
+      }
+
+      return res.status(200).json({ status: 'confirmed', id: kycRecord.id });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
 
