@@ -1,9 +1,15 @@
 import request from 'supertest';
+import prisma from './lib/prisma';
+import { redis } from './lib/redis';
 
 jest.mock('./lib/prisma', () => ({
-  transaction: {
-    findMany: jest.fn(),
-    count: jest.fn()
+  __esModule: true,
+  default: {
+    transaction: {
+      findMany: jest.fn(),
+      count: jest.fn()
+    },
+    $queryRaw: jest.fn()
   }
 }));
 
@@ -20,10 +26,40 @@ const app = require('./index').default;
 
 
 describe('Backend API', () => {
-  it('should return UP on health check', async () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.$queryRaw as jest.Mock).mockResolvedValue([{ '?column?': 1 }]);
+    if (typeof redis.ping === 'function') {
+      jest.spyOn(redis, 'ping').mockResolvedValue('PONG');
+    }
+  });
+
+  it('should return UP on health check when all services are healthy', async () => {
     const res = await request(app).get('/health');
     expect(res.statusCode).toEqual(200);
     expect(res.body.status).toEqual('UP');
+    expect(res.body.services.database).toEqual('UP');
+    expect(res.body.services.redis).toEqual('UP');
+  });
+
+  it('should return DOWN on health check when database is down', async () => {
+    (prisma.$queryRaw as jest.Mock).mockRejectedValue(new Error('DB Connection Refused'));
+
+    const res = await request(app).get('/health');
+    expect(res.statusCode).toEqual(503);
+    expect(res.body.status).toEqual('DOWN');
+    expect(res.body.services.database).toEqual('DOWN');
+    expect(res.body.services.redis).toEqual('UP');
+  });
+
+  it('should return DOWN on health check when Redis is down', async () => {
+    jest.spyOn(redis, 'ping').mockRejectedValue(new Error('Redis Timeout'));
+
+    const res = await request(app).get('/health');
+    expect(res.statusCode).toEqual(503);
+    expect(res.body.status).toEqual('DOWN');
+    expect(res.body.services.database).toEqual('UP');
+    expect(res.body.services.redis).toEqual('DOWN');
   });
 
   it('should return 200 on root access', async () => {
