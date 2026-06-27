@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Vec,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
 };
 
 // Fixed-point precision: 1e18
@@ -29,6 +29,17 @@ pub enum DataKey {
     UserRewardPerTokenPaid(Address, Address), // (User, RewardToken)
     /// Accrued but unclaimed rewards for a user and reward token
     Rewards(Address, Address), // (User, RewardToken)
+    /// Branding / project metadata (description, icon_url, website)
+    ContractMeta,
+}
+
+/// On-chain branding metadata for the contract.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContractMetadata {
+    pub description: String,
+    pub icon_url: String,
+    pub website: String,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -52,6 +63,12 @@ impl MultiTokenStaking {
         
         let reward_tokens: Vec<Address> = Vec::new(&env);
         env.storage().instance().set(&DataKey::RewardTokens, &reward_tokens);
+
+        env.storage().instance().set(&DataKey::ContractMeta, &ContractMetadata {
+            description: String::from_str(&env, ""),
+            icon_url: String::from_str(&env, ""),
+            website: String::from_str(&env, ""),
+        });
     }
 
     /// Whitelist a new reward token.
@@ -297,6 +314,37 @@ impl MultiTokenStaking {
         env.storage().instance().get(&DataKey::RewardTokens).unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Update the contract's branding metadata (admin only).
+    pub fn update_contract_meta(
+        env: Env,
+        caller: Address,
+        description: String,
+        icon_url: String,
+        website: String,
+    ) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+        assert!(caller == admin, "only admin can update contract metadata");
+
+        let meta = ContractMetadata { description, icon_url, website };
+        env.storage().instance().set(&DataKey::ContractMeta, &meta);
+
+        env.events().publish((symbol_short!("meta_upd"),), meta);
+    }
+
+    /// Return the current contract branding metadata.
+    pub fn get_contract_meta(env: Env) -> ContractMetadata {
+        env.storage()
+            .instance()
+            .get(&DataKey::ContractMeta)
+            .expect("contract metadata not initialised")
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────
 
     fn _update_rewards(env: &Env, user: &Address) {
@@ -449,5 +497,42 @@ mod tests {
 
         assert_eq!(client.pending_rewards(&alice, &rwd1), 1_500);
         assert_eq!(client.pending_rewards(&bob, &rwd1), 500);
+    }
+
+    #[test]
+    fn test_update_contract_meta() {
+        let (env, contract_id, admin, _, _, _, _) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        let initial = client.get_contract_meta();
+        assert_eq!(initial.description, String::from_str(&env, ""));
+        assert_eq!(initial.icon_url, String::from_str(&env, ""));
+        assert_eq!(initial.website, String::from_str(&env, ""));
+
+        client.update_contract_meta(
+            &admin,
+            &String::from_str(&env, "Multi-token staking on Stellar"),
+            &String::from_str(&env, "https://example.com/icon.png"),
+            &String::from_str(&env, "https://example.com"),
+        );
+
+        let updated = client.get_contract_meta();
+        assert_eq!(updated.description, String::from_str(&env, "Multi-token staking on Stellar"));
+        assert_eq!(updated.icon_url, String::from_str(&env, "https://example.com/icon.png"));
+        assert_eq!(updated.website, String::from_str(&env, "https://example.com"));
+    }
+
+    #[test]
+    #[should_panic(expected = "only admin can update contract metadata")]
+    fn test_update_contract_meta_non_admin() {
+        let (env, contract_id, _, alice, _, _, _) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        client.update_contract_meta(
+            &alice,
+            &String::from_str(&env, "Hacked"),
+            &String::from_str(&env, ""),
+            &String::from_str(&env, ""),
+        );
     }
 }
