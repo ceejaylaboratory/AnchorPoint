@@ -13,18 +13,18 @@ jest.mock('@aws-sdk/client-s3', () => {
 });
 
 describe('StorageProvider', () => {
-  let mockS3Client: { send: jest.Mock };
+  let mockS3Client: S3Client;
   let storageProvider: StorageProvider;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockS3Client = new S3Client({});
+    mockS3Client = new S3Client({}) as any;
     storageProvider = new StorageProvider('test-bucket', mockS3Client);
   });
 
   describe('objectExists', () => {
     it('should return true if the object exists (HEAD request succeeds)', async () => {
-      mockS3Client.send.mockResolvedValue({});
+      (mockS3Client.send as jest.Mock).mockResolvedValue({});
 
       const exists = await storageProvider.objectExists('valid-file.pdf');
 
@@ -35,7 +35,7 @@ describe('StorageProvider', () => {
     it('should return false if the object is not found (error.name is NotFound)', async () => {
       const notFoundError = new Error('Not Found');
       notFoundError.name = 'NotFound';
-      mockS3Client.send.mockRejectedValue(notFoundError);
+      (mockS3Client.send as jest.Mock).mockRejectedValue(notFoundError);
 
       const exists = await storageProvider.objectExists('missing-file.pdf');
 
@@ -46,7 +46,7 @@ describe('StorageProvider', () => {
     it('should return false if the object is not found (error.name is NoSuchKey)', async () => {
       const noSuchKeyError = new Error('NoSuchKey');
       noSuchKeyError.name = 'NoSuchKey';
-      mockS3Client.send.mockRejectedValue(noSuchKeyError);
+      (mockS3Client.send as jest.Mock).mockRejectedValue(noSuchKeyError);
 
       const exists = await storageProvider.objectExists('missing-file.pdf');
 
@@ -57,7 +57,7 @@ describe('StorageProvider', () => {
     it('should return false if the response status code is 404', async () => {
       const error404 = new Error('Forbidden/NotFound') as Error & { $metadata?: { httpStatusCode: number } };
       error404.$metadata = { httpStatusCode: 404 };
-      mockS3Client.send.mockRejectedValue(error404);
+      (mockS3Client.send as jest.Mock).mockRejectedValue(error404);
 
       const exists = await storageProvider.objectExists('missing-file.pdf');
 
@@ -67,7 +67,7 @@ describe('StorageProvider', () => {
 
     it('should return false and log error for generic unexpected error', async () => {
       const genericError = new Error('S3 connection timed out');
-      mockS3Client.send.mockRejectedValue(genericError);
+      (mockS3Client.send as jest.Mock).mockRejectedValue(genericError);
 
       const exists = await storageProvider.objectExists('error-file.pdf');
 
