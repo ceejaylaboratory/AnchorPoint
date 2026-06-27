@@ -34,6 +34,33 @@ const cryptoMock = {
   decrypt: jest.fn((v: string) => v),
 };
 
+const storageProviderMock = {
+  generatePresignedPutUrl: jest.fn().mockResolvedValue('https://mock-bucket.mock.storage/kyc/test/field1/uuid?X-Mock-Signed=1'),
+  objectExists: jest.fn().mockResolvedValue(true),
+};
+
+const uploadStoreMock = {
+  create: jest.fn(() => ({
+    uploadId: 'test-uuid',
+    account: VALID_ACCOUNT,
+    fieldName: 'id_photo_front',
+    storageKey: '',
+    contentType: 'image/jpeg',
+    expiresAt: new Date(Date.now() + 900 * 1000),
+    status: 'PENDING',
+  })),
+  get: jest.fn(() => ({
+    uploadId: 'test-uuid',
+    account: VALID_ACCOUNT,
+    fieldName: 'id_photo_front',
+    storageKey: 'kyc/test/uuid/id_photo_front',
+    contentType: 'image/jpeg',
+    expiresAt: new Date(Date.now() + 900 * 1000),
+    status: 'PENDING',
+  })),
+  setStatus: jest.fn(),
+};
+
 jest.mock('../../lib/prisma', () => ({
   __esModule: true,
   default: prismaMock,
@@ -52,6 +79,23 @@ jest.mock('../../services/kyc-provider.service', () => ({
 jest.mock('../../services/crypto.service', () => ({
   __esModule: true,
   cryptoService: cryptoMock,
+}));
+
+jest.mock('../../services/storage-provider.service', () => ({
+  __esModule: true,
+  storageProvider: storageProviderMock,
+}));
+
+jest.mock('../../services/upload-store.service', () => ({
+  __esModule: true,
+  uploadStore: uploadStoreMock,
+}));
+
+jest.mock('../../config/env', () => ({
+  __esModule: true,
+  config: {
+    SEP12_MAX_FILE_SIZE_MB: 10,
+  },
 }));
 
 jest.mock('../../utils/logger', () => ({
@@ -83,6 +127,175 @@ const makeRes = (): Response => {
 describe('Sep12Controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('getUploadUrl', () => {
+    it('returns pre-signed URL when all parameters are valid', async () => {
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+          field_name: 'id_photo_front',
+          content_type: 'image/jpeg',
+          file_size: '1000000',
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        upload_id: 'test-uuid',
+        url: expect.any(String),
+        expires_at: expect.any(String),
+      }));
+      expect(storageProviderMock.generatePresignedPutUrl).toHaveBeenCalled();
+      expect(uploadStoreMock.create).toHaveBeenCalled();
+      expect(uploadStoreMock.setStatus).toHaveBeenCalledWith('test-uuid', 'PENDING');
+    });
+
+    it('returns 400 when required parameters are missing', async () => {
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'account, field_name, content_type, and file_size are required' });
+    });
+
+    it('returns 400 when content type is invalid', async () => {
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+          field_name: 'id_photo_front',
+          content_type: 'application/zip',
+          file_size: '1000000',
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('returns 400 when file size is larger than max allowed', async () => {
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+          field_name: 'id_photo_front',
+          content_type: 'image/jpeg',
+          file_size: '110000000',
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+  });
+
+  describe('confirmUpload', () => {
+    it('confirms upload when upload exists and file is present in storage', async () => {
+      const req = {
+        body: {
+          upload_id: 'test-uuid',
+          account: VALID_ACCOUNT,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({
+        upload_id: 'test-uuid',
+        status: 'COMPLETED',
+      });
+      expect(storageProviderMock.objectExists).toHaveBeenCalled();
+      expect(uploadStoreMock.setStatus).toHaveBeenCalledWith('test-uuid', 'COMPLETED');
+    });
+
+    it('returns 400 when required parameters are missing', async () => {
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('returns 404 when upload record not found', async () => {
+      uploadStoreMock.get.mockResolvedValueOnce(undefined);
+      const req = {
+        body: {
+          upload_id: 'invalid-uuid',
+          account: VALID_ACCOUNT,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('returns 403 when account does not match upload record', async () => {
+      uploadStoreMock.get.mockResolvedValueOnce({
+        uploadId: 'test-uuid',
+        account: 'GBZXN7PIRZGNMHGA7MUUUF4GW3F55GQRQ5UKMJTDEFEKTGW4RHFDQLNZ',
+        fieldName: 'id_photo_front',
+        storageKey: 'kyc/test/uuid/id_photo_front',
+        contentType: 'image/jpeg',
+        expiresAt: new Date(Date.now() + 900 * 1000),
+        status: 'PENDING',
+      });
+      const req = {
+        body: {
+          upload_id: 'test-uuid',
+          account: VALID_ACCOUNT,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('returns 422 when file not found in storage', async () => {
+      storageProviderMock.objectExists.mockResolvedValueOnce(false);
+      const req = {
+        body: {
+          upload_id: 'test-uuid',
+          account: VALID_ACCOUNT,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(422);
+    });
   });
 
   describe('putCustomer', () => {
