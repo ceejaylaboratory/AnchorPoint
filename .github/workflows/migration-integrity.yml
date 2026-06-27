@@ -143,6 +143,10 @@ jobs:
               core.warning(`Unable to comment migration report on PR: ${error.message}`);
             }
 
+      - name: Cleanup test artifacts
+        if: always()
+        run: rm -f backend/migrate-status.txt backend/migration-report.md
+
   staging-migration-test:
     name: Test Migration on Staging Clone
     runs-on: ubuntu-latest

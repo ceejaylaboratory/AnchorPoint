@@ -127,3 +127,7 @@ jobs:
         env:
           DATABASE_URL: "file:./test.db"
         run: npm test
+
+      - name: Cleanup test artifacts
+        if: always()
+        run: rm -rf coverage logs test.db* migration-status.md

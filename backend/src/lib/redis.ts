@@ -30,6 +30,7 @@ export const redis = isTest
       set: createNoop<(key: string, value: string) => Promise<'OK'>>(Promise.resolve('OK')),
       del: createNoop<(key: string) => Promise<number>>(Promise.resolve(1)),
       publish: createNoop<(channel: string, message: string) => Promise<number>>(Promise.resolve(1)),
+      ping: createNoop<() => Promise<string>>(Promise.resolve('PONG')),
     } as any)
 
 

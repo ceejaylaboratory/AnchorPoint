@@ -27,7 +27,6 @@ const SEP24Flow = lazy(() => import('./components/SEP24Flow'));
 const KycStatusView = lazy(() => import('./components/KycStatusView'));
 const NotificationCenter = lazy(() => import('./components/NotificationCenter'));
 const NotificationPreferences = lazy(() => import('./components/NotificationPreferences'));
-const AdminControls = lazy(() => import('./components/AdminControls'));
 const Sep38QuotePanel = lazy(() => import('./components/Sep38QuotePanel'));
 const ServiceStatusPanel = lazy(() => import('./components/ServiceStatusPanel'));
 const SettingsView = lazy(() => import('./components/SettingsView'));
