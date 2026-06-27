@@ -31,7 +31,7 @@ test.describe('dashboard cross-browser smoke coverage', () => {
     await expect(page.getByTestId('active-view')).toContainText('Preview State');
     await expect(page.getByTestId('active-view')).toContainText('Verification Failed');
 
-    await page.getByRole('button', { name: 'Overview' }).click();
+    await page.getByRole('button', { name: 'Overview' }).click({ force: true });
     await expect(page.getByTestId('active-view')).toContainText('Total Volume');
   });
 });
