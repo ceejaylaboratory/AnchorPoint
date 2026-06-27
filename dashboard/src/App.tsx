@@ -50,6 +50,22 @@ const defaultUiConfig: UiConfig = {
       { key: 'firstName', label: 'First Name', required: true },
       { key: 'lastName', label: 'Last Name', required: true },
       { key: 'country', label: 'Country', required: true },
+      {
+        key: 'id_photo_front',
+        label: 'Government ID (Front)',
+        required: true,
+        type: 'file',
+        accept: 'image/jpeg,image/png,application/pdf',
+        helpText: 'Clear photo of the front of your government-issued ID.',
+      },
+      {
+        key: 'proof_of_address',
+        label: 'Proof of Address',
+        required: true,
+        type: 'file',
+        accept: 'image/jpeg,image/png,application/pdf',
+        helpText: 'Utility bill or bank statement dated within the last 90 days.',
+      },
     ],
   },
 };
@@ -399,7 +415,13 @@ const App = () => {
                 {activeTab === 'notification-preferences' && (
                   <NotificationPreferences apiBaseUrl={apiBaseUrl} />
                 )}
-                {activeTab === 'kyc' && <KycStatusView uiConfig={uiConfig} />}
+                {activeTab === 'kyc' && (
+                  <KycStatusView
+                    uiConfig={uiConfig}
+                    apiBaseUrl={apiBaseUrl}
+                    account={wallet?.publicKey}
+                  />
+                )}
                 {activeTab === 'settings' && (
                   <SettingsView uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />
                 )}

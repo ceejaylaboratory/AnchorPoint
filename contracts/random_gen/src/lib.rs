@@ -26,12 +26,21 @@ pub enum DataKey {
 #[contract]
 pub struct RandomGen;
 
+/// Maximum participants per generation to bound persistent storage footprint.
+pub const MAX_PARTICIPANTS: u32 = 64;
+
+/// Persistent entries per participant: Commit + Reveal (32 bytes each).
+pub const PERSISTENT_BYTES_PER_PARTICIPANT: u32 = 64;
+
 #[contractimpl]
 impl RandomGen {
     /// Initialize the contract with an admin and the minimum number of participants.
     pub fn initialize(env: Env, admin: Address, min_commits: u32) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
+        }
+        if min_commits == 0 || min_commits > MAX_PARTICIPANTS {
+            panic!("min_commits out of allowed range");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::MinCommits, &min_commits);
@@ -55,9 +64,12 @@ impl RandomGen {
             panic!("already committed");
         }
 
-        env.storage().persistent().set(&commit_key, &hash);
-
         let mut committers: Vec<Address> = env.storage().instance().get(&DataKey::Committers).unwrap();
+        if committers.len() >= MAX_PARTICIPANTS as u32 {
+            panic!("participant limit reached");
+        }
+
+        env.storage().persistent().set(&commit_key, &hash);
         committers.push_back(user.clone());
         env.storage().instance().set(&DataKey::Committers, &committers);
 
@@ -137,6 +149,13 @@ impl RandomGen {
         env.storage().instance().set(&DataKey::RandomSeed, &final_seed);
         env.storage().instance().set(&DataKey::Phase, &Phase::Finished);
 
+        // Release ephemeral commit/reveal persistent entries after seed is finalized.
+        for user in committers.iter() {
+            env.storage().persistent().remove(&DataKey::Commit(user.clone()));
+            env.storage().persistent().remove(&DataKey::Reveal(user.clone()));
+        }
+        env.storage().instance().remove(&DataKey::Committers);
+
         // Emit final event
         env.events().publish(
             (symbol_short!("rng_fin"),),
@@ -154,6 +173,11 @@ impl RandomGen {
     /// Get current phase
     pub fn get_phase(env: Env) -> Phase {
         env.storage().instance().get(&DataKey::Phase).unwrap_or(Phase::Commit)
+    }
+
+    /// Returns documented storage limits for operators and auditors.
+    pub fn storage_limits() -> (u32, u32) {
+        (MAX_PARTICIPANTS, PERSISTENT_BYTES_PER_PARTICIPANT)
     }
 }
 
@@ -204,5 +228,23 @@ mod tests {
         };
         assert_eq!(seed.to_array(), expected_seed_bytes);
         assert_eq!(client.get_random_seed().to_array(), expected_seed_bytes);
+    }
+
+    #[test]
+    #[should_panic(expected = "min_commits out of allowed range")]
+    fn test_rejects_excessive_min_commits() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, RandomGen);
+        let client = RandomGenClient::new(&env, &contract_id);
+        client.initialize(&admin, &(MAX_PARTICIPANTS + 1));
+    }
+
+    #[test]
+    fn test_storage_limits_documented() {
+        let (max_participants, bytes_per_participant) = RandomGen::storage_limits();
+        assert_eq!(max_participants, 64);
+        assert_eq!(bytes_per_participant, 64);
     }
 }

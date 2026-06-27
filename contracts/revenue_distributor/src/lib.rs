@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env,
+    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Vec,
 };
 
 #[contracttype]
@@ -10,12 +10,16 @@ pub enum DataKey {
     Treasury,
     GovStakers,
     GovShareBps,
+    PayoutTokens,
+    PayoutCursor,
 }
 
 #[contract]
 pub struct RevenueDistributor;
 
 const MAX_BPS: u32 = 10000;
+/// Max tokens processed per call to stay within Soroban instruction limits.
+const MAX_TOKENS_PER_BATCH: u32 = 10;
 
 #[contractimpl]
 impl RevenueDistributor {
@@ -52,13 +56,77 @@ impl RevenueDistributor {
         env.storage().instance().set(&DataKey::GovShareBps, &gov_share_bps);
     }
 
+    /// Register a token for batched payout distribution (admin only).
+    pub fn register_payout_token(env: Env, admin: Address, token_addr: Address) {
+        admin.require_auth();
+        let current_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert_eq!(admin, current_admin, "not authorized");
+
+        let mut tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::PayoutTokens)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for existing in tokens.iter() {
+            if existing == token_addr {
+                return;
+            }
+        }
+
+        tokens.push_back(token_addr);
+        env.storage().instance().set(&DataKey::PayoutTokens, &tokens);
+    }
+
     /// Distributes the balance of a specific token held by this contract.
     pub fn distribute(env: Env, token_addr: Address) {
+        Self::distribute_token(&env, &token_addr);
+    }
+
+    /// Distributes balances for registered payout tokens in bounded batches.
+    /// Returns the next cursor index (0 when complete).
+    pub fn distribute_batch(env: Env, start_index: u32, max_tokens: u32) -> u32 {
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::PayoutTokens)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if tokens.is_empty() {
+            return 0;
+        }
+
+        let batch_limit = if max_tokens == 0 {
+            MAX_TOKENS_PER_BATCH
+        } else {
+            max_tokens.min(MAX_TOKENS_PER_BATCH)
+        };
+
+        let mut index = start_index;
+        let mut processed = 0_u32;
+
+        while index < tokens.len() && processed < batch_limit {
+            if let Some(token_addr) = tokens.get(index) {
+                Self::distribute_token(&env, &token_addr);
+            }
+            index += 1;
+            processed += 1;
+        }
+
+        let next_cursor = if index >= tokens.len() { 0 } else { index };
+        env.storage()
+            .instance()
+            .set(&DataKey::PayoutCursor, &next_cursor);
+
+        next_cursor
+    }
+
+    fn distribute_token(env: &Env, token_addr: &Address) {
         let gov_share_bps: u32 = env.storage().instance().get(&DataKey::GovShareBps).unwrap();
         let treasury: Address = env.storage().instance().get(&DataKey::Treasury).unwrap();
         let gov_stakers: Address = env.storage().instance().get(&DataKey::GovStakers).unwrap();
 
-        let token_client = token::Client::new(&env, &token_addr);
+        let token_client = token::Client::new(env, token_addr);
         let balance = token_client.balance(&env.current_contract_address());
 
         if balance == 0 {
@@ -75,9 +143,8 @@ impl RevenueDistributor {
             token_client.transfer(&env.current_contract_address(), &treasury, &treasury_amount);
         }
 
-        // Emit event for indexer optimization
         env.events().publish(
-            (symbol_short!("distrib"), token_addr),
+            (symbol_short!("distrib"), token_addr.clone()),
             (gov_amount, treasury_amount),
         );
     }
@@ -156,5 +223,19 @@ mod tests {
         distributor_client.set_shares(&admin, &8000); // Change to 80%
         let (_, _, gov_share) = distributor_client.get_config();
         assert_eq!(gov_share, 8000);
+    }
+
+    #[test]
+    fn test_distribute_batch_bounded() {
+        let (env, distributor_id, admin, treasury, gov_stakers, token_addr) = setup();
+        let distributor_client = RevenueDistributorClient::new(&env, &distributor_id);
+        let token_client = token::Client::new(&env, &token_addr);
+
+        distributor_client.register_payout_token(&admin, &token_addr);
+
+        let next = distributor_client.distribute_batch(&0, &10);
+        assert_eq!(next, 0);
+        assert_eq!(token_client.balance(&gov_stakers), 600);
+        assert_eq!(token_client.balance(&treasury), 400);
     }
 }
