@@ -99,6 +99,8 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:latest
     container_name: anchorpoint-jaeger
+    profiles:
+      - monitoring
     ports:
       - "16686:16686"  # Jaeger UI
       - "14268:14268"  # HTTP collector
@@ -114,6 +116,8 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: anchorpoint-prometheus
+    profiles:
+      - monitoring
     ports:
       - "9090:9090"
     volumes:
@@ -134,6 +138,8 @@ services:
   alertmanager:
     image: prom/alertmanager:latest
     container_name: anchorpoint-alertmanager
+    profiles:
+      - monitoring
     ports:
       - "9093:9093"
     volumes:
@@ -150,6 +156,8 @@ services:
   blackbox-exporter:
     image: prom/blackbox-exporter:latest
     container_name: anchorpoint-blackbox-exporter
+    profiles:
+      - monitoring
     ports:
       - "9115:9115"
     volumes:

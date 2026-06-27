@@ -55,6 +55,8 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:latest
     container_name: anchorpoint-jaeger-testnet
+    profiles:
+      - monitoring
     ports:
       - "16686:16686"
       - "14268:14268"
@@ -70,6 +72,8 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: anchorpoint-prometheus-testnet
+    profiles:
+      - monitoring
     ports:
       - "9090:9090"
     volumes:
