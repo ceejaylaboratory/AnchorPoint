@@ -32,6 +32,16 @@ export const uploadStore = {
     if (r) r.status = status;
   },
 
+  setStorageKey(uploadId: string, storageKey: string): void {
+    const r = records.get(uploadId);
+    if (r) r.storageKey = storageKey;
+  },
+
+  /** Test helper: clear all in-memory records. */
+  _reset(): void {
+    records.clear();
+  },
+
   expireStale(): number {
     const now = new Date();
     let count = 0;

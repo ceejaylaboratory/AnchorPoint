@@ -15,11 +15,56 @@ type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 const ALLOWED_CONTENT_TYPES = (process.env.UPLOAD_ALLOWED_CONTENT_TYPES ?? 'image/jpeg,image/png,application/pdf').split(',');
 const UPLOAD_URL_EXPIRY_SECONDS = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
 const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
-
-type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
+const UPLOAD_ID_SUFFIX = '_upload_id';
 
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
+
+type DocumentResolution =
+  | { documents: Record<string, string>; kycFields: Record<string, string> }
+  | { error: string; status: 400 | 403 };
+
+/** Resolve KYC document references from pre-signed upload IDs and/or multipart files. */
+export function resolveCustomerDocuments(
+  account: string,
+  otherFields: Record<string, string>,
+  uploadedFiles?: UploadedFiles
+): DocumentResolution {
+  const kycFields: Record<string, string> = {};
+  const documents: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(otherFields)) {
+    if (key.endsWith(UPLOAD_ID_SUFFIX)) {
+      const fieldName = key.slice(0, -UPLOAD_ID_SUFFIX.length);
+      const record = uploadStore.get(value);
+
+      if (!record || record.status === 'EXPIRED') {
+        return { error: `Upload not found or expired for field: ${fieldName}`, status: 400 };
+      }
+      if (record.status !== 'COMPLETED') {
+        return { error: `Upload not confirmed for field: ${fieldName}`, status: 400 };
+      }
+      if (record.account !== account) {
+        return { error: `Upload account does not match request for field: ${fieldName}`, status: 403 };
+      }
+
+      documents[fieldName] =
+        record.storageKey || `${KEY_PREFIX}/${account}/${record.fieldName}/${value}`;
+    } else {
+      kycFields[key] = value;
+    }
+  }
+
+  if (uploadedFiles) {
+    for (const field of Object.keys(uploadedFiles)) {
+      if (!documents[field]) {
+        documents[field] = uploadedFiles[field][0].path;
+      }
+    }
+  }
+
+  return { documents, kycFields };
+}
 
 export class Sep12Controller {
   private toDbStatus(status: KycStatus): KYCStatus {
@@ -81,14 +126,13 @@ export class Sep12Controller {
       }
 
       const uploadedFiles = (req as AuthRequest & { files?: UploadedFiles }).files;
-      const documents: Record<string, string> = {};
-      if (uploadedFiles) {
-        for (const field of Object.keys(uploadedFiles)) {
-          documents[field] = uploadedFiles[field][0].path;
-        }
+      const resolution = resolveCustomerDocuments(account, otherFields, uploadedFiles);
+      if ('error' in resolution) {
+        return res.status(resolution.status).json({ error: resolution.error });
       }
+      const { documents, kycFields } = resolution;
 
-      const extraPayload: Record<string, unknown> = { ...otherFields };
+      const extraPayload: Record<string, unknown> = { ...kycFields };
       if (Object.keys(documents).length > 0) {
         extraPayload.documents = documents;
       }
@@ -117,7 +161,7 @@ export class Sep12Controller {
         firstName: first_name,
         lastName: last_name,
         email: email_address,
-        extraFields: otherFields,
+        extraFields: kycFields,
       };
 
       let providerStatus = KycStatus.PENDING;
@@ -301,10 +345,7 @@ export class Sep12Controller {
       const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
       const record = uploadStore.create(account, field_name, '', content_type, expiresAt);
       const storageKey = `${KEY_PREFIX}/${account}/${field_name}/${record.uploadId}`;
-      uploadStore.setStatus(record.uploadId, 'PENDING');
-      // Persist the computed storage key back onto the record via a second set
-      const storedRecord = uploadStore.get(record.uploadId)!;
-      (storedRecord as any).storageKey = storageKey;
+      uploadStore.setStorageKey(record.uploadId, storageKey);
 
       const url = await storageProvider.generatePresignedPutUrl(storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
 
@@ -345,7 +386,9 @@ export class Sep12Controller {
         return res.status(403).json({ error: 'account does not match upload record' });
       }
 
-      const exists = await storageProvider.objectExists((record as any).storageKey ?? `${KEY_PREFIX}/${account}/${record.fieldName}/${upload_id}`);
+      const exists = await storageProvider.objectExists(
+        record.storageKey || `${KEY_PREFIX}/${account}/${record.fieldName}/${upload_id}`
+      );
       if (!exists) {
         return res.status(422).json({ error: 'File not found in storage; upload may not have completed' });
       }

@@ -71,6 +71,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
 }));
 
 import { sep12Controller } from './sep12.controller';
+import { uploadStore } from '../../services/upload-store.service';
 
 const makeRes = (): Response => {
   const res: Partial<Response> = {};
@@ -83,6 +84,7 @@ const makeRes = (): Response => {
 describe('Sep12Controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    uploadStore._reset();
   });
 
   describe('putCustomer', () => {
@@ -254,6 +256,203 @@ describe('Sep12Controller', () => {
         { id_photo_front: '/uploads/kyc/id-front.jpg' }
       );
       expect(res.status).toHaveBeenCalledWith(202);
+    });
+
+    it('resolves completed upload_id fields to storage keys', async () => {
+      const expiresAt = new Date(Date.now() + 60_000);
+      const record = uploadStore.create(
+        VALID_ACCOUNT,
+        'id_photo_front',
+        '',
+        'image/jpeg',
+        expiresAt
+      );
+      const storageKey = `kyc/${VALID_ACCOUNT}/id_photo_front/${record.uploadId}`;
+      uploadStore.setStorageKey(record.uploadId, storageKey);
+      uploadStore.setStatus(record.uploadId, 'COMPLETED');
+
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+          first_name: 'Jane',
+          id_photo_front_upload_id: record.uploadId,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', publicKey: VALID_ACCOUNT });
+      prismaMock.kycCustomer.upsert.mockResolvedValue({ id: 'k1' });
+      providerMock.submitCustomer.mockResolvedValue({
+        success: true,
+        status: 'PENDING',
+        providerRef: 'mock_upload',
+      });
+
+      await sep12Controller.putCustomer(req, res);
+
+      expect(providerMock.submitCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({ account: VALID_ACCOUNT, firstName: 'Jane', extraFields: {} }),
+        { id_photo_front: storageKey }
+      );
+      expect(res.status).toHaveBeenCalledWith(202);
+    });
+
+    it('returns 400 when upload_id is not confirmed', async () => {
+      const expiresAt = new Date(Date.now() + 60_000);
+      const record = uploadStore.create(
+        VALID_ACCOUNT,
+        'id_photo_front',
+        'kyc/pending-key',
+        'image/jpeg',
+        expiresAt
+      );
+
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+          id_photo_front_upload_id: record.uploadId,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', publicKey: VALID_ACCOUNT });
+
+      await sep12Controller.putCustomer(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'Upload not confirmed for field: id_photo_front',
+      });
+      expect(providerMock.submitCustomer).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 when upload_id belongs to a different account', async () => {
+      const expiresAt = new Date(Date.now() + 60_000);
+      const record = uploadStore.create(
+        'GBZXN7PIRZGNMHGA7MUUUF4GW3F55GQRQ5UKMJTDEFEKTGW4RHFDQLNZ',
+        'id_photo_front',
+        'kyc/other/key',
+        'image/jpeg',
+        expiresAt
+      );
+      uploadStore.setStatus(record.uploadId, 'COMPLETED');
+
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+          id_photo_front_upload_id: record.uploadId,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', publicKey: VALID_ACCOUNT });
+
+      await sep12Controller.putCustomer(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'Upload account does not match request for field: id_photo_front',
+      });
+    });
+
+    it('prefers upload_id over a direct multipart attachment for the same field', async () => {
+      const expiresAt = new Date(Date.now() + 60_000);
+      const record = uploadStore.create(
+        VALID_ACCOUNT,
+        'id_photo_front',
+        '',
+        'image/jpeg',
+        expiresAt
+      );
+      const storageKey = `kyc/${VALID_ACCOUNT}/id_photo_front/${record.uploadId}`;
+      uploadStore.setStorageKey(record.uploadId, storageKey);
+      uploadStore.setStatus(record.uploadId, 'COMPLETED');
+
+      const req = {
+        body: {
+          account: VALID_ACCOUNT,
+          first_name: 'Jane',
+          id_photo_front_upload_id: record.uploadId,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+        files: {
+          id_photo_front: [{ path: '/uploads/kyc/id-front.jpg' }],
+        },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', publicKey: VALID_ACCOUNT });
+      prismaMock.kycCustomer.upsert.mockResolvedValue({ id: 'k1' });
+      providerMock.submitCustomer.mockResolvedValue({
+        success: true,
+        status: 'PENDING',
+        providerRef: 'mock_pref',
+      });
+
+      await sep12Controller.putCustomer(req, res);
+
+      expect(providerMock.submitCustomer).toHaveBeenCalledWith(
+        expect.objectContaining({ account: VALID_ACCOUNT }),
+        { id_photo_front: storageKey }
+      );
+    });
+
+    it('produces identical provider submissions for upload_id and multipart paths', async () => {
+      const expiresAt = new Date(Date.now() + 60_000);
+      const record = uploadStore.create(
+        VALID_ACCOUNT,
+        'id_photo_front',
+        '',
+        'image/jpeg',
+        expiresAt
+      );
+      const storageKey = `kyc/${VALID_ACCOUNT}/id_photo_front/${record.uploadId}`;
+      uploadStore.setStorageKey(record.uploadId, storageKey);
+      uploadStore.setStatus(record.uploadId, 'COMPLETED');
+
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', publicKey: VALID_ACCOUNT });
+      prismaMock.kycCustomer.upsert.mockResolvedValue({ id: 'k1' });
+      providerMock.submitCustomer.mockResolvedValue({
+        success: true,
+        status: 'PENDING',
+        providerRef: 'mock_same',
+      });
+
+      const uploadIdReq = {
+        body: {
+          account: VALID_ACCOUNT,
+          first_name: 'Jane',
+          id_photo_front_upload_id: record.uploadId,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const multipartReq = {
+        body: { account: VALID_ACCOUNT, first_name: 'Jane' },
+        user: { publicKey: VALID_ACCOUNT },
+        files: {
+          id_photo_front: [{ path: storageKey }],
+        },
+      } as unknown as Request;
+
+      await sep12Controller.putCustomer(uploadIdReq, makeRes());
+      const uploadIdCall = providerMock.submitCustomer.mock.calls[0];
+
+      jest.clearAllMocks();
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', publicKey: VALID_ACCOUNT });
+      prismaMock.kycCustomer.upsert.mockResolvedValue({ id: 'k1' });
+      providerMock.submitCustomer.mockResolvedValue({
+        success: true,
+        status: 'PENDING',
+        providerRef: 'mock_same',
+      });
+
+      await sep12Controller.putCustomer(multipartReq, makeRes());
+      const multipartCall = providerMock.submitCustomer.mock.calls[0];
+
+      expect(uploadIdCall).toEqual(multipartCall);
     });
 
     it('returns 202 with PROCESSING when provider submission fails', async () => {
