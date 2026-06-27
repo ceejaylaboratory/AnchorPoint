@@ -9,9 +9,11 @@ export default {
       colors: {
         primary: 'var(--primary)',
         'primary-foreground': 'var(--primary-foreground)',
+        'primary-text': 'var(--primary-text)',
         background: 'var(--background)',
         card: 'var(--card)',
         accent: 'var(--accent)',
+        'accent-text': 'var(--accent-text)',
       },
       fontFamily: {
         sans: ['Inter', 'sans-serif'],

@@ -209,6 +209,14 @@ describe('AdvancedCacheService', () => {
       };
       mockRedis.get.mockResolvedValueOnce(JSON.stringify(l2Entry));
 
+      cache['setL1'](key, oldValue, 1, {
+        ttlSeconds: 1,
+        staleWhileRevalidate: true,
+        staleTtlSeconds: 1,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+
       const fetchFn = jest.fn().mockResolvedValue(newValue);
 
       const result = await cache.cacheAside(key, fetchFn, {

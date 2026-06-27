@@ -123,7 +123,7 @@ impl Registry {
                 .unwrap_or(Vec::new(&env));
             
             // Check if already in list to avoid duplicates
-            let already_registered = contract_types.iter().any(|t| t == &contract_type);
+            let already_registered = contract_types.iter().any(|t| t == contract_type);
             if !already_registered {
                 contract_types.push_back(contract_type.clone());
                 env.storage().instance().set(&DataKey::AllContractTypes, &contract_types);
@@ -156,7 +156,7 @@ impl Registry {
         env.storage().instance().set(&contract_key, &contract_info);
         
         env.events()
-            .publish((symbol_short!("deactivate"), contract_type), true);
+            .publish((symbol_short!("deactiv"), contract_type), true);
     }
 
     /// Reactivate a previously deactivated contract
@@ -203,7 +203,13 @@ impl Registry {
             .get(&DataKey::AllContractTypes)
             .unwrap_or(Vec::new(&env));
         
-        contract_types = contract_types.filter(|t| t != &contract_type);
+        let mut new_types: Vec<String> = Vec::new(&env);
+        for t in contract_types.into_iter() {
+            if t != contract_type {
+                new_types.push_back(t);
+            }
+        }
+        contract_types = new_types;
         env.storage().instance().set(&DataKey::AllContractTypes, &contract_types);
         
         env.events()
@@ -220,7 +226,7 @@ impl Registry {
         env.storage().instance().set(&DataKey::Admin, &new_admin);
         
         env.events()
-            .publish((symbol_short!("transfer_admin"), admin), new_admin);
+            .publish((symbol_short!("xfer_admn"), admin), new_admin);
     }
 
     /// Pause registry operations (emergency function)

@@ -60,7 +60,6 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
         throw new Error('Failed to switch network');
       }
 
-      const data = await response.json();
       setNetwork(targetNetwork);
       showStatus(`Switched Stellar network to ${targetNetwork} successfully.`, false);
     } catch (err) {
@@ -175,7 +174,7 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
             type="button"
             onClick={() => setIsQueueModalOpen(true)}
             disabled={loading}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-400 transition-all hover:bg-rose-500/25 disabled:opacity-40 shrink-0"
+            className="action-button flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-400 hover:bg-rose-500/25 disabled:opacity-40 shrink-0"
           >
             Purge Queues
           </button>

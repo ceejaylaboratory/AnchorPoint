@@ -1,7 +1,6 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../../lib/prisma';
-import { Prisma } from '@prisma/client';
 import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 import { stellarService } from '../../services/stellar.service';
@@ -23,6 +22,8 @@ const querySchema = z.object({
 const submitSchema = z.object({
   xdr: z.string().min(1, 'Transaction XDR is required'),
 });
+
+const escapeLikePattern = (value: string) => value.replace(/'/g, "''");
 
 
 /**
@@ -121,28 +122,28 @@ router.get('/', authMiddleware, validate({ query: querySchema }), async (req: Au
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    const eventSearchClauses: Prisma.Sql[] = [];
+    const eventSearchClauses: string[] = [];
 
     if (sender) {
-      const senderPattern = `%${sender}%`;
-      eventSearchClauses.push(Prisma.sql`(topics LIKE ${senderPattern} OR value LIKE ${senderPattern})`);
+      const senderPattern = `'%${escapeLikePattern(sender)}%'`;
+      eventSearchClauses.push(`(topics LIKE ${senderPattern} OR value LIKE ${senderPattern})`);
     }
 
     if (receiver) {
-      const receiverPattern = `%${receiver}%`;
-      eventSearchClauses.push(Prisma.sql`(topics LIKE ${receiverPattern} OR value LIKE ${receiverPattern})`);
+      const receiverPattern = `'%${escapeLikePattern(receiver)}%'`;
+      eventSearchClauses.push(`(topics LIKE ${receiverPattern} OR value LIKE ${receiverPattern})`);
     }
 
     if (memo) {
-      const memoPattern = `%${memo}%`;
-      eventSearchClauses.push(Prisma.sql`(topics LIKE ${memoPattern} OR value LIKE ${memoPattern})`);
+      const memoPattern = `'%${escapeLikePattern(memo)}%'`;
+      eventSearchClauses.push(`(topics LIKE ${memoPattern} OR value LIKE ${memoPattern})`);
     }
 
-    let matchingTxHashes: string[] | undefined;
+    let matchingTxHashes: string[] = [];
 
     if (eventSearchClauses.length > 0) {
-      const eventRows = await prisma.$queryRaw<Array<{ txHash: string }>>(
-        Prisma.sql`SELECT DISTINCT txHash FROM "ContractEvent" WHERE ${Prisma.join(eventSearchClauses, ' AND ')}`
+      const eventRows = await prisma.$queryRawUnsafe<{ txHash: string }[]>(
+        `SELECT DISTINCT txHash FROM "ContractEvent" WHERE ${eventSearchClauses.join(' AND ')}`
       );
 
       matchingTxHashes = eventRows.map((row: { txHash: string }) => row.txHash).filter(Boolean);
@@ -160,7 +161,7 @@ router.get('/', authMiddleware, validate({ query: querySchema }), async (req: Au
     const whereClause: any = {
       userId: user.id,
       ...(assetCode && { assetCode }),
-      ...(matchingTxHashes ? { stellarTxId: { in: matchingTxHashes } } : {}),
+      ...(matchingTxHashes.length > 0 ? { stellarTxId: { in: matchingTxHashes } } : {}),
     };
 
     const skip = (page - 1) * limit;
@@ -273,4 +274,3 @@ router.post('/submit', authMiddleware, submissionLimiter, validate({ body: submi
 });
 
 export default router;
-

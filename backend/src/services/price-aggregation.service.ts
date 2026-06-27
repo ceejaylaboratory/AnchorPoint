@@ -428,10 +428,6 @@ export class PriceAggregationService {
     asset: string,
     minSources: number
   ): Promise<AggregatedPrice> {
-    if (process.env.NODE_ENV === 'test') {
-      throw new Error('Skip external price aggregation in test environment');
-    }
-
     const sourcePromises = Array.from(this.sources.values()).map((source) =>
       source.fetchPrice(asset).catch((err): PriceSourceResult => ({
         source: 'unknown',

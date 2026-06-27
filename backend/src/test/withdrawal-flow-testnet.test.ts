@@ -36,6 +36,7 @@ const mockPrisma = prisma as jest.Mocked<typeof prisma>;
 
 const TESTNET_INTERACTIVE_URL = 'https://testnet.anchorpoint.example';
 const WITHDRAW_PATH = '/transactions/withdraw/interactive';
+const VALID_ACCOUNT = 'GCM5WPR4DDR24FSAX5LIEM4J7AI3KOWJYANSXEPKYXCSZOTAYXE75AFN';
 
 function buildApp(): Express {
   const app = express();
@@ -162,10 +163,10 @@ describe('Withdrawal Flow – Successful Interactive URL', () => {
   it('includes account and amount in the redirect URL when provided', async () => {
     const res = await request(app)
       .post(WITHDRAW_PATH)
-      .send({ asset_code: 'USDC', account: 'GTESTACCOUNT', amount: '250.00' });
+      .send({ asset_code: 'USDC', account: VALID_ACCOUNT, amount: '250.00' });
 
     const parsed = new URL(res.body.url);
-    expect(parsed.searchParams.get('account')).toBe('GTESTACCOUNT');
+      expect(parsed.searchParams.get('account')).toBe(VALID_ACCOUNT);
     expect(parsed.searchParams.get('amount')).toBe('250.00');
   });
 });
@@ -187,7 +188,7 @@ describe('Withdrawal Flow – Withdrawal-Specific Parameters', () => {
   it('returns a valid interactive URL for USD asset on testnet', async () => {
     const res = await request(app)
       .post(WITHDRAW_PATH)
-      .send({ asset_code: 'USD', account: 'GTESTACCOUNT', amount: '100' });
+      .send({ asset_code: 'USD', account: VALID_ACCOUNT, amount: '100' });
 
     expect(res.statusCode).toBe(200);
     const parsed = new URL(res.body.url);
@@ -200,14 +201,14 @@ describe('Withdrawal Flow – Withdrawal-Specific Parameters', () => {
       .post(WITHDRAW_PATH)
       .send({
         asset_code: 'USDC',
-        account: 'GTESTACCOUNT',
+        account: VALID_ACCOUNT,
         amount: '500.00',
         lang: 'es',
       });
 
     const parsed = new URL(res.body.url);
     expect(parsed.searchParams.get('asset_code')).toBe('USDC');
-    expect(parsed.searchParams.get('account')).toBe('GTESTACCOUNT');
+      expect(parsed.searchParams.get('account')).toBe(VALID_ACCOUNT);
     expect(parsed.searchParams.get('amount')).toBe('500.00');
     expect(parsed.searchParams.get('lang')).toBe('es');
   });

@@ -116,7 +116,7 @@ impl LiquidStaking {
         }
 
         // Topic: event name only; from + amount in data.
-        env.events().publish(symbol_short!("dep_rwd"), (from, amount));
+        env.events().publish((symbol_short!("dep_rwd"),), (from, amount));
     }
 
     pub fn stake(env: Env, user: Address, amount: i128, lock_duration: u64) -> u64 {
@@ -192,8 +192,7 @@ impl LiquidStaking {
         env.storage().instance().set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
 
         // Topic: event name only; user + token_id + amount + lock_time in data.
-        env.events().publish(symbol_short!("staked"), (user, token_id, amount, lock_time));
-        env.events().publish((symbol_short!("staked"), user, token_id), (amount, lock_time));
+        env.events().publish((symbol_short!("staked"),), (user, token_id, amount, lock_time));
         
         token_id
     }
@@ -250,8 +249,7 @@ impl LiquidStaking {
         );
 
         // Topic: event name only; user + token_id + amount in data.
-        env.events().publish(symbol_short!("unstaked"), (user, token_id, amount));
-        env.events().publish((symbol_short!("unstaked"), user, token_id), amount);
+        env.events().publish((symbol_short!("unstaked"),), (user, token_id, amount));
     }
 
     pub fn claim(env: Env, user: Address, token_id: u64) -> i128 {
@@ -280,8 +278,7 @@ impl LiquidStaking {
             );
 
             // Topic: event name only; user + token_id + reward in data.
-            env.events().publish(symbol_short!("claimed"), (user, token_id, reward));
-            env.events().publish((symbol_short!("claimed"), user, token_id), reward);
+            env.events().publish((symbol_short!("claimed"),), (user, token_id, reward));
         }
 
         Self::_sync_nft_metadata(&env, token_id);

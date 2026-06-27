@@ -51,7 +51,6 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     }
   }, [isOpen]);
 
-  // Poll for new notifications every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       fetchNotifications();
@@ -119,7 +118,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative rounded-lg border border-slate-700 bg-slate-900 p-2 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+        className="action-button relative rounded-lg border border-slate-700 bg-slate-900 p-2 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         aria-label={`Notifications ${unreadCount > 0 ? `(${unreadCount} unread)` : ''}`}
         aria-expanded={isOpen}
       >
@@ -174,7 +173,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-1">{getStatusIcon(notification.status)}</div>
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm text-slate-200">{notification.message}</p>
                           <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                             <span className="capitalize">{notification.type.toLowerCase()}</span>
@@ -196,7 +195,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                     setIsOpen(false);
                     onViewAll?.();
                   }}
-                  className="w-full rounded-lg bg-slate-800 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
+                  className="action-button w-full rounded-lg bg-slate-800 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
                 >
                   View All Notifications
                 </button>
