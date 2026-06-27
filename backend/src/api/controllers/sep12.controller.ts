@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import prisma from '../../lib/prisma';
 import { cryptoService } from '../../services/crypto.service';
 import { kycProvider, KycStatus } from '../../services/kyc-provider.service';
 import { KYCStatus } from '@prisma/client';
+import { s3StorageProvider } from '../../services/storage/s3-storage.provider';
 
 export class Sep12Controller {
 
@@ -212,3 +214,26 @@ export class Sep12Controller {
 }
 
 export const sep12Controller = new Sep12Controller();
+
+// Standalone handler for upload-url (avoids binding issues)
+export async function uploadUrl(req: Request, res: Response) {
+  try {
+    const { contentType } = req.body;
+    if (!contentType) {
+      return res.status(400).json({ error: 'contentType is required' });
+    }
+
+    const key = `kyc/${uuidv4()}`;
+    const expiresIn = 900; // 15 minutes
+    const url = await s3StorageProvider.generatePresignedPutUrl(key, contentType, expiresIn);
+
+    const record = await prisma.uploadRecord.create({
+      data: { key, contentType },
+    });
+
+    return res.status(200).json({ url, id: record.id });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+}

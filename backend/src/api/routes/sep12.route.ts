@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
-import { sep12Controller } from '../controllers/sep12.controller';
+import { sep12Controller, uploadUrl } from '../controllers/sep12.controller';
 
 const router = Router();
 
@@ -51,6 +51,15 @@ router.get('/customer', sep12Controller.getCustomer);
  *     tags: [SEP-12]
  */
 router.delete('/customer/:account', sep12Controller.deleteCustomer);
+
+/**
+ * @swagger
+ * /sep12/customer/upload-url:
+ *   post:
+ *     summary: Generate a pre-signed S3 URL for document upload
+ *     tags: [SEP-12]
+ */
+router.post('/customer/upload-url', uploadUrl);
 
 /**
  * @swagger

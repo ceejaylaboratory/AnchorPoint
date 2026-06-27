@@ -32,6 +32,13 @@ jobs:
       - name: Install dependencies
         run: npm install
         
+      - name: Check Prisma Migration Status
+        env:
+          DATABASE_URL: "file:./migrate-check.db"
+        run: |
+          npx prisma migrate deploy
+          npx prisma migrate status
+        
       - name: Verify Migrations Against Temporary Database
         env:
           DATABASE_URL: "file:./ci-verify.db"
