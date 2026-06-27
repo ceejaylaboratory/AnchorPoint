@@ -92,6 +92,15 @@ router.post('/customer/upload-confirm', authMiddleware, sep12Controller.confirmU
 
 /**
  * @swagger
+ * /sep12/customer/upload-url:
+ *   post:
+ *     summary: Generate a pre-signed S3 URL for document upload
+ *     tags: [SEP-12]
+ */
+router.post('/customer/upload-url', uploadUrl);
+
+/**
+ * @swagger
  * /sep12/webhook:
  *   post:
  *     summary: Webhook for 3rd party KYC provider updates

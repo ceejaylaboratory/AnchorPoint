@@ -137,7 +137,7 @@ model Transaction {
   feeAssetCode        String?
   feeType             String?
 
-  // SEP-31 specific fields (nullable for backward compatibility)
+  // SEP-31 specific fields
   senderInfo          Json?
   receiverInfo        Json?
   callbackUrl         String?
