@@ -4,6 +4,8 @@ import prisma from '../../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { getAsset, isDepositSupported, isWithdrawSupported, normalizeAssetCode } from '../../services/kyc.service';
 import { ASSETS } from '../../config/assets';
+import { computeAssetFee } from '../../services/fee.service';
+import logger from '../../utils/logger';
 
 /**
  * GET /sep6/info
@@ -49,9 +51,29 @@ export const sep6Info = (_req: AuthRequest, res: Response): Response => {
 /**
  * GET /sep6/deposit
  * SEP-6 non-interactive deposit. Creates a pending transaction and returns instructions.
+ *
+ * Enhancements over the base stub:
+ *  - Computes applicable fees via the asset fee-configuration strategy.
+ *  - Accepts optional `memo`, `memo_type`, `callback_url`, and `lang` params
+ *    per the SEP-6 specification.
+ *  - Persists `senderInfo` JSON (email, first_name, last_name, memo, memo_type),
+ *    `callbackUrl`, `feeAmount`, `feeAssetCode`, and `feeType` on the Transaction
+ *    record for downstream processing and reporting.
+ *  - Returns `fee_amount` so the client can display the exact cost upfront.
+ *  - Safe error logging: only the error message is emitted, never the full stack
+ *    or any request secrets.
  */
 export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Response> => {
-  const { asset_code, amount, email_address } = req.query as Record<string, string>;
+  const {
+    asset_code,
+    amount,
+    email_address,
+    first_name,
+    last_name,
+    memo,
+    memo_type = 'text',
+    callback_url,
+  } = req.query as Record<string, string>;
   const publicKey = req.user!.publicKey;
   const code = normalizeAssetCode(asset_code);
 
@@ -61,14 +83,19 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
 
   const asset = getAsset(code)!;
 
+  let parsedAmount = 0;
   if (amount) {
-    const amt = parseFloat(amount);
-    if (isNaN(amt) || amt < parseFloat(asset.minAmount) || amt > parseFloat(asset.maxAmount)) {
+    parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount < parseFloat(asset.minAmount) || parsedAmount > parseFloat(asset.maxAmount)) {
       return res.status(400).json({
         error: `Amount must be between ${asset.minAmount} and ${asset.maxAmount} for ${code}.`,
       });
     }
   }
+
+  // Compute the fee for the given amount; fall back to the asset's fixed fee
+  // when no amount is supplied so the client always gets a fee estimate.
+  const feeAmount = parsedAmount > 0 ? computeAssetFee(asset, parsedAmount) : asset.feeFixed;
 
   try {
     const tx = await prisma.transaction.create({
@@ -87,8 +114,23 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
         amount: amount || '0',
         type: 'DEPOSIT',
         status: 'PENDING',
+        feeAmount: String(feeAmount),
+        feeAssetCode: code,
+        feeType: asset.feeType.toUpperCase(),
+        senderInfo: {
+          ...(email_address ? { email_address } : {}),
+          ...(first_name ? { first_name } : {}),
+          ...(last_name ? { last_name } : {}),
+          ...(memo ? { memo, memo_type } : {}),
+        },
+        ...(callback_url ? { callbackUrl: callback_url } : {}),
       },
     });
+
+    logger.info('SEP-6 deposit initiated', { transactionId: tx.id, assetCode: code });
+
+    const txMemo = memo ?? tx.id;
+    const txMemoType = memo ? memo_type : 'text';
 
     return res.json({
       how: `Send ${code} to the anchor's receiving account.`,
@@ -98,15 +140,19 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
       max_amount: asset.maxAmount,
       fee_fixed: asset.feeFixed,
       fee_percent: asset.feePercent,
+      fee_amount: String(feeAmount),
       extra_info: {
         message: 'Include the transaction ID as the memo when sending funds.',
-        memo: tx.id,
-        memo_type: 'text',
+        memo: txMemo,
+        memo_type: txMemoType,
         receiving_account: process.env.RECEIVING_ACCOUNT || 'GD5DJQDKEBTHBQC7LKLDSLRGEA3KMRMFOKMJUEKSFZLWQ5E2PJDJYZNF',
       },
     });
   } catch (error) {
-    console.error('SEP-6 deposit error:', error);
+    logger.error('SEP-6 deposit initiation failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      assetCode: code,
+    });
     return res.status(500).json({ error: 'Failed to initiate deposit.' });
   }
 };
@@ -114,9 +160,28 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
 /**
  * GET /sep6/withdraw
  * SEP-6 non-interactive withdrawal. Creates a pending transaction and returns instructions.
+ *
+ * Enhancements over the base stub:
+ *  - Computes applicable fees via the asset fee-configuration strategy.
+ *  - Accepts optional `account` (Stellar account requesting the withdrawal),
+ *    `callback_url`, and `lang` per the SEP-6 specification.
+ *  - Persists `receiverInfo`, `callbackUrl`, `feeAmount`, `feeAssetCode`, and
+ *    `feeType` on the Transaction record for downstream processing and reporting.
+ *  - Returns `fee_amount` and (when an amount is provided) `amount_out` so the
+ *    client knows exactly how much the recipient will receive.
+ *  - Safe error logging: only the error message is logged, never the full stack
+ *    or any request secrets.
  */
 export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Response> => {
-  const { asset_code, amount, dest, dest_extra, type = 'bank_account' } = req.query as Record<string, string>;
+  const {
+    asset_code,
+    amount,
+    dest,
+    dest_extra,
+    type = 'bank_account',
+    account,
+    callback_url,
+  } = req.query as Record<string, string>;
   const publicKey = req.user!.publicKey;
   const code = normalizeAssetCode(asset_code);
 
@@ -130,14 +195,22 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
 
   const asset = getAsset(code)!;
 
+  let parsedAmount = 0;
   if (amount) {
-    const amt = parseFloat(amount);
-    if (isNaN(amt) || amt < parseFloat(asset.minAmount) || amt > parseFloat(asset.maxAmount)) {
+    parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount < parseFloat(asset.minAmount) || parsedAmount > parseFloat(asset.maxAmount)) {
       return res.status(400).json({
         error: `Amount must be between ${asset.minAmount} and ${asset.maxAmount} for ${code}.`,
       });
     }
   }
+
+  // Compute the fee for the given amount; fall back to the asset's fixed fee
+  // when no amount was supplied so the client always gets a fee estimate.
+  const feeAmount = parsedAmount > 0 ? computeAssetFee(asset, parsedAmount) : asset.feeFixed;
+  const amountOut = parsedAmount > 0
+    ? parseFloat((parsedAmount - feeAmount).toFixed(7))
+    : undefined;
 
   try {
     const tx = await prisma.transaction.create({
@@ -153,8 +226,20 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
         amount: amount || '0',
         type: 'WITHDRAW',
         status: 'PENDING',
+        feeAmount: String(feeAmount),
+        feeAssetCode: code,
+        feeType: asset.feeType.toUpperCase(),
+        receiverInfo: {
+          dest,
+          dest_extra: dest_extra || null,
+          type,
+          account: account || null,
+        },
+        ...(callback_url ? { callbackUrl: callback_url } : {}),
       },
     });
+
+    logger.info('SEP-6 withdrawal initiated', { transactionId: tx.id, assetCode: code, type });
 
     return res.json({
       account_id: process.env.RECEIVING_ACCOUNT || 'GD5DJQDKEBTHBQC7LKLDSLRGEA3KMRMFOKMJUEKSFZLWQ5E2PJDJYZNF',
@@ -166,15 +251,21 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
       max_amount: asset.maxAmount,
       fee_fixed: asset.feeFixed,
       fee_percent: asset.feePercent,
+      fee_amount: String(feeAmount),
+      ...(amountOut !== undefined ? { amount_out: String(amountOut) } : {}),
+      type,
       extra_info: {
         message: `Send ${code} to the anchor account with the memo. Funds will be sent to ${dest}${dest_extra ? ` (routing: ${dest_extra})` : ''}.`,
-        type,
         dest,
-        dest_extra,
+        ...(dest_extra ? { dest_extra } : {}),
+        type,
       },
     });
   } catch (error) {
-    console.error('SEP-6 withdraw error:', error);
+    logger.error('SEP-6 withdrawal initiation failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      assetCode: code,
+    });
     return res.status(500).json({ error: 'Failed to initiate withdrawal.' });
   }
 };

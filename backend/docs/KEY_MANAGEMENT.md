@@ -141,6 +141,37 @@ const result = await batchService.executeBatch({
 
 ## Key Rotation
 
+### Automated Rotation (Cron Worker)
+
+The backend includes a dedicated cron worker that rotates encryption keys on a configurable schedule. This is the recommended approach for testnet and production deployments.
+
+**Start the worker:**
+
+```bash
+# Enable in environment
+ENABLE_KEY_ROTATION_WORKER=true
+KEY_ROTATION_WORKER_CRON=0 0 1 * *   # monthly at midnight (default)
+
+# Run as a separate process
+npm run start:worker:key-rotation
+```
+
+**Backend behavior:**
+
+| Backend | Cron action |
+|---------|-------------|
+| **AWS KMS** | Ensures automatic key rotation is enabled (annual rotation by AWS) |
+| **Vault** | Rotates the Transit engine key to a new version via `/keys/stellar-keys/rotate` |
+
+Old key versions remain available for decryption after rotation. No downtime is required.
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_KEY_ROTATION_WORKER` | `false` | Set to `true` to activate the worker |
+| `KEY_ROTATION_WORKER_CRON` | `0 0 1 * *` | Cron expression for rotation schedule |
+
 ### Automatic Rotation (AWS KMS)
 
 AWS KMS supports automatic key rotation:

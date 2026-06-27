@@ -22,6 +22,18 @@ jest.mock('../../services/admin-password-reset.service', () => {
   };
 });
 
+jest.mock('../../services/sep31.service', () => ({
+  __esModule: true,
+  SEP31Service: jest.fn().mockImplementation(() => ({
+    updateStatus: jest.fn(),
+  })),
+}));
+
+jest.mock('../../services/sep31CallbackNotifier', () => ({
+  __esModule: true,
+  createCallbackNotifier: jest.fn().mockReturnValue({}),
+}));
+
 import adminRouter from './admin.route';
 
 const app = express();

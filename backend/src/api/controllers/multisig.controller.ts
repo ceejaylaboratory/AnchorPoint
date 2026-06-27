@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import multisigService from '../../services/multisig.service';
 import logger from '../../utils/logger';
+import { MultisigStatus } from '@prisma/client';
 
 export class MultisigController {
   /**
@@ -111,7 +112,7 @@ export class MultisigController {
 
       const transactions = await multisigService.getTransactionsForSigner(
         publicKey,
-        status as any
+        status ? (status as MultisigStatus) : undefined
       );
 
       res.json({

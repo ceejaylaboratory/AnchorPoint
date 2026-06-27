@@ -7,6 +7,7 @@ import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
 import adminRouter from './api/routes/admin.route';
 import sep24Router from './api/routes/sep24.route';
+import sep12Router from './api/routes/sep12.route';
 import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
 import sep40Router from './api/routes/sep40.route';
@@ -15,6 +16,7 @@ import metricsRouter from './api/routes/metrics.route';
 import relayerRouter from './api/routes/relayer.route';
 import recurringPaymentsRouter from './api/routes/recurring-payments.route';
 import configRouter from './api/routes/config.route';
+import sep31Router from './api/routes/sep31.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import configService from './services/config.service';
@@ -22,23 +24,31 @@ import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
-import { errorHandler } from './api/middleware/error.middleware';
-import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { publicLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
-import { ConsoleEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
-import { NotificationType } from '@prisma/client';
+import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
+import { NotificationType } from './services/notification.service';
+import { validateKmsConfigOnStartup } from './lib/key-management.service';
+import queueDashboardRouter from './api/routes/queue-dashboard.route';
 
 // Initialize Notification Engine
-notificationService.registerProvider(NotificationType.EMAIL, new ConsoleEmailProvider());
+notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
 notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvider());
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 
 const app = express();
 const PORT = config.PORT;
 
-app.use(cors());
+const corsOptions = {
+  origin: process.env.PRODUCTION_CORS_ORIGINS ? process.env.PRODUCTION_CORS_ORIGINS.split(',') : [],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200,
+};
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 /**
  * @swagger
@@ -128,21 +138,14 @@ app.use('/api/notifications', notificationsRouter);
 // Relayer API for gasless token approvals
 app.use('/api/relayer', relayerRouter);
 
-// Prometheus metrics endpoint
-app.use('/metrics', metricsRouter);
-
-// SEP-38 Price Quotes API
-app.use('/sep38', sep38Router);
-
 // SEP-40 Swap Rates API
 app.use('/sep40', sep40Router);
 
-// SEP-1 Info endpoint
-app.use('/info', infoRouter);
+// SEP-12 KYC routes
+app.use('/sep12', sep12Router);
 
-// SEP-24 routes
-app.use('/sep24', sep24Router);
-// Public endpoints with shared Redis-backed rate limit state
+// Public endpoints — shared Redis-backed rate limit state
+app.use('/sep31', publicLimiter, sep31Router);
 app.use('/sep38', publicLimiter, sep38Router);
 app.use('/info', publicLimiter, infoRouter);
 app.use('/sep24', publicLimiter, sep24Router);
@@ -151,11 +154,16 @@ app.use('/metrics', publicLimiter, metricsRouter);
 
 app.use('/api/recurring-payments', recurringPaymentsRouter);
 
+// BullMQ queue monitoring dashboard (#362) — admin-only in production
+app.use('/api/queue-dashboard', queueDashboardRouter);
+
 // Global error handling middleware (must be last)
 app.use(errorHandler);
 
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
+  validateKmsConfigOnStartup(config);
+
   configService.initialize()
     .catch((error) => {
       logger.error('Failed to initialize config service:', error);
@@ -164,15 +172,9 @@ if (process.env.NODE_ENV !== 'test') {
       app.listen(PORT, () => {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+        feeReportScheduler.start();
       });
     });
-  app.listen(PORT, () => {
-    logger.info(`Backend service listening at http://localhost:${PORT}`);
-    logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
-    
-    // Start fee report scheduler
-    feeReportScheduler.start();
-  });
 }
 
 export default app;

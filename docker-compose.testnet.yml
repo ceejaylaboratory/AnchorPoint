@@ -1,0 +1,97 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: anchorpoint-backend-testnet
+    ports:
+      - "3002:3002"
+      - "9464:9464"
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - DATABASE_URL=file:/app/data/testnet.db
+      - REDIS_URL=redis://redis:6379
+      - STELLAR_NETWORK=testnet
+      - STELLAR_PASSPHRASE=Test SDF Network ; September 2015
+      - QUEUE_CONCURRENCY=5
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - PROMETHEUS_METRICS_PORT=9464
+      - OTEL_SERVICE_NAME=anchorpoint-backend-testnet
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=anchorpoint-backend-testnet,environment=testnet
+    volumes:
+      - backend-testnet-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - anchorpoint-testnet-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: anchorpoint-redis-testnet
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-testnet-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - anchorpoint-testnet-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: anchorpoint-jaeger-testnet
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+    networks:
+      - anchorpoint-testnet-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: anchorpoint-prometheus-testnet
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-testnet-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=200h"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - anchorpoint-testnet-network
+
+volumes:
+  backend-testnet-data:
+    driver: local
+  redis-testnet-data:
+    driver: local
+  prometheus-testnet-data:
+    driver: local
+
+networks:
+  anchorpoint-testnet-network:
+    driver: bridge

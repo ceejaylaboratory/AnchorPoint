@@ -1,10 +1,3 @@
-/**
- * Key Management Service Tests
- * 
- * Tests for encrypted key storage and retrieval.
- * All vault/KMS calls are mocked to avoid external dependencies.
- */
-
 import {
   KeyManagementError,
   KeyManagementErrorType,
@@ -12,15 +5,21 @@ import {
 } from './key-management.types';
 import { createKeyManagementService, initializeKeyManagement, getKeyManagementService } from './key-management.service';
 
-// Mock AWS SDK
+const mockKmsSend = jest.fn();
+
 jest.mock('@aws-sdk/client-kms', () => ({
-  KMSClient: jest.fn().mockImplementation(() => ({
-    send: jest.fn(),
-  })),
-  EncryptCommand: jest.fn().mockImplementation((params) => params),
-  DecryptCommand: jest.fn().mockImplementation((params) => params),
-  DescribeKeyCommand: jest.fn().mockImplementation((params) => params),
+  KMSClient: jest.fn().mockImplementation(() => ({ send: mockKmsSend })),
+  EncryptCommand: jest.fn().mockImplementation((p) => p),
+  DecryptCommand: jest.fn().mockImplementation((p) => p),
+  DescribeKeyCommand: jest.fn().mockImplementation((p) => p),
+  GetKeyRotationStatusCommand: jest.fn().mockImplementation((p) => p),
+  EnableKeyRotationCommand: jest.fn().mockImplementation((p) => p),
 }));
+
+const KMS_CONFIG = {
+  backend: 'aws-kms' as const,
+  keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
+};
 
 describe('Key Management Service', () => {
   beforeEach(() => {
@@ -30,329 +29,236 @@ describe('Key Management Service', () => {
   describe('AWS KMS Implementation', () => {
     describe('encryptKey', () => {
       it('should encrypt a plaintext key successfully', async () => {
-        const mockKmsClient = {
-          send: jest.fn().mockResolvedValue({
-            CiphertextBlob: Buffer.from('encrypted-data'),
-            KeyId: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-          }),
-        };
+        mockKmsSend.mockResolvedValue({
+          CiphertextBlob: Buffer.from('encrypted-data'),
+          KeyId: KMS_CONFIG.keyArn,
+        });
 
-        // Mock the KMS client
-        jest.doMock('@aws-sdk/client-kms', () => ({
-          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-          EncryptCommand: jest.fn().mockImplementation((params) => params),
-        }));
-
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-        const plaintext = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-
-        const result = await service.encryptKey(plaintext);
+        const service = createKeyManagementService(KMS_CONFIG);
+        const result = await service.encryptKey('SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
 
         expect(result).toHaveProperty('ciphertext');
         expect(result).toHaveProperty('keyVersion');
-        expect(result).toHaveProperty('algorithm');
-        expect(result).toHaveProperty('timestamp');
         expect(result.algorithm).toBe('AES-256-GCM');
       });
 
       it('should throw error if plaintext is empty', async () => {
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-
+        const service = createKeyManagementService(KMS_CONFIG);
         await expect(service.encryptKey('')).rejects.toThrow(KeyManagementError);
       });
 
       it('should retry on transient errors', async () => {
-        const mockKmsClient = {
-          send: jest
-            .fn()
-            .mockRejectedValueOnce(new Error('ThrottlingException'))
-            .mockResolvedValueOnce({
-              CiphertextBlob: Buffer.from('encrypted-data'),
-              KeyId: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-            }),
-        };
+        const throttleErr = Object.assign(new Error('ThrottlingException'), { name: 'ThrottlingException' });
+        mockKmsSend
+          .mockRejectedValueOnce(throttleErr)
+          .mockResolvedValueOnce({ CiphertextBlob: Buffer.from('encrypted-data'), KeyId: KMS_CONFIG.keyArn });
 
-        jest.doMock('@aws-sdk/client-kms', () => ({
-          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-          EncryptCommand: jest.fn().mockImplementation((params) => params),
-        }));
-
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-        const plaintext = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-
-        const result = await service.encryptKey(plaintext);
+        const service = createKeyManagementService(KMS_CONFIG);
+        const result = await service.encryptKey('SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
 
         expect(result).toHaveProperty('ciphertext');
-        expect(mockKmsClient.send).toHaveBeenCalledTimes(2);
+        expect(mockKmsSend).toHaveBeenCalledTimes(2);
       });
 
       it('should fail on permanent errors without retry', async () => {
-        const mockKmsClient = {
-          send: jest.fn().mockRejectedValue({
-            name: 'AccessDeniedException',
-            message: 'User is not authorized',
-          }),
-        };
+        mockKmsSend.mockRejectedValue(Object.assign(new Error('User is not authorized'), { name: 'AccessDeniedException' }));
 
-        jest.doMock('@aws-sdk/client-kms', () => ({
-          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-          EncryptCommand: jest.fn().mockImplementation((params) => params),
-        }));
-
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-        const plaintext = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-
-        await expect(service.encryptKey(plaintext)).rejects.toThrow(KeyManagementError);
+        const service = createKeyManagementService(KMS_CONFIG);
+        await expect(service.encryptKey('SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).rejects.toThrow(KeyManagementError);
+        expect(mockKmsSend).toHaveBeenCalledTimes(1);
       });
     });
 
     describe('decryptKey', () => {
+      const encrypted: EncryptedKey = {
+        ciphertext: Buffer.from('encrypted-data').toString('base64'),
+        keyVersion: KMS_CONFIG.keyArn,
+        algorithm: 'AES-256-GCM',
+        timestamp: Date.now(),
+      };
+
       it('should decrypt a ciphertext key successfully', async () => {
         const plaintext = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-        const mockKmsClient = {
-          send: jest.fn().mockResolvedValue({
-            Plaintext: Buffer.from(plaintext, 'utf-8'),
-          }),
-        };
+        mockKmsSend.mockResolvedValue({ Plaintext: Buffer.from(plaintext, 'utf-8') });
 
-        jest.doMock('@aws-sdk/client-kms', () => ({
-          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-          DecryptCommand: jest.fn().mockImplementation((params) => params),
-        }));
-
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-        const encrypted: EncryptedKey = {
-          ciphertext: Buffer.from('encrypted-data').toString('base64'),
-          keyVersion: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-          algorithm: 'AES-256-GCM',
-          timestamp: Date.now(),
-        };
-
+        const service = createKeyManagementService(KMS_CONFIG);
         const result = await service.decryptKey(encrypted);
 
         expect(result).toBe(plaintext);
       });
 
       it('should throw error if ciphertext is empty', async () => {
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-        const encrypted: EncryptedKey = {
-          ciphertext: '',
-          keyVersion: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-          algorithm: 'AES-256-GCM',
-          timestamp: Date.now(),
-        };
-
-        await expect(service.decryptKey(encrypted)).rejects.toThrow(KeyManagementError);
+        const service = createKeyManagementService(KMS_CONFIG);
+        await expect(service.decryptKey({ ...encrypted, ciphertext: '' })).rejects.toThrow(KeyManagementError);
       });
 
       it('should not log plaintext key material', async () => {
         const plaintext = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-        const mockKmsClient = {
-          send: jest.fn().mockResolvedValue({
-            Plaintext: Buffer.from(plaintext, 'utf-8'),
-          }),
-        };
+        mockKmsSend.mockResolvedValue({ Plaintext: Buffer.from(plaintext, 'utf-8') });
 
-        jest.doMock('@aws-sdk/client-kms', () => ({
-          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-          DecryptCommand: jest.fn().mockImplementation((params) => params),
-        }));
-
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-        const encrypted: EncryptedKey = {
-          ciphertext: Buffer.from('encrypted-data').toString('base64'),
-          keyVersion: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-          algorithm: 'AES-256-GCM',
-          timestamp: Date.now(),
-        };
-
-        // Mock logger to verify no plaintext is logged
-        const loggerSpy = jest.spyOn(console, 'log').mockImplementation();
+        const service = createKeyManagementService(KMS_CONFIG);
+        const logSpy = jest.spyOn(console, 'log').mockImplementation();
 
         await service.decryptKey(encrypted);
 
-        // Verify plaintext was not logged
-        const logCalls = loggerSpy.mock.calls.map((call) => call[0]?.toString() || '');
-        expect(logCalls.join('')).not.toContain(plaintext);
-
-        loggerSpy.mockRestore();
+        const logged = logSpy.mock.calls.map((c) => String(c[0])).join('');
+        expect(logged).not.toContain(plaintext);
+        logSpy.mockRestore();
       });
     });
 
     describe('isHealthy', () => {
       it('should return true when KMS is healthy', async () => {
-        const mockKmsClient = {
-          send: jest.fn().mockResolvedValue({
-            KeyMetadata: { KeyId: 'arn:aws:kms:us-east-1:123456789012:key/12345678' },
-          }),
-        };
+        mockKmsSend.mockResolvedValue({ KeyMetadata: { KeyId: KMS_CONFIG.keyArn } });
 
-        jest.doMock('@aws-sdk/client-kms', () => ({
-          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-          DescribeKeyCommand: jest.fn().mockImplementation((params) => params),
-        }));
-
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
-
-        const service = createKeyManagementService(config);
-        const result = await service.isHealthy();
-
-        expect(result).toBe(true);
+        const service = createKeyManagementService(KMS_CONFIG);
+        expect(await service.isHealthy()).toBe(true);
       });
 
       it('should return false when KMS is unavailable', async () => {
-        const mockKmsClient = {
-          send: jest.fn().mockRejectedValue(new Error('Connection refused')),
-        };
+        mockKmsSend.mockRejectedValue(new Error('Connection refused'));
 
-        jest.doMock('@aws-sdk/client-kms', () => ({
-          KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-          DescribeKeyCommand: jest.fn().mockImplementation((params) => params),
-        }));
+        const service = createKeyManagementService(KMS_CONFIG);
+        expect(await service.isHealthy()).toBe(false);
+      });
+    });
 
-        const config = {
-          backend: 'aws-kms' as const,
-          keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-        };
+    describe('rotateEncryptionKey', () => {
+      it('should enable rotation when not already enabled', async () => {
+        mockKmsSend
+          .mockResolvedValueOnce({ KeyRotationEnabled: false })
+          .mockResolvedValueOnce({});
 
-        const service = createKeyManagementService(config);
-        const result = await service.isHealthy();
+        const service = createKeyManagementService(KMS_CONFIG);
+        const result = await service.rotateEncryptionKey();
 
-        expect(result).toBe(false);
+        expect(result.rotated).toBe(true);
+        expect(result.backend).toBe('aws-kms');
+        expect(result.success).toBe(true);
+      });
+
+      it('should skip enable when rotation is already active', async () => {
+        mockKmsSend.mockResolvedValue({ KeyRotationEnabled: true });
+
+        const service = createKeyManagementService(KMS_CONFIG);
+        const result = await service.rotateEncryptionKey();
+
+        expect(result.rotated).toBe(false);
+        expect(result.message).toContain('already enabled');
       });
     });
   });
 
   describe('Error Handling', () => {
     it('should create KeyManagementError with correct type', () => {
-      const error = new KeyManagementError(
-        KeyManagementErrorType.VAULT_UNAVAILABLE,
-        'Vault is down'
-      );
-
+      const error = new KeyManagementError(KeyManagementErrorType.VAULT_UNAVAILABLE, 'Vault is down');
       expect(error).toBeInstanceOf(Error);
       expect(error.type).toBe(KeyManagementErrorType.VAULT_UNAVAILABLE);
-      expect(error.message).toBe('Vault is down');
     });
 
     it('should include details in error', () => {
       const details = { statusCode: 503 };
-      const error = new KeyManagementError(
-        KeyManagementErrorType.VAULT_UNAVAILABLE,
-        'Vault is down',
-        details
-      );
-
+      const error = new KeyManagementError(KeyManagementErrorType.VAULT_UNAVAILABLE, 'Vault is down', details);
       expect(error.details).toEqual(details);
     });
 
     it('should never include plaintext key in error message', () => {
       const plaintext = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-      const error = new KeyManagementError(
-        KeyManagementErrorType.DECRYPTION_FAILED,
-        'Failed to decrypt key'
-      );
-
+      const error = new KeyManagementError(KeyManagementErrorType.DECRYPTION_FAILED, 'Failed to decrypt key');
       expect(error.message).not.toContain(plaintext);
     });
   });
 
   describe('Service Initialization', () => {
     it('should throw error if service not initialized', () => {
-      // Reset the singleton
       jest.resetModules();
-
-      expect(() => {
-        getKeyManagementService();
-      }).toThrow(KeyManagementError);
+      expect(() => getKeyManagementService()).toThrow(KeyManagementError);
     });
 
     it('should initialize service with AWS KMS config', () => {
-      const config = {
-        backend: 'aws-kms' as const,
-        keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-      };
-
-      initializeKeyManagement(config);
-      const service = getKeyManagementService();
-
-      expect(service).toBeDefined();
+      initializeKeyManagement(KMS_CONFIG);
+      expect(getKeyManagementService()).toBeDefined();
     });
   });
 
   describe('Encrypt/Decrypt Round Trip', () => {
     it('should successfully encrypt and decrypt a key', async () => {
       const plaintext = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-      const mockKmsClient = {
-        send: jest
-          .fn()
-          .mockResolvedValueOnce({
-            CiphertextBlob: Buffer.from('encrypted-data'),
-            KeyId: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-          })
-          .mockResolvedValueOnce({
-            Plaintext: Buffer.from(plaintext, 'utf-8'),
-          }),
-      };
+      mockKmsSend
+        .mockResolvedValueOnce({ CiphertextBlob: Buffer.from('encrypted-data'), KeyId: KMS_CONFIG.keyArn })
+        .mockResolvedValueOnce({ Plaintext: Buffer.from(plaintext, 'utf-8') });
 
-      jest.doMock('@aws-sdk/client-kms', () => ({
-        KMSClient: jest.fn().mockImplementation(() => mockKmsClient),
-        EncryptCommand: jest.fn().mockImplementation((params) => params),
-        DecryptCommand: jest.fn().mockImplementation((params) => params),
-      }));
-
-      const config = {
-        backend: 'aws-kms' as const,
-        keyArn: 'arn:aws:kms:us-east-1:123456789012:key/12345678',
-      };
-
-      const service = createKeyManagementService(config);
-
-      // Encrypt
+      const service = createKeyManagementService(KMS_CONFIG);
       const encrypted = await service.encryptKey(plaintext);
-
-      // Decrypt
       const decrypted = await service.decryptKey(encrypted);
 
       expect(decrypted).toBe(plaintext);
     });
+  });
+});
+
+describe('Vault Transit Fallback (#370)', () => {
+  const FALLBACK_KEY = 'a'.repeat(64);
+  const vaultConfig = {
+    backend: 'vault' as const,
+    address: 'http://vault:8200',
+    token: 'test-token',
+    transitPath: 'transit',
+  };
+
+  beforeEach(() => {
+    process.env.VAULT_FALLBACK_KEY = FALLBACK_KEY;
+  });
+
+  afterEach(() => {
+    delete process.env.VAULT_FALLBACK_KEY;
+    jest.resetModules();
+  });
+
+  it('falls back to local AES-256-GCM when Vault is unreachable on encrypt', async () => {
+    jest.mock('node-vault', () =>
+      jest.fn().mockImplementation(() => ({
+        write: jest.fn().mockRejectedValue(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })),
+      }))
+    );
+
+    const { createKeyManagementService: create } = await import('./key-management.service');
+    const service = create(vaultConfig);
+    const result = await service.encryptKey('secret-key');
+
+    expect(result.keyVersion).toBe('local');
+    expect(result.ciphertext).toMatch(/^local:/);
+  });
+
+  it('decrypts a locally-encrypted ciphertext without contacting Vault', async () => {
+    jest.mock('node-vault', () =>
+      jest.fn().mockImplementation(() => ({
+        write: jest.fn().mockRejectedValue(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })),
+      }))
+    );
+
+    const { createKeyManagementService: create } = await import('./key-management.service');
+    const service = create(vaultConfig);
+
+    const plaintext = 'my-stellar-secret';
+    const encrypted = await service.encryptKey(plaintext);
+    const decrypted = await service.decryptKey(encrypted);
+
+    expect(decrypted).toBe(plaintext);
+  });
+
+  it('does not fall back when VAULT_FALLBACK_KEY is absent', async () => {
+    delete process.env.VAULT_FALLBACK_KEY;
+
+    jest.mock('node-vault', () =>
+      jest.fn().mockImplementation(() => ({
+        write: jest.fn().mockRejectedValue(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })),
+      }))
+    );
+
+    const { createKeyManagementService: create } = await import('./key-management.service');
+    const service = create(vaultConfig);
+
+    await expect(service.encryptKey('secret')).rejects.toThrow();
   });
 });

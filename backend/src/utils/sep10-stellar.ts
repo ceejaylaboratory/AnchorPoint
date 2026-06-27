@@ -55,7 +55,7 @@ export function generateSep10Challenge(
   const transaction = new StellarSdk.TransactionBuilder(account, {
     fee: StellarSdk.BASE_FEE,
     networkPassphrase,
-    timeBounds
+    timebounds: timeBounds
   })
     .addOperation(manageDataOp)
     .build();

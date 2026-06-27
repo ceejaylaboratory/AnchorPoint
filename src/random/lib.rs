@@ -198,7 +198,7 @@ impl RandomNumberGenerator {
         // Topic: event name + round_id (u32 scalar); user Address in data.
         env.events().publish(
             (symbol_short!("commit"), round_id),
-            (user, commitment),
+            (user.clone(), commitment.clone()),
         );
         env.events()
             .publish((symbol_short!("commit"), round_id, user), commitment);

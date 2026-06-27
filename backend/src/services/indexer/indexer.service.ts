@@ -67,9 +67,10 @@ export class IndexerService {
     const startedAt = new Date();
     logger.info(`Crawl job ${jobId} started`);
 
+    const currentNetwork = (process.env.STELLAR_NETWORK || 'TESTNET') as any;
     const assets: AssetConfig[] = ASSETS.map((a) => ({
       code: a.code,
-      issuer: a.issuer ?? null,
+      issuer: a.issuers[currentNetwork as keyof typeof a.issuers] || Object.values(a.issuers)[0] || null,
     }));
 
     const results: ValidationResult[] = [];
@@ -160,7 +161,7 @@ export class IndexerService {
 
     // Step 2: Fetch stellar.toml
     let parsedToml: Record<string, unknown>;
-    let rawToml: string | null = null;
+    const rawToml: string | null = null;
     try {
       parsedToml = await this.tomlFetcher.fetch(homeDomain);
     } catch (err) {

@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -17,17 +17,17 @@ enum Tier {
 }
 
 model User {
-  id                         String                      @id @default(uuid())
-  publicKey                  String                      @unique
-  email                      String?
-  phone                      String?
-  createdAt                  DateTime                    @default(now())
-  updatedAt                  DateTime                    @updatedAt
-  transactions               Transaction[]
-  kycCustomer                KycCustomer?
-  apiKeys                    ApiKey[]
-  recurringPaymentSchedules  RecurringPaymentSchedule[]
-  notificationPreference     NotificationPreference?
+  id                        String                    @id @default(uuid())
+  publicKey                 String                    @unique
+  email                     String?
+  phone                     String?
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+  transactions              Transaction[]
+  kycCustomer               KycCustomer?
+  apiKeys                   ApiKey[]
+  recurringPaymentSchedules RecurringPaymentSchedule[]
+  notificationPreference    NotificationPreference?
 
   @@index([publicKey])
 }
@@ -154,7 +154,7 @@ model Transaction {
 
 model FeeReport {
   id              String   @id @default(uuid())
-  reportType      String   // DAILY, MONTHLY
+  reportType      String
   startDate       DateTime
   endDate         DateTime
   totalFees       String
@@ -169,6 +169,8 @@ model FeeReport {
   @@index([startDate])
   @@index([endDate])
 }
+
+
 
 model NotificationPreference {
   id           String  @id @default(uuid())
@@ -231,6 +233,21 @@ model KycCustomer {
   @@index([userId])
 }
 
+model Quote {
+  id            String   @id @default(uuid())
+  sellAsset     String
+  sellAmount    String
+  buyAsset      String
+  buyAmount     String
+  price         String
+  expiresAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([sellAsset])
+  @@index([buyAsset])
+}
+
 model SystemConfig {
   id        String   @id @default(uuid())
   version   Int      @unique
@@ -290,19 +307,96 @@ model ContractJob {
   @@index([type])
 }
 
-enum UploadStatus {
-  PENDING
-  COMPLETED
-  FAILED
+model ContractEvent {
+  id              String   @id @default(uuid())
+  contractId      String
+  ledger          Int
+  ledgerClosedAt  DateTime
+  txHash          String
+  contractEventId String   @unique // The unique ID from Soroban RPC
+  topics          String   // JSON stringified topics
+  value           String   // JSON stringified value
+  type            String   // e.g., "contract"
+  createdAt       DateTime @default(now())
+
+  @@index([contractId])
+  @@index([txHash])
+  @@index([ledger])
 }
 
-model UploadRecord {
-  id          String       @id @default(uuid())
-  key         String       @unique
-  contentType String
-  status      UploadStatus @default(PENDING)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+enum MultisigStatus {
+  PENDING
+  PARTIALLY_SIGNED
+  READY
+  SUBMITTED
+  FAILED
+  EXPIRED
+}
 
-  @@index([status])
+model MultisigTransaction {
+  id                String              @id @default(uuid())
+  envelopeXdr       String
+  hash              String              @unique
+  creatorPublicKey  String
+  requiredSigners   Json
+  threshold         Int
+  currentSignatures Int                 @default(0)
+  status            MultisigStatus      @default(PENDING)
+  memo              String?
+  expiresAt         DateTime?
+  submittedAt       DateTime?
+  stellarTxId       String?             @unique
+  metadata          Json?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  signatures        MultisigSignature[]
+  notifications     MultisigNotification[]
+}
+
+model MultisigSignature {
+  id                    String              @id @default(uuid())
+  multisigTransactionId String
+  multisigTransaction   MultisigTransaction @relation(fields: [multisigTransactionId], references: [id], onDelete: Cascade)
+  signerPublicKey       String
+  signature             String
+  createdAt             DateTime            @default(now())
+
+  @@unique([multisigTransactionId, signerPublicKey])
+}
+
+model MultisigNotification {
+  id                    String              @id @default(uuid())
+  multisigTransactionId String
+  multisigTransaction   MultisigTransaction @relation(fields: [multisigTransactionId], references: [id], onDelete: Cascade)
+  recipientPublicKey    String
+  type                  String
+  message               String
+  readAt                DateTime?
+  sentAt                DateTime            @default(now())
+  createdAt             DateTime            @default(now())
+
+  @@index([recipientPublicKey, readAt])
+}
+
+model AssetValidationResult {
+  assetCode        String
+  issuerPublicKey  String
+  homeDomain       String?
+  complianceStatus String
+  messages         String
+  rawToml          String?
+  lastCrawledAt    DateTime
+
+  @@id([assetCode, issuerPublicKey])
+  @@unique([assetCode, issuerPublicKey], name: "assetCode_issuerPublicKey")
+}
+
+model CrawlJobRecord {
+  id                String    @id @default(uuid())
+  startedAt         DateTime
+  completedAt       DateTime?
+  totalAssets       Int
+  compliantCount    Int
+  nonCompliantCount Int
+  suspiciousCount   Int
 }

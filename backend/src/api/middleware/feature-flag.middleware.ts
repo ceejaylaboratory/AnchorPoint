@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { FeatureFlagService, FeatureFlagContext } from '../services/feature-flag.service';
+import { FeatureFlagService, FeatureFlagContext } from '../../services/feature-flag.service';
 
 declare global {
   namespace Express {

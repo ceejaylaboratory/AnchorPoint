@@ -18,15 +18,15 @@ describe('MigrationIntegrityChecker', () => {
   describe('Destructive Change Detection', () => {
     it('should detect DROP TABLE statements', () => {
       const sql = 'DROP TABLE "User";';
+      // Mock the file read
+      (fs.readFileSync as jest.Mock).mockReturnValue(sql);
+
       const analysis = (checker as any).analyzeMigrationSQL({
         name: 'test_migration',
         path: mockMigrationsDir,
       });
-
-      // Mock the file read
-      (fs.readFileSync as jest.Mock).mockReturnValue(sql);
       
-      expect(analysis.hasDropTable).toBeDefined();
+      expect(analysis.hasDropTable).toBe(true);
     });
 
     it('should detect DROP COLUMN statements', () => {
@@ -59,14 +59,14 @@ describe('MigrationIntegrityChecker', () => {
       const sql = 'CREATE TABLE "User" (id TEXT);';
       const tableName = (checker as any).extractTableNames(sql);
       
-      expect(tableName).toContain('USER');
+      expect(tableName).toContain('User');
     });
 
     it('should extract table name from DROP TABLE', () => {
       const sql = 'DROP TABLE "Transaction";';
       const tableName = (checker as any).extractTableNames(sql);
       
-      expect(tableName).toContain('TRANSACTION');
+      expect(tableName).toContain('Transaction');
     });
 
     it('should extract multiple table names', () => {

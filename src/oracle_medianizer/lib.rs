@@ -116,14 +116,11 @@ impl OracleMedianizer {
             .unwrap_or(0);
 
         env.storage().instance().set(&DataKey::OracleCount, &count.checked_add(1).expect("oracle count overflow"));
-        env.storage()
-            .instance()
-            .set(&DataKey::OracleCount, &(count + 1));
 
         // Topic: event name + oracle Address (needed for indexing source changes).
         env.events().publish(
-            symbol_short!("oracle_add"),
-            oracle,
+            (symbol_short!("orcl_add"),),
+            (oracle.clone(), oracle.clone()),
         );
         env.events()
             .publish((symbol_short!("oracle"), oracle), symbol_short!("added"));
@@ -167,8 +164,8 @@ impl OracleMedianizer {
 
         // Topic: event name only; oracle Address in data.
         env.events().publish(
-            symbol_short!("oracle_rm"),
-            oracle,
+            (symbol_short!("orcl_rm"),),
+            oracle.clone(),
         );
         env.events()
             .publish((symbol_short!("oracle"), oracle), symbol_short!("removed"));
@@ -260,8 +257,8 @@ impl OracleMedianizer {
 
         // Topic: event name only; asset + oracle + price in data.
         env.events().publish(
-            symbol_short!("submit"),
-            (asset, oracle, price),
+            (symbol_short!("submit"),),
+            (oracle.clone(), asset.clone(), price, current_time),
         );
         env.events()
             .publish((symbol_short!("submit"), asset.clone(), oracle), price);
@@ -373,15 +370,9 @@ impl OracleMedianizer {
 
             // Topic: event name only; asset + median in data.
             env.events().publish(
-                symbol_short!("median"),
+                (symbol_short!("amm"), symbol_short!("median")),
                 (asset, median),
-            env.storage().instance().set(
-                &DataKey::LastUpdate(asset.clone()),
-                &env.ledger().timestamp(),
             );
-
-            env.events()
-                .publish((symbol_short!("median"), asset), median);
         }
 
         median

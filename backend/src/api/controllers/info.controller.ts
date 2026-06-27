@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { ASSETS, getIssuer } from '../../config/assets';
 import { stellarService } from '../../services/stellar.service';
 import { NETWORKS } from '../../config/networks';
+import { sep1InfoCache } from '../../services/sep1-info-cache.service';
+import logger from '../../utils/logger';
 
 export interface StellarAsset {
   code: string;
@@ -42,11 +44,12 @@ export interface StellarInfo {
   };
 }
 
-export const getInfo = (req: Request, res: Response): Response => {
-  const format = req.query.format as string;
-  const acceptHeader = req.headers.accept || '';
-  const isToml = format === 'toml' || acceptHeader.includes('text/toml') || acceptHeader.includes('application/toml');
-
+/**
+ * Builds the StellarInfo payload from environment variables and static asset
+ * configuration.  Extracted so it can be called both from the HTTP handler
+ * and from the cache-aside compute function.
+ */
+function buildStellarInfo(): StellarInfo {
   const currentNetwork = stellarService.getNetwork();
   const networkConfig = NETWORKS[currentNetwork];
 
@@ -57,7 +60,7 @@ export const getInfo = (req: Request, res: Response): Response => {
         .map(a => [a.code, { min_amount: a.minAmount, max_amount: a.maxAmount, fee_fixed: a.feeFixed, fee_percent: a.feePercent, fee_minimum: a.feeMinimum }])
     );
 
-  const stellarInfo: StellarInfo = {
+  return {
     version: '1.0.0',
     network: currentNetwork.toLowerCase(),
     federation_server: process.env.FEDERATION_SERVER,
@@ -97,6 +100,33 @@ export const getInfo = (req: Request, res: Response): Response => {
       withdraw: feeVariationEntries('withdraw'),
     },
   };
+}
+
+/**
+ * GET /.well-known/stellar.toml  /  GET /info
+ *
+ * Returns the SEP-1 anchor info payload.  The response is served from a
+ * Redis-backed cache (TTL: 5 min, stale-while-revalidate: 60 s) so that
+ * high-frequency polling clients do not cause repeated env-var reads or
+ * CPU overhead.  Redis unavailability is handled gracefully — the endpoint
+ * falls back to computing the payload fresh on every request.
+ */
+export const getInfo = async (req: Request, res: Response): Promise<Response> => {
+  const format = req.query.format as string;
+  const acceptHeader = req.headers.accept || '';
+  const isToml = format === 'toml' || acceptHeader.includes('text/toml') || acceptHeader.includes('application/toml');
+
+  let stellarInfo: StellarInfo;
+  try {
+    stellarInfo = await sep1InfoCache.getOrCompute(buildStellarInfo) as StellarInfo;
+  } catch (err) {
+    // getOrCompute already swallows Redis errors; this catches buildStellarInfo
+    // failures (e.g., missing SIGNING_KEY) and lets the error propagate normally.
+    logger.error('SEP-1 info generation failed', {
+      error: err instanceof Error ? err.message : 'Unknown error',
+    });
+    throw err;
+  }
 
   const filteredInfo = Object.fromEntries(
     Object.entries(stellarInfo).filter(([, v]) => v !== undefined)

@@ -2,8 +2,10 @@ import { Request, Response } from 'express';
 import { RedisService } from '../../services/redis.service';
 import { getChallenge, getToken } from './auth.controller';
 import * as authService from '../../services/auth.service';
+import * as sep10Stellar from '../../utils/sep10-stellar';
 
 jest.mock('../../services/auth.service');
+jest.mock('../../utils/sep10-stellar');
 
 describe('Auth Controller', () => {
   let mockRedisService: Partial<RedisService>;
@@ -45,6 +47,11 @@ describe('Auth Controller', () => {
       mockRequest.body = { account: 'GBAD_PUBLIC_KEY' };
       (authService.generateChallenge as jest.Mock).mockReturnValue('test-challenge');
       (authService.storeChallenge as jest.Mock).mockResolvedValue(undefined);
+      (authService.generateSep10ChallengeTransaction as jest.Mock).mockReturnValue({
+        transactionXdr: 'test-challenge',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+      });
+      (authService.storeSep10Challenge as jest.Mock).mockResolvedValue(undefined);
 
       await getChallenge(mockRequest as Request, mockResponse as Response, mockRedisService as RedisService);
 
@@ -54,9 +61,20 @@ describe('Auth Controller', () => {
         'GBAD_PUBLIC_KEY',
         'test-challenge'
       );
+      expect(authService.generateSep10ChallengeTransaction).toHaveBeenCalledWith(
+        'GBAD_PUBLIC_KEY',
+        'GBAD_PUBLIC_KEY',
+        expect.anything()
+      );
+      expect(authService.storeSep10Challenge).toHaveBeenCalledWith(
+        mockRedisService,
+        'GBAD_PUBLIC_KEY',
+        expect.objectContaining({ transactionXdr: 'test-challenge' })
+      );
       expect(mockResponse.json).toHaveBeenCalledWith({
         transaction: 'test-challenge',
-        network_passphrase: 'Test SDF Network ; September 2015'
+        network_passphrase: 'Test SDF Network ; September 2015',
+        multiKeyChallenge: undefined
       });
     });
 
@@ -90,12 +108,14 @@ describe('Auth Controller', () => {
     it('returns 400 when challenge is invalid', async () => {
       mockRequest.body = { transaction: 'invalid-challenge' };
       (authService.getChallenge as jest.Mock).mockResolvedValue(null);
+      (sep10Stellar.extractAccountFromSep10Transaction as jest.Mock).mockReturnValue('GBAD_PUBLIC_KEY');
+      (authService.verifySep10ChallengeTransaction as jest.Mock).mockReturnValue({ isValid: false });
 
       await getToken(mockRequest as Request, mockResponse as Response, mockRedisService as RedisService);
 
       expect(mockResponse.status).toHaveBeenCalledWith(400);
       expect(mockResponse.json).toHaveBeenCalledWith({
-        error: 'Invalid or expired challenge'
+        error: 'Challenge not found or expired'
       });
     });
 
@@ -110,6 +130,8 @@ describe('Auth Controller', () => {
       (authService.getChallenge as jest.Mock).mockResolvedValue(mockChallenge);
       (authService.removeChallenge as jest.Mock).mockResolvedValue(undefined);
       (authService.signToken as jest.Mock).mockReturnValue('jwt-token');
+      (sep10Stellar.extractAccountFromSep10Transaction as jest.Mock).mockReturnValue('GBAD_PUBLIC_KEY');
+      (authService.verifySep10ChallengeTransaction as jest.Mock).mockReturnValue({ isValid: true });
 
       await getToken(mockRequest as Request, mockResponse as Response, mockRedisService as RedisService);
 
@@ -127,6 +149,7 @@ describe('Auth Controller', () => {
       (authService.getChallenge as jest.Mock).mockImplementation(() => {
         throw new Error('Redis error');
       });
+      (sep10Stellar.extractAccountFromSep10Transaction as jest.Mock).mockReturnValue('GBAD_PUBLIC_KEY');
 
       await getToken(mockRequest as Request, mockResponse as Response, mockRedisService as RedisService);
 

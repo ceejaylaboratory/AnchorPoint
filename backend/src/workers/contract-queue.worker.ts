@@ -208,7 +208,7 @@ async function processTransactionSubmit(job: Job<ContractJobData>): Promise<JobR
   try {
     await job.updateProgress(10);
 
-    const { envelopeXdr } = parameters;
+    const { envelopeXdr } = parameters || {};
 
     if (!envelopeXdr) {
       throw new Error('Missing transaction envelope XDR');
@@ -277,7 +277,7 @@ async function processBatchOperation(job: Job<ContractJobData>): Promise<JobResu
   logger.info(`Processing batch operation: ${job.id}`);
 
   try {
-    const { operations } = parameters;
+    const { operations } = parameters || {};
 
     if (!Array.isArray(operations)) {
       throw new Error('Invalid batch operations');
@@ -393,7 +393,7 @@ function startWorker() {
     {
       ...defaultWorkerOptions,
       settings: {
-        backoffStrategy: (attemptsMade: number, type: string, error: Error) => {
+        backoffStrategy: (attemptsMade: number, type: any, error: any) => {
           return getRetryDelay(attemptsMade, error);
         },
       },

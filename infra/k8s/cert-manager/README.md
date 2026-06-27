@@ -32,6 +32,26 @@
 #      curl -v https://your-hostname.example.com
 # =============================================================================
 
+NGINX ingress controller configuration for this cert-manager setup now lives in:
+
+- `infra/k8s/ingress-nginx/values-testnet.yaml`
+- `infra/k8s/ingress-nginx/anchorpoint-testnet-ingress.yaml`
+
+Apply ingress after cert-manager and certificate resources are ready so TLS secrets
+can be attached without repeated reconciliation errors:
+
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --create-namespace \
+  -f infra/k8s/ingress-nginx/values-testnet.yaml
+
+kubectl apply -f infra/k8s/ingress-nginx/anchorpoint-testnet-ingress.yaml
+kubectl get ingress -n anchorpoint-testnet
+```
+
 # =============================================================================
 # Implementation Notes:
 # =============================================================================

@@ -80,8 +80,10 @@ impl RBAC {
         env.storage().instance().set(&key, &role);
 
         // Emit role change event — topic: event name only; target + role in data.
-        env.events()
-            .publish(symbol_short!("role_set"), (target.clone(), role));
+        env.events().publish(
+            (symbol_short!("rbac"), symbol_short!("role_set")),
+            (target.clone(), role),
+        );
     }
 
     /// Revokes any role from a target address. Only an Admin can call this.
@@ -91,7 +93,7 @@ impl RBAC {
         Self::require_role(env, admin, AccessRole::Admin);
 
         let key = AccessDataKey::Role(target.clone());
-        
+
         // Check if target has a role before revoking
         if let Some(role) = env.storage().instance().get::<_, AccessRole>(&key) {
             env.storage().instance().remove(&key);
@@ -111,7 +113,7 @@ impl RBAC {
         Self::require_role(env, admin, AccessRole::Admin);
 
         let key = AccessDataKey::Role(target.clone());
-        
+
         // Check if target has the specific role
         let current_role: Option<AccessRole> = env.storage().instance().get(&key);
         if current_role == Some(role) {
@@ -127,20 +129,20 @@ impl RBAC {
 
     /// Checks if a specific role can perform a minter operation.
     pub fn is_minter(env: &Env, address: &Address) -> bool {
-        Self::has_role(env, address, AccessRole::Minter) || Self::has_role(env, address, AccessRole::Admin)
+        Self::has_role(env, address, AccessRole::Minter)
+            || Self::has_role(env, address, AccessRole::Admin)
     }
 
     /// Checks if a specific role can perform a burner operation.
     pub fn is_burner(env: &Env, address: &Address) -> bool {
-        Self::has_role(env, address, AccessRole::Burner) || Self::has_role(env, address, AccessRole::Admin)
+        Self::has_role(env, address, AccessRole::Burner)
+            || Self::has_role(env, address, AccessRole::Admin)
     }
 
     /// Checks if a specific role can perform a pauser operation.
     pub fn is_pauser(env: &Env, address: &Address) -> bool {
-        Self::has_role(env, address, AccessRole::Pauser) || Self::has_role(env, address, AccessRole::Admin)
-        // Emit role revocation event — topic: event name only; target in data.
-        env.events()
-            .publish(symbol_short!("role_rev"), target.clone());
+        Self::has_role(env, address, AccessRole::Pauser)
+            || Self::has_role(env, address, AccessRole::Admin)
     }
 
     /// Inits the first admin. This can only be called once.
@@ -161,7 +163,7 @@ impl RBAC {
             .set(&AccessDataKey::AdminInitialized, &true);
 
         env.events().publish(
-            symbol_short!("role_set"),
+            (symbol_short!("rbac"), symbol_short!("role_set")),
             (admin.clone(), AccessRole::Admin),
         );
     }
@@ -219,9 +221,16 @@ impl RBACContract {
 
     /// Revokes a specific role from a target address. Only the admin can call this.
     pub fn revoke_specific_role(env: Env, from: Address, target: Address, role: AccessRole) {
-
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&env, "is_paused"),
+                soroban_sdk::vec![&env],
+            );
             if is_paused {
                 panic!("contract is paused");
             }

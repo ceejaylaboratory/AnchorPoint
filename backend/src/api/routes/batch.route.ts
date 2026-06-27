@@ -10,7 +10,7 @@ import {
   executeChunkedBatchPayments,
   retryFailedPayments,
 } from '../controllers/batch.controller';
-import { authenticateToken } from '../middleware/auth.middleware';
+import { authMiddleware } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -22,7 +22,7 @@ const router = Router();
  */
 
 // All batch payment routes require authentication
-router.use(authenticateToken);
+router.use(authMiddleware);
 
 /**
  * POST /api/batch/payments

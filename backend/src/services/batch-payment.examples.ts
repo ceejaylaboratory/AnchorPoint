@@ -48,7 +48,7 @@ export async function exampleSimpleBatchPayment() {
     console.log(`Ledger: ${result.ledger}`);
 
     return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Batch payment failed:', error);
     throw error;
   }
@@ -83,7 +83,7 @@ export async function exampleAssetBatchPayment() {
     console.log(`Transaction Hash: ${result.transactionHash}`);
 
     return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ USDC batch payment failed:', error);
     throw error;
   }
@@ -116,7 +116,7 @@ export async function exampleLargeBatchPayment() {
     });
 
     return results;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Large batch payment failed:', error);
     throw error;
   }
@@ -158,7 +158,7 @@ export async function exampleHandlePartialFailure() {
     }
 
     return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Partial failure handling failed:', error);
     throw error;
   }
@@ -207,7 +207,7 @@ export async function exampleMixedAssetBatch() {
     console.log(`Total Operations: ${result.totalOps}`);
 
     return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Mixed asset batch failed:', error);
     throw error;
   }
@@ -242,7 +242,7 @@ export async function exampleAPIIntegration(payments: PaymentOperation[], source
       data: result,
       message: `Successfully executed ${result.successfulOps} payments`,
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('API batch payment error:', error);
     
     return {
@@ -319,7 +319,7 @@ export async function exampleErrorHandling() {
       payments,
       sourceSecretKey: 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     });
-  } catch (error) {
+  } catch (error: any) {
     if (error.type === 'INVALID_ADDRESS') {
       console.error('❌ Invalid Stellar address provided');
     } else if (error.type === 'EXCEEDS_MAX_OPS') {
@@ -378,7 +378,7 @@ export async function exampleConcurrentBatches() {
     console.log(`❌ Failed: ${failed.length}`);
 
     return results;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Concurrent batch processing failed:', error);
     throw error;
   }
@@ -400,7 +400,7 @@ async function main() {
     console.log('\n' + '='.repeat(50) + '\n');
 
     console.log('✅ Examples completed successfully!');
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Example execution failed:', error);
   }
 }

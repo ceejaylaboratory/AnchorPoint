@@ -1,0 +1,66 @@
+# Node modules
+node_modules/
+dashboard/node_modules/
+backend/node_modules/
+demo/node_modules/
+
+# Build outputs
+dist/
+build/
+dashboard/dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+dashboard/.env
+dashboard/.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+.nyc_output/
+
+# Git
+.git/
+
+# Documentation
+*.md
+!README.md
+
+# Other workspaces
+backend/
+demo/
+src/
+contracts/
+infra/
+tools/
+docs/
+.github/
+.kiro/
+AETHER_SOLUTIONS/
+
+# Root dev artifacts
+final_merge_log.txt
+final_merge.py
+robust_merge_log.txt
+robust_merger.py
+current_git_status.txt
+requests_check.txt
+open_prs.json
+mutants.toml
+prometheus.yml
+
+# Docker
+docker-compose*.yml
+Dockerfile
+.dockerignore

@@ -1,4 +1,4 @@
-import { AdvancedCacheService, CacheOptions, CircuitState } from './advanced-cache.service';
+import { AdvancedCacheService, CacheOptions } from './advanced-cache.service';
 
 // Mock Redis
 const createMockRedis = () => {
@@ -50,7 +50,7 @@ describe('AdvancedCacheService', () => {
 
   beforeEach(() => {
     mockRedis = createMockRedis();
-    cache = new AdvancedCacheService(mockRedis as unknown as Parameters<typeof AdvancedCacheService>[0], {
+    cache = new AdvancedCacheService(mockRedis as any, {
       l1MaxSize: 5,
       l1TtlSeconds: 10,
       l2TtlSeconds: 60,
@@ -92,7 +92,7 @@ describe('AdvancedCacheService', () => {
       const value = { data: 'stale-value' };
 
       // Set with short stale time
-      cache['setL1'](key, value, 1, { staleWhileRevalidate: true, staleTtlSeconds: 1 });
+      cache['setL1'](key, value, 1, { ttlSeconds: 1, staleWhileRevalidate: true, staleTtlSeconds: 1 });
 
       // Wait for stale period to pass
       await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -209,6 +209,14 @@ describe('AdvancedCacheService', () => {
       };
       mockRedis.get.mockResolvedValueOnce(JSON.stringify(l2Entry));
 
+      cache['setL1'](key, oldValue, 1, {
+        ttlSeconds: 1,
+        staleWhileRevalidate: true,
+        staleTtlSeconds: 1,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+
       const fetchFn = jest.fn().mockResolvedValue(newValue);
 
       const result = await cache.cacheAside(key, fetchFn, {
@@ -239,11 +247,13 @@ describe('AdvancedCacheService', () => {
     it('should write to source then cache', async () => {
       const key = 'write-through-key';
       const value = { data: 'written' };
-      const writeFn = jest.fn().mockResolvedValue(undefined);
+      const order: string[] = [];
+      const writeFn = jest.fn(async () => { order.push('write'); });
+      mockRedis.setex.mockImplementation(async () => { order.push('setex'); });
 
       await cache.writeThrough(key, value, writeFn, { ttlSeconds: 60 });
 
-      expect(writeFn).toHaveBeenCalledBefore(mockRedis.setex as jest.Mock);
+      expect(order).toEqual(['write', 'setex']);
     });
   });
 

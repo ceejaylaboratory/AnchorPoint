@@ -97,9 +97,10 @@ impl VestingContract {
         };
 
         env.storage().persistent().set(&DataKey::Grant(id), &grant);
-        env.storage()
-            .instance()
-            .set(&DataKey::GrantCounter, &id.checked_add(1).expect("grant counter overflow"));
+        env.storage().instance().set(
+            &DataKey::GrantCounter,
+            &id.checked_add(1).expect("grant counter overflow"),
+        );
 
         env.events()
             .publish((symbol_short!("grant_new"), id), amount);
@@ -122,7 +123,10 @@ impl VestingContract {
 
         assert!(claimable > 0, "nothing to claim");
 
-        grant.claimed_amount = grant.claimed_amount.checked_add(claimable).expect("claimed overflow");
+        grant.claimed_amount = grant
+            .claimed_amount
+            .checked_add(claimable)
+            .expect("claimed overflow");
         env.storage()
             .persistent()
             .set(&DataKey::Grant(grant_id), &grant);
@@ -154,7 +158,7 @@ impl VestingContract {
             .persistent()
             .get(&DataKey::Grant(grant_id))
             .expect("grant not found");
-        
+
         assert!(grant.revocable, "grant is not revocable");
         assert!(!grant.revoked, "grant is already revoked");
 
@@ -169,8 +173,10 @@ impl VestingContract {
 
         grant.total_amount = vested;
         grant.revoked = true;
-        
-        env.storage().persistent().set(&DataKey::Grant(grant_id), &grant);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Grant(grant_id), &grant);
 
         env.events()
             .publish((symbol_short!("revoked"), grant_id), unvested);
@@ -206,12 +212,22 @@ impl VestingContract {
         }
 
         // Before cliff
-        if current_time < grant.start_time.checked_add(grant.cliff_duration).expect("time overflow") {
+        if current_time
+            < grant
+                .start_time
+                .checked_add(grant.cliff_duration)
+                .expect("time overflow")
+        {
             return 0;
         }
 
         // After full duration
-        if current_time >= grant.start_time.checked_add(grant.vesting_duration).expect("time overflow") {
+        if current_time
+            >= grant
+                .start_time
+                .checked_add(grant.vesting_duration)
+                .expect("time overflow")
+        {
             return grant.total_amount;
         }
 
@@ -219,7 +235,11 @@ impl VestingContract {
         let elapsed = (current_time - grant.start_time) as i128;
         let duration = grant.vesting_duration as i128;
 
-        grant.total_amount.checked_mul(elapsed).expect("vesting overflow") / duration
+        grant
+            .total_amount
+            .checked_mul(elapsed)
+            .expect("vesting overflow")
+            / duration
     }
 }
 
@@ -234,14 +254,16 @@ mod tests {
         Address,
         Address,
         Address,
-        token::Client,
-        VestingContractClient,
+        token::Client<'_>,
+        VestingContractClient<'_>,
     ) {
         env.mock_all_auths();
         let admin = Address::generate(env);
         let beneficiary = Address::generate(env);
         let token_admin = Address::generate(env);
-        let token_id = env.register_stellar_asset_contract(token_admin.clone());
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin.clone())
+            .address();
         let token_client = token::Client::new(env, &token_id);
         let sac_client = token::StellarAssetClient::new(env, &token_id);
 
@@ -264,7 +286,15 @@ mod tests {
         let duration = 1000;
         let amount = 1000;
 
-        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration, &false);
+        let id = client.create_grant(
+            &beneficiary,
+            &token_id,
+            &amount,
+            &start,
+            &cliff,
+            &duration,
+            &false,
+        );
 
         // Before cliff
         env.ledger().with_mut(|l| l.timestamp = start + 499);
@@ -285,7 +315,15 @@ mod tests {
         let duration = 1000;
         let amount = 1000;
 
-        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration, &false);
+        let id = client.create_grant(
+            &beneficiary,
+            &token_id,
+            &amount,
+            &start,
+            &cliff,
+            &duration,
+            &false,
+        );
 
         // Mid-point
         env.ledger().with_mut(|l| l.timestamp = start + 500);
@@ -312,7 +350,15 @@ mod tests {
         let duration = 1000;
         let amount = 1000;
 
-        let id = client.create_grant(&beneficiary, &token_id, &amount, &start, &cliff, &duration, &true);
+        let id = client.create_grant(
+            &beneficiary,
+            &token_id,
+            &amount,
+            &start,
+            &cliff,
+            &duration,
+            &true,
+        );
 
         // Advance to mid-point
         env.ledger().with_mut(|l| l.timestamp = start + 500);
@@ -344,4 +390,3 @@ mod tests {
         client.revoke_grant(&id);
     }
 }
-

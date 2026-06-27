@@ -137,23 +137,6 @@ impl MultiAssetSwap {
         } else {
             base.saturating_sub(delta)
         }
-        // Simplified conversion - in production this would use the exact formula
-        // sqrt(1.0001^tick) * 2^96
-        let tick_i128 = tick as i128;
-        let base = 10001; // 1.0001 * 10000 for integer math
-        let result = if tick >= 0 {
-            // For positive ticks: (base^tick)^(1/2) * 2^96
-            let power = Self::pow(base, tick_i128);
-            (power as u128).checked_mul(1u128 << 96).unwrap_or(u128::MAX)
-        } else {
-            // For negative ticks: 2^96 / sqrt(base^abs(tick))
-            let power = Self::pow(base, -tick_i128);
-            (1u128 << 96).checked_div(power as u128).unwrap_or(0)
-        };
-        
-        // Simplified: return a reasonable approximation
-        // In production, this would be much more precise
-        ((tick as u128).checked_add(1u128 << 96).unwrap_or(u128::MAX)) / 1000
     }
 
     /// Simple power function for integer math
@@ -328,7 +311,6 @@ impl MultiAssetSwap {
             // Current price within range: both tokens needed
             let liquidity0 = Self::get_liquidity_for_amount0(sqrt_price_lower_x96, current_sqrt_price_x96, amount0_desired);
             let liquidity1 = Self::get_liquidity_for_amount1(current_sqrt_price_x96, sqrt_price_upper_x96, amount1_desired);
-            cmp::min(liquidity0, liquidity1)
             core::cmp::min(liquidity0, liquidity1)
         } else {
             // Current price above range: only token1 needed
@@ -400,7 +382,7 @@ impl MultiAssetSwap {
         }
         
         // Topic: event name only; recipient + tick range + amounts in data.
-        env.events().publish(symbol_short!("mint"), (recipient, tick_lower, tick_upper, liquidity, amount0, amount1));
+        env.events().publish((symbol_short!("mint"),), (recipient, tick_lower, tick_upper, liquidity, amount0, amount1));
         
         (liquidity, amount0, amount1)
     }
@@ -434,7 +416,6 @@ impl MultiAssetSwap {
     fn cross_tick(env: &Env, tick: i32, liquidity: i128) -> i128 {
         let tick_key = DataKey::Tick(tick);
         if let Some(tick_data) = env.storage().instance().get::<DataKey, Tick>(&tick_key) {
-        if let Some(tick_data) = env.storage().instance().get::<_, Tick>(&tick_key) {
             return liquidity + tick_data.liquidity_net;
         }
         liquidity
@@ -591,14 +572,6 @@ impl MultiAssetSwap {
         
         // Update fee growth (simplified)
         let fee_amount = amount_in - amount_in_less_fee;
-        if zero_for_one {
-            let fee_growth_global: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal0X128).unwrap_or(0);
-            let new_fee_growth = fee_growth_global + fee_amount.wrapping_shl(128) / current_liquidity.max(1);
-            env.storage().instance().set(&DataKey::FeeGrowthGlobal0X128, &new_fee_growth);
-        } else {
-            let fee_growth_global: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal1X128).unwrap_or(0);
-            let new_fee_growth = fee_growth_global + fee_amount.wrapping_shl(128) / current_liquidity.max(1);
-        let fee_amount = amount_in - amount_in_less_fee / 997;
         
         // Handle referral fee: redirect portion of swap fee to referrer
         let referral_fee_rate: u32 = env.storage().instance().get(&DataKey::ReferralFeeRate).unwrap_or(100);
@@ -638,11 +611,6 @@ impl MultiAssetSwap {
         env.events().publish(
             (symbol_short!("swap"), recipient.clone()),
             SwapEvent {
-            symbol_short!("swap"),
-            SwapEvent {
-            (symbol_short!("swap"), recipient.clone()),
-            SwapEvent {
-                sender: recipient.clone(),
                 recipient,
                 amount_0: if zero_for_one { amount_in } else { -amount_out },
                 amount_1: if zero_for_one { -amount_out } else { amount_in },
@@ -709,7 +677,7 @@ impl MultiAssetSwap {
         env.storage().instance().set(&position_key, &updated_position);
         
         // Topic: event name only; recipient + tick range + amounts in data.
-        env.events().publish(symbol_short!("collect"), (recipient, tick_lower, tick_upper, amount0, amount1));
+        env.events().publish((symbol_short!("collect"),), (recipient, tick_lower, tick_upper, amount0, amount1));
         
         (amount0, amount1)
     }
@@ -757,11 +725,6 @@ impl MultiAssetSwap {
         if position.liquidity == 0 {
             env.storage().instance().remove(&position_key);
             // Remove from user positions list
-            let old_positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(owner.clone())).unwrap_or(Vec::new(&env));
-            let mut new_positions: Vec<(i32, i32)> = Vec::new(&env);
-            for pos in old_positions.iter() {
-                if !(pos.0 == tick_lower && pos.1 == tick_upper) {
-                    new_positions.push_back(pos);
             let positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(owner.clone())).unwrap_or_else(|| Vec::new(&env));
             let mut new_positions = Vec::new(&env);
             for p in positions.iter() {
@@ -785,7 +748,7 @@ impl MultiAssetSwap {
         }
         
         // Topic: event name only; owner + tick range + amounts in data.
-        env.events().publish(symbol_short!("burn"), (owner, tick_lower, tick_upper, amount, amount0, amount1));
+        env.events().publish((symbol_short!("burn"),), (owner, tick_lower, tick_upper, amount, amount0, amount1));
         
         (amount0, amount1)
     }
@@ -827,9 +790,9 @@ impl MultiAssetSwap {
         // User cannot refer themselves
         assert!(user != referrer, "cannot refer yourself");
         
-        env.storage().instance().set(&DataKey::Referrer(user), &referrer);
+        env.storage().instance().set(&DataKey::Referrer(user.clone()), &referrer);
         
-        env.events().publish((symbol_short!("set_referrer"), user), referrer);
+        env.events().publish((symbol_short!("set_ref"), user), referrer);
     }
 
     /// Gets the referrer for a user, if any.
@@ -843,7 +806,7 @@ impl MultiAssetSwap {
         assert!(fee_rate <= 10000, "fee rate cannot exceed 100%");
         env.storage().instance().set(&DataKey::ReferralFeeRate, &fee_rate);
         
-        env.events().publish(symbol_short!("set_referral_fee_rate"), fee_rate);
+        env.events().publish((symbol_short!("set_refee"),), fee_rate);
     }
 }
 
@@ -1024,6 +987,9 @@ mod tests {
         // Verify the pool is still active
         let (_, _, pool_liquidity) = client.get_state();
         assert!(pool_liquidity > 0);
+    }
+
+    #[test]
     #[should_panic(expected = "slippage protection: amount out below minimum")]
     fn test_slippage_protection() {
         let (env, contract_id, _admin, alice, token_a, token_b) = setup();

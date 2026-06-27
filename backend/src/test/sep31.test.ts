@@ -1,7 +1,7 @@
 import "@jest/globals";
 import request from "supertest";
 import express, { Express } from "express";
-import sep31Router from "../src/sep31/router";
+import sep31Router from "../sep31/router";
 import { expect, it } from "@jest/globals";
 
 // ─── Test app ─────────────────────────────────────────────────────────────

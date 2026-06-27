@@ -1,7 +1,7 @@
 import cronParser from 'cron-parser';
-import { StrKey } from '@stellar/stellar-sdk';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
+import { isValidStellarPublicKey } from '../utils/stellar-address';
 import { BatchPaymentService } from './batch-payment.service';
 import { config } from '../config/env';
 
@@ -33,7 +33,7 @@ export class RecurringPaymentsService {
   }
 
   validateScheduleInput(input: RecurringPaymentScheduleInput): void {
-    if (!StrKey.isValidEd25519PublicKey(input.destination)) {
+    if (!isValidStellarPublicKey(input.destination)) {
       throw new Error('Invalid destination Stellar address');
     }
 
@@ -83,6 +83,63 @@ export class RecurringPaymentsService {
       orderBy: {
         createdAt: 'desc',
       },
+    });
+  }
+
+  async getSchedule(scheduleId: string, userPublicKey: string) {
+    const schedule = await prisma.recurringPaymentSchedule.findFirst({
+      where: {
+        id: scheduleId,
+        user: {
+          publicKey: userPublicKey,
+        },
+      },
+    });
+
+    if (!schedule) {
+      throw new Error('Schedule not found');
+    }
+
+    return prisma.recurringPaymentSchedule.findUnique({
+      where: { id: scheduleId },
+      include: { runs: { orderBy: { startedAt: 'desc' } } },
+    });
+  }
+
+  async updateSchedule(scheduleId: string, userPublicKey: string, input: Partial<RecurringPaymentScheduleInput>) {
+    const schedule = await prisma.recurringPaymentSchedule.findFirst({
+      where: {
+        id: scheduleId,
+        user: {
+          publicKey: userPublicKey,
+        },
+      },
+    });
+
+    if (!schedule) {
+      throw new Error('Schedule not found');
+    }
+
+    const updatedInput = {
+      destination: input.destination ?? schedule.destination,
+      assetCode: input.assetCode ?? schedule.assetCode,
+      amount: input.amount ?? schedule.amount,
+      cron: input.cron ?? schedule.cron,
+    };
+
+    this.validateScheduleInput(updatedInput);
+
+    const data: Record<string, unknown> = {
+      ...input,
+    };
+
+    if (input.cron) {
+      data.nextRunAt = this.computeNextRunAt(input.cron);
+    }
+
+    return prisma.recurringPaymentSchedule.update({
+      where: { id: scheduleId },
+      data,
     });
   }
 

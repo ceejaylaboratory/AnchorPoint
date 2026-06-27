@@ -69,7 +69,7 @@ class HorizonEventMonitor extends EventEmitter {
         if (sub.filter && !sub.filter(event)) continue; // custom filter
         await this.deliverWebhook(sub, event);
         this.lastLedger = event.paging_token;
-        await setLastLedgerOffset(this.lastLedger);
+        await setLastLedgerOffset(this.lastLedger as string);
       }
     }
   }

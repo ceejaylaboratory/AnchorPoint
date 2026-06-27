@@ -61,13 +61,13 @@ export const SEP31_ASSET_FIELDS: Record<string, Sep31AssetConfig> = {
     senderInfo: {
       first_name: { description: "Sender's first name" },
       last_name: { description: "Sender's last name" },
-      email: { description: "Sender's email address" },
+      email_address: { description: "Sender's email address" },
     },
 
     receiverInfo: {
       first_name: { description: "Receiver's first name" },
       last_name: { description: "Receiver's last name" },
-      bank_account_no: { description: "Receiver's bank account number" },
+      bank_account_number: { description: "Receiver's bank account number", optional: true },
     },
   },
 
@@ -82,13 +82,13 @@ export const SEP31_ASSET_FIELDS: Record<string, Sep31AssetConfig> = {
     senderInfo: {
       first_name: { description: "Sender's first name" },
       last_name: { description: "Sender's last name" },
-      email: { description: "Sender's email address" },
+      email_address: { description: "Sender's email address" },
     },
 
     receiverInfo: {
       first_name: { description: "Receiver's first name" },
       last_name: { description: "Receiver's last name" },
-      bank_account_no: { description: "Receiver's bank account number" },
+      bank_account_number: { description: "Receiver's bank account number", optional: true },
     },
   },
 };

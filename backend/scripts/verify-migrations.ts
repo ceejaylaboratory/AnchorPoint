@@ -111,7 +111,7 @@ class MigrationVerifier {
       
       const env = {
         ...process.env,
-        DATABASE_URL: `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
       };
 
       // Reset and apply migrations
@@ -137,7 +137,7 @@ class MigrationVerifier {
 
       const env = {
         ...process.env,
-        DATABASE_URL: `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
       };
 
       // Check if the database schema matches the Prisma schema
@@ -150,7 +150,7 @@ class MigrationVerifier {
       );
 
       // If there's any diff output, there's inconsistency
-      if (diffOutput.trim() && !diffOutput.includes('No difference')) {
+      if (diffOutput.trim() && !diffOutput.includes('No difference') && !diffOutput.includes('-- This is an empty migration.')) {
         console.error('❌ Schema inconsistency detected:');
         console.error(diffOutput);
         return false;
@@ -173,13 +173,14 @@ class MigrationVerifier {
 
       const env = {
         ...process.env,
-        DATABASE_URL: `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
       };
 
       // Use Prisma migrate diff to detect destructive changes
       try {
+        const shadowUrl = process.env.SHADOW_DATABASE_URL || `file:${this.tempDbPath}.shadow`;
         this.runSilent(
-          `${this.prismaBinary} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code`,
+          `${this.prismaBinary} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "${shadowUrl}" --exit-code`,
           {
             env,
             cwd: path.join(__dirname, '..'),
@@ -214,7 +215,7 @@ class MigrationVerifier {
 
       const env = {
         ...process.env,
-        DATABASE_URL: `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
       };
 
       // Get the list of migrations

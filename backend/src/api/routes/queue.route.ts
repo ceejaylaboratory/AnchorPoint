@@ -11,21 +11,21 @@ const addJobSchema = z.object({
   type: z.string().min(1, 'Job type is required'),
   contractId: z.string().optional(),
   functionName: z.string().optional(),
-  parameters: z.record(z.any()).optional(),
+  parameters: z.record(z.string(), z.any()).optional(),
   priority: z.number().int().min(1).max(4).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 
 const addSettlementJobSchema = z.object({
   contractId: z.string().min(1, 'Contract ID is required'),
   functionName: z.string().min(1, 'Function name is required'),
-  parameters: z.record(z.any()),
+  parameters: z.record(z.string(), z.any()),
 });
 
 const addContractCallJobSchema = z.object({
   contractId: z.string().min(1, 'Contract ID is required'),
   functionName: z.string().min(1, 'Function name is required'),
-  parameters: z.record(z.any()),
+  parameters: z.record(z.string(), z.any()),
   priority: z.number().int().min(1).max(4).optional(),
 });
 

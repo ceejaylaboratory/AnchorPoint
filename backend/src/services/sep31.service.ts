@@ -36,6 +36,7 @@ export interface CreateTransactionInput {
   senderInfo: Record<string, string>;
   receiverInfo: Record<string, string>;
   callbackUrl?: string;
+  userPublicKey?: string;
 }
 
 export interface Sep31Transaction {
@@ -55,6 +56,13 @@ export interface Sep31Transaction {
   refunded: boolean;
   startedAt: string;
   completedAt?: string;
+  // Additional status tracking fields
+  lastStatusUpdate?: string;
+  statusHistory?: Array<{
+    status: Sep31Status;
+    timestamp: string;
+    message?: string;
+  }>;
 }
 
 // ─── Callback Notifier Interface ──────────────────────────────────────────────
@@ -77,7 +85,7 @@ export class SEP31Service {
   async createTransaction(
     input: CreateTransactionInput,
   ): Promise<{ id: string; stellarAccountId: string }> {
-    const { assetCode, amount, senderInfo, receiverInfo, callbackUrl } = input;
+    const { assetCode, amount, senderInfo, receiverInfo, callbackUrl, userPublicKey } = input;
 
     // 1. Validate asset
     if (!isSep31AssetSupported(assetCode)) {
@@ -123,15 +131,14 @@ export class SEP31Service {
     // 5. Persist
     const id = randomUUID();
 
-    // We need a userId for the relation — use a system/placeholder user for SEP-31
-    // In a real system this would come from the authenticated JWT; for now we
-    // upsert a system user so the FK constraint is satisfied.
+    // We need a userId for the relation
+    const targetPublicKey = userPublicKey || "SEP31_SYSTEM";
     const systemUser = await prisma.user.upsert({
-      where: { publicKey: "SEP31_SYSTEM" },
+      where: { publicKey: targetPublicKey },
       update: {},
       create: {
-        publicKey: "SEP31_SYSTEM",
-        email: "sep31@system.internal",
+        publicKey: targetPublicKey,
+        email: targetPublicKey === "SEP31_SYSTEM" ? "sep31@system.internal" : `${targetPublicKey.toLowerCase()}@system.internal`,
       },
     });
 
@@ -152,7 +159,7 @@ export class SEP31Service {
 
     const stellarAccountId =
       process.env.STELLAR_ACCOUNT_ID ||
-      "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZWM9CQJURIXI5JLHY2QB";
+      "GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K";
 
     return { id, stellarAccountId };
   }
@@ -175,6 +182,11 @@ export class SEP31Service {
     id: string,
     status: Sep31Status,
     message?: string,
+    extraFields?: {
+      stellarTxId?: string;
+      externalId?: string;
+      feeAmount?: string;
+    },
   ): Promise<Sep31Transaction> {
     // Validate status
     if (!(VALID_SEP31_STATUSES as readonly string[]).includes(status)) {
@@ -201,6 +213,12 @@ export class SEP31Service {
 
     if (status === "error" && message) {
       updateData.requiredInfoMessage = message;
+    }
+
+    if (extraFields) {
+      if (extraFields.stellarTxId) updateData.stellarTxId = extraFields.stellarTxId;
+      if (extraFields.externalId) updateData.externalId = extraFields.externalId;
+      if (extraFields.feeAmount) updateData.feeAmount = extraFields.feeAmount;
     }
 
     const updated = await prisma.transaction.update({
@@ -256,8 +274,8 @@ export class SEP31Service {
       assetCode: record.assetCode,
       amount: record.amount,
       amountIn: record.amount,
-      amountOut: undefined,
-      amountFee: undefined,
+      amountOut: record.amount && record.feeAmount ? (parseFloat(record.amount) - parseFloat(record.feeAmount)).toFixed(2) : undefined,
+      amountFee: record.feeAmount ?? undefined,
       stellarTransactionId: record.stellarTxId ?? undefined,
       externalTransactionId: record.externalId ?? undefined,
       senderInfo: (record.senderInfo as Record<string, string>) ?? {},
@@ -275,6 +293,14 @@ export class SEP31Service {
           : record.completedAt
             ? String(record.completedAt)
             : undefined,
+      // Additional status tracking fields
+      lastStatusUpdate:
+        record.updatedAt instanceof Date
+          ? record.updatedAt.toISOString()
+          : record.updatedAt
+            ? String(record.updatedAt)
+            : undefined,
+      statusHistory: [],
     };
   }
 }

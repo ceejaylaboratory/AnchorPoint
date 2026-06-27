@@ -59,7 +59,7 @@ class MultisigService {
     // Validate the transaction envelope
     let transaction: StellarSdk.Transaction;
     try {
-      transaction = new StellarSdk.TransactionBuilder.fromXDR(
+      transaction = StellarSdk.TransactionBuilder.fromXDR(
         envelopeXdr,
         StellarSdk.Networks.TESTNET
       ) as StellarSdk.Transaction;
@@ -162,7 +162,7 @@ class MultisigService {
     // Validate the signed envelope
     let signedTransaction: StellarSdk.Transaction;
     try {
-      signedTransaction = new StellarSdk.TransactionBuilder.fromXDR(
+      signedTransaction = StellarSdk.TransactionBuilder.fromXDR(
         signedEnvelopeXdr,
         StellarSdk.Networks.TESTNET
       ) as StellarSdk.Transaction;
@@ -330,7 +330,7 @@ class MultisigService {
       const server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
 
       // Parse the transaction
-      const transaction = new StellarSdk.TransactionBuilder.fromXDR(
+      const transaction = StellarSdk.TransactionBuilder.fromXDR(
         multisigTx.envelopeXdr,
         StellarSdk.Networks.TESTNET
       ) as StellarSdk.Transaction;
@@ -425,12 +425,12 @@ class MultisigService {
    * Merge signatures from multiple signed envelopes
    */
   private async mergeSignatures(baseEnvelopeXdr: string, newEnvelopeXdr: string): Promise<string> {
-    const baseTransaction = new StellarSdk.TransactionBuilder.fromXDR(
+    const baseTransaction = StellarSdk.TransactionBuilder.fromXDR(
       baseEnvelopeXdr,
       StellarSdk.Networks.TESTNET
     ) as StellarSdk.Transaction;
 
-    const newTransaction = new StellarSdk.TransactionBuilder.fromXDR(
+    const newTransaction = StellarSdk.TransactionBuilder.fromXDR(
       newEnvelopeXdr,
       StellarSdk.Networks.TESTNET
     ) as StellarSdk.Transaction;

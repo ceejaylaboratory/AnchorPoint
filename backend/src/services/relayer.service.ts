@@ -37,11 +37,20 @@ export class RelayerService {
   private relayerKeypair: Keypair;
 
   constructor(config?: Partial<RelayerConfig>) {
+    let relayerSecretKey = config?.relayerSecretKey || '';
+    let relayerPublicKey = config?.relayerPublicKey || '';
+
+    if (!relayerSecretKey && process.env.NODE_ENV === 'test') {
+      const kp = Keypair.random();
+      relayerSecretKey = kp.secret();
+      relayerPublicKey = kp.publicKey();
+    }
+
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
-      relayerPublicKey: config?.relayerPublicKey || '',
-      relayerSecretKey: config?.relayerSecretKey || '',
+      relayerPublicKey,
+      relayerSecretKey,
     } as RelayerConfig;
 
     if (!this.config.relayerSecretKey) {

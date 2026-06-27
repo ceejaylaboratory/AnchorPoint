@@ -4,7 +4,9 @@ import { redis } from '../../lib/redis';
 import logger from '../../utils/logger';
 import { Request, Response, NextFunction } from 'express';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { config } from '../../config/env';
 
+const HEALTH_SKIP_PATHS = ['/health', '/api-docs', '/api-docs.json'];
 
 /**
  * Interface for rate limit options
@@ -14,6 +16,8 @@ export interface RateLimitOptions {
   max?: number;
   message?: string;
   keyPrefix?: string;
+  /** Paths that bypass rate limiting entirely (in addition to the default health/docs paths) */
+  skipPaths?: string[];
 }
 
 /**
@@ -23,26 +27,29 @@ export interface RateLimitOptions {
  */
 export const createRateLimiter = (options: RateLimitOptions = {}) => {
   const {
-    windowMs = 15 * 60 * 1000, // Default 15 minutes
-    max = 100, // Default 100 requests per windowMs
+    windowMs = 15 * 60 * 1000,
+    max = 100,
     message = 'Too many requests from this IP, please try again later.',
     keyPrefix = 'rl:',
+    skipPaths = [],
   } = options;
+
+  const allSkipPaths = [...HEALTH_SKIP_PATHS, ...skipPaths];
 
   return rateLimit({
     windowMs,
     max,
     message: { error: message },
-    standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-    // Redis store configuration
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req: Request) => allSkipPaths.some(p => req.path === p || req.path.startsWith(p)),
     store: new RedisStore({
       sendCommand: (...args: string[]) => redis.call(...args),
       prefix: keyPrefix,
     }),
 
     handler: (req: Request, res: Response, _next: NextFunction, options: any) => {
-      logger.warn(`Rate limit exceeded for IP: ${req.ip}`);
+      logger.warn(`Rate limit exceeded`, { ip: req.ip, path: req.path, keyPrefix });
       res.status(options.statusCode).send(options.message);
     },
   });
@@ -92,14 +99,14 @@ export const submissionLimiterOptions = {
   keyGenerator: (req: Request) => {
     try {
       if (req.body && req.body.xdr) {
-        const tx = StellarSdk.TransactionBuilder.fromXDR(req.body.xdr, StellarSdk.Networks.TESTNET);
+        const tx = StellarSdk.TransactionBuilder.fromXDR(req.body.xdr, config.STELLAR_NETWORK_PASSPHRASE);
         if (tx instanceof StellarSdk.FeeBumpTransaction) {
           return tx.innerTransaction.source;
         }
         return tx.source;
       }
     } catch (e) {
-      // Fallback to IP if XDR is invalid
+      logger.debug('Failed to parse XDR for rate-limit key, falling back to IP', { error: (e as Error).message });
     }
     return req.ip || 'unknown';
   },

@@ -1,4 +1,4 @@
-import { Queue, Job, JobsOptions } from 'bullmq';
+import { Queue, Job, JobsOptions, QueueEvents } from 'bullmq';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import {
@@ -49,9 +49,11 @@ export interface JobResult {
  */
 class ContractQueueService {
   private queue: Queue;
+  private queueEvents: QueueEvents;
 
   constructor() {
     this.queue = new Queue(QUEUE_NAMES.CONTRACT_INTERACTIONS, defaultQueueOptions);
+    this.queueEvents = new QueueEvents(QUEUE_NAMES.CONTRACT_INTERACTIONS, defaultQueueOptions);
     this.setupEventListeners();
   }
 
@@ -409,53 +411,42 @@ class ContractQueueService {
    * Setup event listeners for queue
    */
   private setupEventListeners(): void {
-    this.queue.on('waiting', (job: Job) => {
-      logger.debug(`Job ${job.id} is waiting`);
+    this.queueEvents.on('waiting', ({ jobId }) => {
+      logger.debug(`Job ${jobId} is waiting`);
     });
 
-    this.queue.on('active', (job: Job) => {
-      logger.info(`Job ${job.id} started processing`);
-      this.updateJobInDatabase(job.id!, {
+    this.queueEvents.on('active', ({ jobId }) => {
+      logger.info(`Job ${jobId} started processing`);
+      this.updateJobInDatabase(jobId, {
         status: JobStatus.ACTIVE,
         startedAt: new Date(),
       });
     });
 
-    this.queue.on('completed', (job: Job, result: any) => {
-      logger.info(`Job ${job.id} completed successfully`);
-      this.updateJobInDatabase(job.id!, {
+    this.queueEvents.on('completed', ({ jobId, returnvalue }) => {
+      logger.info(`Job ${jobId} completed successfully`);
+      this.updateJobInDatabase(jobId, {
         status: JobStatus.COMPLETED,
-        result,
+        result: returnvalue,
         completedAt: new Date(),
       });
     });
 
-    this.queue.on('failed', (job: Job | undefined, error: Error) => {
-      if (job) {
-        logger.error(`Job ${job.id} failed:`, error);
-        
-        // Parse error using Soroban error service
-        const errorDetails = sorobanErrorService.formatForApi(error);
-        
-        this.updateJobInDatabase(job.id!, {
-          status: JobStatus.FAILED,
-          error: error.message,
-          errorCategory: errorDetails.category,
-          errorSeverity: errorDetails.severity,
-          errorCode: errorDetails.code,
-          userMessage: errorDetails.userMessage,
-          suggestedAction: errorDetails.suggestedAction,
-          retryable: errorDetails.retryable,
-          failedAt: new Date(),
-        });
-      }
+    this.queueEvents.on('failed', ({ jobId, failedReason }) => {
+      logger.error(`Job ${jobId} failed:`, failedReason);
+      
+      this.updateJobInDatabase(jobId, {
+        status: JobStatus.FAILED,
+        error: failedReason,
+        failedAt: new Date(),
+      });
     });
 
-    this.queue.on('progress', (job: Job, progress: number | object) => {
-      logger.debug(`Job ${job.id} progress:`, progress);
+    this.queueEvents.on('progress', ({ jobId, data }) => {
+      logger.debug(`Job ${jobId} progress:`, data);
     });
 
-    this.queue.on('error', (error: Error) => {
+    this.queueEvents.on('error', (error: Error) => {
       logger.error('Queue error:', error);
     });
   }
@@ -481,6 +472,7 @@ class ContractQueueService {
    * Close the queue
    */
   async close(): Promise<void> {
+    await this.queueEvents.close();
     await this.queue.close();
     logger.info('Queue closed');
   }

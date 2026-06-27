@@ -1,4 +1,5 @@
-import { HotWalletMonitorService, HotWallet, AlertPayload } from './hot-wallet-monitor.service';
+import { HotWalletMonitorService, HotWallet } from './hot-wallet-monitor.service';
+import type { AlertEmailService } from './alert-email.service';
 import { stellarService } from './stellar.service';
 import { redis } from '../lib/redis';
 import logger from '../utils/logger';
@@ -50,10 +51,21 @@ const USDC_WALLET: HotWallet = {
   thresholdAmount: 500,
 };
 
-function makeService(wallets: HotWallet[] = [XLM_WALLET]) {
+function makeService(
+  wallets: HotWallet[] = [XLM_WALLET],
+  options: {
+    alertEmailService?: AlertEmailService;
+    alertChannels?: { emailRecipients?: string };
+  } = {},
+) {
   // Reset singleton for each test
   (HotWalletMonitorService as any).instance = undefined;
-  return HotWalletMonitorService.getInstance({ wallets, alertCooldownSeconds: 3600 });
+  return HotWalletMonitorService.getInstance({
+    wallets,
+    alertCooldownSeconds: 3600,
+    alertEmailService: options.alertEmailService,
+    alertChannels: options.alertChannels,
+  });
 }
 
 function mockHorizonAccount(balances: object[]) {
@@ -180,6 +192,30 @@ describe('HotWalletMonitorService — alert de-duplication', () => {
       expect.anything()
     );
     expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it('dispatches SMTP alert email when recipients are configured', async () => {
+    mockHorizonAccount([{ asset_type: 'native', balance: '10.0000000' }]);
+    const alertEmailService = {
+      sendHotWalletLowBalanceAlert: jest.fn().mockResolvedValue(undefined),
+      sendSystemAlert: jest.fn(),
+    };
+
+    const svc = makeService([XLM_WALLET], {
+      alertEmailService,
+      alertChannels: { emailRecipients: 'ops@example.com' },
+    });
+
+    await svc.checkWallet(XLM_WALLET);
+
+    expect(alertEmailService.sendHotWalletLowBalanceAlert).toHaveBeenCalledWith(
+      'ops@example.com',
+      expect.objectContaining({
+        walletLabel: 'XLM Hot Wallet',
+        currentBalance: 10,
+        thresholdAmount: 100,
+      }),
+    );
   });
 });
 

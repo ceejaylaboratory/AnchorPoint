@@ -5,18 +5,21 @@ import { config } from '../config/env';
 // Mock Stellar SDK
 jest.mock('@stellar/stellar-sdk', () => {
   const original = jest.requireActual('@stellar/stellar-sdk');
+  const mockHorizonServer = {
+    submitTransaction: jest.fn(),
+    loadAccount: jest.fn(),
+  };
   return {
     ...original,
     Horizon: {
-      Server: jest.fn().mockImplementation(() => ({
-        submitTransaction: jest.fn(),
-      })),
+      Server: jest.fn().mockImplementation(() => mockHorizonServer),
     },
     TransactionBuilder: {
       ...original.TransactionBuilder,
       fromXDR: jest.fn(),
       buildFeeBumpTransaction: jest.fn(),
     },
+    __mockHorizonServer: mockHorizonServer,
     Keypair: {
       fromSecret: jest.fn().mockImplementation(() => ({
         publicKey: () => 'G_FEE_BUMPER',
@@ -27,17 +30,15 @@ jest.mock('@stellar/stellar-sdk', () => {
 
 describe('StellarService', () => {
   let stellarService: StellarService;
-  let mockServer: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    stellarService = new StellarService();
-    mockServer = (stellarService as any).server;
+    stellarService = new (StellarService as any)();
   });
 
   it('should use public network passphrase when configured', () => {
     (config as any).STELLAR_NETWORK = 'public';
-    stellarService = new StellarService();
+    stellarService = new (StellarService as any)();
     expect((stellarService as any).networkPassphrase).toBe(StellarSdk.Networks.PUBLIC);
   });
 
@@ -46,14 +47,15 @@ describe('StellarService', () => {
     const mockTx = {
       source: 'G_SOURCE',
       operations: [{ type: 'payment' }],
+      hash: jest.fn().mockReturnValue(Buffer.from('tx-hash')),
     };
     (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
-    mockServer.submitTransaction.mockResolvedValue({ hash: '123', ledger: 456 });
+    (StellarSdk as any).__mockHorizonServer.submitTransaction.mockResolvedValue({ hash: '123', ledger: 456 });
 
     const result = await stellarService.submitTransaction('mock-xdr');
 
     expect(result.hash).toBe('123');
-    expect(mockServer.submitTransaction).toHaveBeenCalled();
+    expect((StellarSdk as any).__mockHorizonServer.submitTransaction).toHaveBeenCalled();
   });
 
   it('should throw error for non-whitelisted operation', async () => {
@@ -79,6 +81,7 @@ describe('StellarService', () => {
     const mockTx = {
       source: 'G_SOURCE',
       operations: [{ type: 'payment' }],
+      hash: jest.fn().mockReturnValue(Buffer.from('tx-hash')),
     };
     (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
     
@@ -92,7 +95,7 @@ describe('StellarService', () => {
         }
       }
     };
-    mockServer.submitTransaction.mockRejectedValue(stellarError);
+    (StellarSdk as any).__mockHorizonServer.submitTransaction.mockRejectedValue(stellarError);
 
     await expect(stellarService.submitTransaction('mock-xdr'))
       .rejects.toThrow(/Stellar Error: {"operations":\["op_underfunded"\]}/);
@@ -102,16 +105,16 @@ describe('StellarService', () => {
   it('should apply fee-bump if secret is configured', async () => {
     // Re-initialize with secret
     (config as any).STELLAR_FEE_BUMP_SECRET = 'S_MOCK_SECRET';
-    stellarService = new StellarService();
-    mockServer = (stellarService as any).server;
+    stellarService = new (StellarService as any)();
 
     const mockTx = {
       source: 'G_SOURCE',
       operations: [{ type: 'payment' }],
+      hash: jest.fn().mockReturnValue(Buffer.from('tx-hash')),
     };
     (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
     (StellarSdk.TransactionBuilder.buildFeeBumpTransaction as jest.Mock).mockReturnValue({ hash: 'bumped' });
-    mockServer.submitTransaction.mockResolvedValue({ hash: 'bumped', ledger: 789 });
+    (StellarSdk as any).__mockHorizonServer.submitTransaction.mockResolvedValue({ hash: 'bumped', ledger: 789 });
 
     await stellarService.submitTransaction('mock-xdr');
 
@@ -147,4 +150,3 @@ describe('StellarService', () => {
       .toThrow('Invalid transaction XDR');
   });
 });
-

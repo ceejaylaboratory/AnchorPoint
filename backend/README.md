@@ -57,6 +57,14 @@ To run the linter:
 npm run lint
 ```
 
+### Database Restore Verification
+To verify that the SQLite backend database can be backed up and restored without mutating the source database:
+```bash
+npm run db:restore:verify
+```
+
+For the full disaster recovery procedure, see [Database Restore Disaster Recovery Runbook](./docs/DISASTER_RECOVERY_DB_RESTORE.md).
+
 ## External KYC Providers (SEP-12)
 AnchorPoint supports pluggable third-party KYC providers for SEP-12 flows.
 
@@ -99,3 +107,14 @@ Optional SMTP environment variables:
 - `SMTP_PASS`
 - `SMTP_FROM`
 - `ADMIN_PASSWORD_RESET_URL_BASE`
+
+When SMTP is not configured, emails are logged locally for development instead of being sent.
+
+## SMTP Integration
+The backend uses a shared Nodemailer transport (`src/lib/smtp.service.ts`) for:
+- Admin password reset emails
+- User notification emails (when SMTP is configured)
+- Hot wallet low-balance alerts
+
+Configure the SMTP variables above to enable delivery in staging or production.
+When SMTP is configured, the backend also sends HTML alert emails (for example hot-wallet low-balance notifications) using the same transport. Set `ALERT_EMAIL_RECIPIENTS` to a comma-separated list of operator addresses. If SMTP is not configured, alert content is logged at `info` level for local development.

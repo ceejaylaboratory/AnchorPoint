@@ -2,6 +2,7 @@ import { dynamicConfigSchema, DynamicConfig, initialDynamicConfig, DashboardUiCo
 import prisma from '../lib/prisma';
 import { redis } from '../lib/redis';
 import logger from '../utils/logger';
+import { Prisma } from '@prisma/client';
 
 const REDIS_CHANNEL = 'CONFIG_UPDATED';
 
@@ -15,13 +16,13 @@ class ConfigService {
   }
 
   private setupRedisSubscriber() {
-    this.subscriber.subscribe(REDIS_CHANNEL, (err) => {
+    this.subscriber.subscribe(REDIS_CHANNEL, (err: Error | null) => {
       if (err) {
         logger.error('Failed to subscribe to config updates:', err);
       }
     });
 
-    this.subscriber.on('message', async (channel, message) => {
+    this.subscriber.on('message', async (channel: string, message: string) => {
       if (channel === REDIS_CHANNEL) {
         logger.info(`Received config update notification (version: ${message}), refreshing...`);
         await this.refreshConfig();
@@ -91,7 +92,7 @@ class ConfigService {
 
     const newVersion = (activeConfig?.version || 0) + 1;
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (activeConfig) {
         await tx.systemConfig.update({
           where: { id: activeConfig.id },
@@ -149,7 +150,7 @@ class ConfigService {
 
     const newVersion = (activeConfig?.version || 0) + 1;
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (activeConfig) {
         await tx.systemConfig.update({
           where: { id: activeConfig.id },

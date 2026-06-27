@@ -1,0 +1,58 @@
+global:
+  resolve_timeout: 5m
+
+# Alertmanager can expand environment variables when started with
+# --config.expand-env=true. We use that to keep PagerDuty routing keys out of git.
+route:
+  receiver: pagerduty-critical
+  group_by: ['alertname', 'service', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 2h
+  routes:
+    - matchers:
+        - severity="warning"
+      receiver: pagerduty-warning
+      continue: true
+    - matchers:
+        - severity="critical"
+      receiver: pagerduty-critical
+
+receivers:
+  - name: pagerduty-critical
+    pagerduty_configs:
+      - routing_key: ${PAGERDUTY_ROUTING_KEY}
+        severity: '{{ .CommonLabels.severity }}'
+        class: '{{ .CommonLabels.service }}'
+        summary: '{{ .CommonAnnotations.summary }}'
+        description: |-
+          Alert: {{ .CommonLabels.alertname }}
+          Service: {{ .CommonLabels.service }}
+          Severity: {{ .CommonLabels.severity }}
+          Team: {{ .CommonLabels.team }}
+
+          {{ .CommonAnnotations.description }}
+        source: AnchorPoint Prometheus
+        send_resolved: true
+
+  - name: pagerduty-warning
+    pagerduty_configs:
+      - routing_key: ${PAGERDUTY_ROUTING_KEY}
+        severity: '{{ .CommonLabels.severity }}'
+        class: '{{ .CommonLabels.service }}'
+        summary: '{{ .CommonAnnotations.summary }}'
+        description: |-
+          Alert: {{ .CommonLabels.alertname }}
+          Service: {{ .CommonLabels.service }}
+          Severity: {{ .CommonLabels.severity }}
+
+          {{ .CommonAnnotations.description }}
+        source: AnchorPoint Prometheus
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname', 'service']

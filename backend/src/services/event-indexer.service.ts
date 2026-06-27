@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { rpc, xdr, scValToNative } from '@stellar/stellar-sdk';
-import { logger } from '../utils/logger';
+import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -54,9 +54,15 @@ export class EventIndexerService {
             orderBy: { ledger: 'desc' }
         });
 
-        const startLedger = lastEvent ? lastEvent.ledger + 1 : undefined;
+        let startLedger: number;
+        if (lastEvent) {
+            startLedger = lastEvent.ledger + 1;
+        } else {
+            const latest = await this.rpcServer.getLatestLedger();
+            startLedger = Math.max(1, latest.sequence - 1000);
+        }
 
-        logger.info(`Fetching events from ledger: ${startLedger || 'earliest available'}`);
+        logger.info(`Fetching events from ledger: ${startLedger}`);
 
         // Soroban RPC getEvents call
         // Note: In a real scenario, you'd handle pagination and filters properly
@@ -69,7 +75,7 @@ export class EventIndexerService {
                 }
             ],
             limit: 100
-        });
+        } as any);
 
         if (response.events && response.events.length > 0) {
             logger.info(`Found ${response.events.length} events to index`);
@@ -87,9 +93,9 @@ export class EventIndexerService {
     /**
      * Parse and store a single event
      */
-    private async processEvent(event: rpc.Api.GetEventResponse) {
+    private async processEvent(event: any) {
         // Parse XDR topics and value
-        const topics = event.topic.map(t => {
+        const topics = event.topic.map((t: any) => {
             const scVal = xdr.ScVal.fromXDR(t, 'base64');
             return scValToNative(scVal);
         });

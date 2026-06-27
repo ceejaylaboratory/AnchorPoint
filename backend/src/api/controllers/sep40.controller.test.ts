@@ -59,6 +59,34 @@ describe('Sep40Controller', () => {
       expect(result.rates).toHaveLength(1);
       expect(result.rates[0].rate).toBeCloseTo(8.33, 1);
     });
+
+    it('should support additional asset codes (EURC, CADT, DAI, USDP)', async () => {
+      const pairs = [
+        { sell_asset: 'XLM', buy_asset: 'EURC' },
+        { sell_asset: 'USDC', buy_asset: 'CADT' },
+        { sell_asset: 'BTC', buy_asset: 'DAI' },
+        { sell_asset: 'ETH', buy_asset: 'USDP' },
+      ];
+
+      const result = await sep40Controller.getSwapRates(pairs);
+
+      expect(result.rates).toHaveLength(4);
+      expect(result.rates[0].sell_asset).toBe('XLM');
+      expect(result.rates[0].buy_asset).toBe('EURC');
+      expect(result.rates[0].rate).toBe(0.105);
+      
+      expect(result.rates[1].sell_asset).toBe('USDC');
+      expect(result.rates[1].buy_asset).toBe('CADT');
+      expect(result.rates[1].rate).toBe(1.05);
+      
+      expect(result.rates[2].sell_asset).toBe('BTC');
+      expect(result.rates[2].buy_asset).toBe('DAI');
+      expect(result.rates[2].rate).toBe(45000);
+      
+      expect(result.rates[3].sell_asset).toBe('ETH');
+      expect(result.rates[3].buy_asset).toBe('USDP');
+      expect(result.rates[3].rate).toBe(2500);
+    });
   });
 
   describe('getSupportedPairs', () => {

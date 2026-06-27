@@ -15,9 +15,9 @@ describe("Prisma Clients", () => {
     const db = require("./db.service").default;
 
     expect(PrismaClient).toHaveBeenCalledTimes(2);
-    // prisma.ts wraps with withTracingExtension which calls $extends → returns {}
-    expect(prisma).toEqual({});
-    // db.service.ts uses raw PrismaClient (no extension)
+    expect(prisma).toBeDefined();
+    expect(typeof prisma.$extends).toBe("function");
+    // db.service.ts uses raw PrismaClient
     expect(db).toBeDefined();
     expect(typeof db.$extends).toBe("function");
   });

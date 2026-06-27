@@ -1,4 +1,10 @@
-import { NotificationType, NotificationStatus } from "@prisma/client";
+import { NotificationStatus } from "@prisma/client";
+
+export enum NotificationType {
+  EMAIL = 'EMAIL',
+  SMS = 'SMS',
+  PUSH = 'PUSH'
+}
 import prisma from "../lib/prisma";
 import logger from "../utils/logger";
 

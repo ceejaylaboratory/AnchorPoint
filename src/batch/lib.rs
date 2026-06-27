@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Val, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Val, Vec,
+};
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -102,7 +104,7 @@ impl BatchExecutor {
 
         // Topic: event name only; caller + nonce + count in data.
         env.events().publish(
-            symbol_short!("batch"),
+            (symbol_short!("exec"), symbol_short!("batch")),
             (caller, current_nonce, calls.len()),
         );
 

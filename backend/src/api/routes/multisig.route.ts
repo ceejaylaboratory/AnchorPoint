@@ -13,7 +13,7 @@ const createTransactionSchema = z.object({
   threshold: z.number().int().min(1, 'Threshold must be at least 1'),
   memo: z.string().optional(),
   expiresAt: z.string().datetime().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 
 const addSignatureSchema = z.object({

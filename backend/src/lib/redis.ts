@@ -26,10 +26,10 @@ export const redis = isTest
         return 1;
       },
       on: createNoop<(event: string, handler: (...args: any[]) => void) => void>(undefined),
-      get: createNoop<(key: string) => Promise<string | null>>(null),
-      set: createNoop<(key: string, value: string) => Promise<'OK'>>('OK'),
-      del: createNoop<(key: string) => Promise<number>>(1),
-      publish: createNoop<(channel: string, message: string) => Promise<number>>(1),
+      get: createNoop<(key: string) => Promise<string | null>>(Promise.resolve(null)),
+      set: createNoop<(key: string, value: string) => Promise<'OK'>>(Promise.resolve('OK')),
+      del: createNoop<(key: string) => Promise<number>>(Promise.resolve(1)),
+      publish: createNoop<(channel: string, message: string) => Promise<number>>(Promise.resolve(1)),
     } as any)
 
 

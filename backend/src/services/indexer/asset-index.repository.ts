@@ -52,7 +52,7 @@ export class AssetIndexRepository {
       update: data,
       create: {
         assetCode: result.assetCode,
-        issuerPublicKey: result.issuerPublicKey,
+        issuerPublicKey: result.issuerPublicKey ?? "",
         ...data,
       },
     });

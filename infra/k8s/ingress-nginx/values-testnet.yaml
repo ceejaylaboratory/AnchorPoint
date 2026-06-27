@@ -1,0 +1,50 @@
+# =============================================================================
+# NGINX Ingress Controller Helm Values (Testnet)
+# =============================================================================
+# Install command:
+# helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+# helm repo update
+# helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+#   --namespace ingress-nginx --create-namespace \
+#   -f infra/k8s/ingress-nginx/values-testnet.yaml
+# =============================================================================
+
+controller:
+  replicaCount: 2
+
+  ingressClassResource:
+    name: nginx
+    enabled: true
+    default: true
+    controllerValue: k8s.io/ingress-nginx
+
+  ingressClass: nginx
+  watchIngressWithoutClass: false
+
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Local
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  metrics:
+    enabled: true
+
+  config:
+    use-forwarded-headers: "true"
+    enable-real-ip: "true"
+    proxy-body-size: "20m"
+    ssl-redirect: "true"
+    hsts: "true"
+    hsts-max-age: "31536000"
+    hsts-include-subdomains: "true"
+
+defaultBackend:
+  enabled: true
