@@ -105,7 +105,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
     return (
       <div className="glass-card p-8">
         <div className="flex items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-500 border-t-primary-text" />
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-primary" />
         </div>
       </div>
     );
@@ -117,8 +117,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
         <h3 className="mb-6 text-xl font-bold text-slate-100">Notification Preferences</h3>
 
         <div className="space-y-6">
-          {/* Email Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-500 bg-slate-800/50 p-4">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-blue-500/10 p-2">
                 <Mail size={20} className="text-blue-400" />
@@ -133,7 +132,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             <button
               onClick={() => handleToggle('emailEnabled')}
               className={`relative h-6 w-11 rounded-full transition-colors ${
-                preferences.emailEnabled ? 'bg-primary' : 'bg-slate-600'
+                preferences.emailEnabled ? 'bg-primary' : 'bg-slate-700'
               }`}
               role="switch"
               aria-checked={preferences.emailEnabled}
@@ -147,8 +146,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             </button>
           </div>
 
-          {/* SMS Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-500 bg-slate-800/50 p-4">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-emerald-500/10 p-2">
                 <MessageSquare size={20} className="text-emerald-400" />
@@ -178,7 +176,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             <button
               onClick={() => handleToggle('smsEnabled')}
               className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
-                preferences.smsEnabled ? 'bg-primary' : 'bg-slate-600'
+                preferences.smsEnabled ? 'bg-primary' : 'bg-slate-700'
               }`}
               role="switch"
               aria-checked={preferences.smsEnabled}
@@ -192,8 +190,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             </button>
           </div>
 
-          {/* Push Notifications */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-500 bg-slate-800/50 p-4">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-purple-500/10 p-2">
                 <Bell size={20} className="text-purple-400" />
@@ -208,7 +205,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             <button
               onClick={() => handleToggle('pushEnabled')}
               className={`relative h-6 w-11 rounded-full transition-colors ${
-                preferences.pushEnabled ? 'bg-primary' : 'bg-slate-600'
+                preferences.pushEnabled ? 'bg-primary' : 'bg-slate-700'
               }`}
               role="switch"
               aria-checked={preferences.pushEnabled}
@@ -223,7 +220,6 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           </div>
         </div>
 
-        {/* Save Button */}
         <div className="mt-6 flex items-center justify-between">
           <div>
             {error && (
@@ -242,7 +238,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
           <button
             onClick={savePreferences}
             disabled={saving}
-            className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2 font-medium text-primary-foreground transition-colors hover:brightness-110 disabled:opacity-50"
+            className="action-button flex items-center gap-2 rounded-lg bg-primary px-6 py-2 font-medium text-white hover:bg-primary/90 disabled:opacity-50"
           >
             <Save size={18} />
             {saving ? 'Saving...' : 'Save Preferences'}
@@ -250,13 +246,10 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
         </div>
       </div>
 
-      {/* Information Card */}
       <div className="glass-card p-6">
         <h4 className="mb-3 font-medium text-slate-100">About Webhook Notifications</h4>
         <div className="space-y-2 text-sm text-slate-400">
-          <p>
-            Webhook notifications keep you informed about important events in your account:
-          </p>
+          <p>Webhook notifications keep you informed about important events in your account:</p>
           <ul className="ml-4 list-disc space-y-1">
             <li>Transaction status changes (pending, completed, failed)</li>
             <li>Deposit and withdrawal confirmations</li>
@@ -265,8 +258,8 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
             <li>Security alerts and account activity</li>
           </ul>
           <p className="mt-4">
-            You can customize which channels receive notifications based on your preferences.
-            Email notifications are recommended for important updates.
+            You can customize which channels receive notifications based on your preferences. Email notifications are
+            recommended for important updates.
           </p>
         </div>
       </div>

@@ -11,11 +11,12 @@ import {
   Wallet,
   AlertCircle,
   Bell,
+  RefreshCcw,
+  Activity,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { LogoMark } from './components/LogoMark';
-import { RequirementList } from './components/RequirementList';
 import { NotificationBell } from './components/NotificationBell';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { FreighterAdapter } from './lib/wallet/FreighterAdapter';
@@ -27,6 +28,9 @@ const KycStatusView = lazy(() => import('./components/KycStatusView'));
 const NotificationCenter = lazy(() => import('./components/NotificationCenter'));
 const NotificationPreferences = lazy(() => import('./components/NotificationPreferences'));
 const AdminControls = lazy(() => import('./components/AdminControls'));
+const Sep38QuotePanel = lazy(() => import('./components/Sep38QuotePanel'));
+const ServiceStatusPanel = lazy(() => import('./components/ServiceStatusPanel'));
+const SettingsView = lazy(() => import('./components/SettingsView'));
 
 const defaultUiConfig: UiConfig = {
   brandName: 'AnchorPoint',
@@ -167,6 +171,8 @@ const App = () => {
       { id: 'deposit', icon: ArrowDownLeft, label: 'Deposit' },
       { id: 'withdraw', icon: ArrowUpRight, label: 'Withdraw' },
       { id: 'history', icon: History, label: 'History' },
+      { id: 'sep38', icon: RefreshCcw, label: 'SEP-38 Quote' },
+      { id: 'status', icon: Activity, label: 'Service Status' },
       { id: 'notifications', icon: Bell, label: 'Notifications' },
       { id: 'kyc', icon: ShieldCheck, label: 'KYC Status' },
       { id: 'settings', icon: Settings, label: 'Settings' },
@@ -201,14 +207,22 @@ const App = () => {
         } as React.CSSProperties
       }
     >
+      {sidebarOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation menu overlay"
+          className="fixed inset-0 z-40 bg-slate-950/70 backdrop-blur-sm lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <aside
         data-testid="sidebar"
         id="main-sidebar"
         aria-label="Main navigation"
-        className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-slate-600 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0`}
+        className={`fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-2rem))] transform border-r border-slate-800 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:w-64 lg:translate-x-0`}
       >
-        <div className="p-6">
-          <div className="mb-10 flex items-center gap-3">
+        <div className="p-5 sm:p-6">
+          <div className="mb-8 flex items-center gap-3 sm:mb-10">
             <LogoMark uiConfig={uiConfig} />
             <div className="min-w-0">
               <h1 className="truncate font-display text-xl font-bold tracking-tight">
@@ -225,7 +239,10 @@ const App = () => {
               {menuItems.map((item) => (
                 <li key={item.id}>
                   <button
-                    onClick={() => setActiveTab(item.id)}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setSidebarOpen(false);
+                    }}
                     aria-current={activeTab === item.id ? 'page' : undefined}
                     className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
                       activeTab === item.id
@@ -242,7 +259,7 @@ const App = () => {
           </nav>
         </div>
 
-        <div className="absolute bottom-0 w-full border-t border-slate-600 p-6">
+        <div className="absolute bottom-0 w-full border-t border-slate-800 p-5 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-full bg-slate-800" aria-hidden="true" />
             <div className="flex-1 overflow-hidden">
@@ -260,21 +277,21 @@ const App = () => {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-600 bg-background/50 px-4 sm:px-6 lg:px-8 backdrop-blur-md">
+        <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-background/80 px-3 py-3 backdrop-blur-md sm:px-6 lg:px-8">
           <button
             aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={sidebarOpen}
             aria-controls="main-sidebar"
-            className="lg:hidden rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+            className="rounded p-2 -ml-2 lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             {sidebarOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
           </button>
 
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-4">
             <div
               data-testid="backend-status"
-              className="hidden items-center gap-2 rounded-full border border-slate-500 bg-slate-900 px-3 py-1.5 md:flex"
+              className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex"
               role="status"
               aria-live="polite"
               aria-label={
@@ -305,10 +322,10 @@ const App = () => {
                   type="button"
                   onClick={handleConnectWallet}
                   disabled={walletStatus === 'connecting'}
-                  className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:px-4"
                 >
                   <Wallet size={18} aria-hidden="true" />
-                  <span className="text-sm font-medium">
+                  <span className="hidden text-sm font-medium sm:inline">
                     {walletStatus === 'connecting' ? 'Connecting...' : 'Connect Wallet'}
                   </span>
                 </button>
@@ -323,20 +340,22 @@ const App = () => {
         </header>
 
         <section
-          className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
+          className="mx-auto w-full max-w-7xl px-3 py-5 sm:px-6 sm:py-8 lg:px-8"
           aria-label={menuItems.find((m) => m.id === activeTab)?.label}
         >
-          <div className="mb-8 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div>
-              <h2 className="font-display text-3xl font-bold">
+          <div className="mb-6 flex flex-col gap-3 sm:mb-8 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <h2 className="font-display text-2xl font-bold sm:text-3xl">
                 {menuItems.find((m) => m.id === activeTab)?.label}
               </h2>
-              <p className="mt-1 text-slate-400">
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400 sm:text-base">
                 {activeTab === 'dashboard' &&
                   'Manage anchor operations, branding, and flow requirements from a single backend-driven surface.'}
                 {activeTab === 'deposit' && 'Initiate a new on-ramp transaction via SEP-24.'}
                 {activeTab === 'withdraw' && 'Initiate a new off-ramp transaction via SEP-24.'}
                 {activeTab === 'history' && 'Track historical and pending transactions.'}
+                {activeTab === 'sep38' && 'Request fixed or indicative cross-border conversion quotes.'}
+                {activeTab === 'status' && 'Monitor Redis, database, and infrastructure health in real time.'}
                 {activeTab === 'notifications' && 'View webhook events and transaction notifications.'}
                 {activeTab === 'kyc' && 'Check your KYC verification status.'}
                 {activeTab === 'settings' &&
@@ -346,7 +365,7 @@ const App = () => {
             {loadingState === 'error' ? (
               <div
                 data-testid="config-warning"
-                className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+                className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
                 role="alert"
               >
                 <AlertCircle size={16} aria-hidden="true" />
@@ -369,6 +388,8 @@ const App = () => {
                 {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} />}
                 {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} />}
                 {activeTab === 'history' && <TransactionHistory />}
+                {activeTab === 'sep38' && <Sep38QuotePanel />}
+                {activeTab === 'status' && <ServiceStatusPanel />}
                 {activeTab === 'notifications' && (
                   <NotificationCenter
                     apiBaseUrl={apiBaseUrl}
@@ -380,93 +401,7 @@ const App = () => {
                 )}
                 {activeTab === 'kyc' && <KycStatusView uiConfig={uiConfig} />}
                 {activeTab === 'settings' && (
-                  <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-                    <div className="space-y-6">
-                      <div className="glass-card p-8">
-                        <h3 className="mb-4 text-xl font-bold">Branding Configuration</h3>
-                        <div className="space-y-6">
-                          <div>
-                            <label htmlFor="brand-name" className="mb-2 block text-sm font-medium text-slate-400">
-                              Brand Name
-                            </label>
-                            <input
-                              id="brand-name"
-                              type="text"
-                              value={uiConfig.brandName}
-                              readOnly
-                              aria-readonly="true"
-                              className="input-field w-full"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor="logo-url" className="mb-2 block text-sm font-medium text-slate-400">
-                              Logo URL
-                            </label>
-                            <input
-                              id="logo-url"
-                              type="text"
-                              value={uiConfig.logoUrl ?? 'Not configured'}
-                              readOnly
-                              aria-readonly="true"
-                              className="input-field w-full"
-                            />
-                          </div>
-                          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                            <div>
-                              <label htmlFor="primary-color-hex" className="mb-2 block text-sm font-medium text-slate-400">
-                                Primary Color
-                              </label>
-                              <div className="flex gap-2">
-                                <input
-                                  type="color"
-                                  value={uiConfig.primaryColor}
-                                  readOnly
-                                  aria-label={`Primary color preview: ${uiConfig.primaryColor}`}
-                                  className="h-10 w-10 cursor-default border-0 bg-transparent"
-                                />
-                                <input
-                                  id="primary-color-hex"
-                                  type="text"
-                                  value={uiConfig.primaryColor}
-                                  readOnly
-                                  aria-readonly="true"
-                                  className="input-field flex-1"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label htmlFor="accent-color-hex" className="mb-2 block text-sm font-medium text-slate-400">
-                                Accent Color
-                              </label>
-                              <div className="flex gap-2">
-                                <input
-                                  type="color"
-                                  value={uiConfig.accentColor}
-                                  readOnly
-                                  aria-label={`Accent color preview: ${uiConfig.accentColor}`}
-                                  className="h-10 w-10 cursor-default border-0 bg-transparent"
-                                />
-                                <input
-                                  id="accent-color-hex"
-                                  type="text"
-                                  value={uiConfig.accentColor}
-                                  readOnly
-                                  aria-readonly="true"
-                                  className="input-field flex-1"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <AdminControls apiBaseUrl={apiBaseUrl} />
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-6">
-                      <RequirementList title="Deposit Fields" fields={uiConfig.fieldRequirements.deposit} />
-                      <RequirementList title="Withdrawal Fields" fields={uiConfig.fieldRequirements.withdraw} />
-                    </div>
-                  </div>
+                  <SettingsView uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />
                 )}
               </Suspense>
             </motion.div>

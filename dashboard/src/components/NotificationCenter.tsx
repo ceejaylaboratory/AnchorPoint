@@ -194,7 +194,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             <button
               onClick={() => fetchNotifications(true)}
               disabled={refreshing}
-              className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
+              className="action-button flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
             >
               <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
               Refresh
@@ -203,7 +203,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             {onOpenPreferences && (
               <button
                 onClick={onOpenPreferences}
-                className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
+                className="action-button flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
               >
                 <Settings size={16} />
                 Preferences
@@ -225,7 +225,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             <p className="text-lg font-medium text-red-400">{error}</p>
             <button
               onClick={() => fetchNotifications()}
-              className="mt-4 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-500/20"
+              className="action-button mt-4 rounded-lg bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-500/20"
             >
               Try Again
             </button>

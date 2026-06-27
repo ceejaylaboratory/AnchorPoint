@@ -54,7 +54,7 @@ export class GlobalErrorBoundary extends Component<Props, State> {
             
             <button
               onClick={this.handleReload}
-              className="mt-6 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium transition-all hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/20 active:scale-95 w-full sm:w-auto border border-blue-500"
+              className="action-button mt-6 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/20 w-full sm:w-auto border border-blue-500"
             >
               <RefreshCcw size={18} />
               Reload Application

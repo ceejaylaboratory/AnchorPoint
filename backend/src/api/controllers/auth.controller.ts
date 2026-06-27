@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
 import { RedisService } from '../../services/redis.service';
-import { 
-  generateChallenge, 
+import {
+  generateChallenge,
   generateMultiKeyChallenge,
-  storeChallenge, 
-  getChallenge as getChallengeFromRedis, 
+  storeChallenge,
+  getChallenge as getChallengeFromRedis,
   removeChallenge,
   signToken,
   verifyToken,
@@ -17,15 +17,28 @@ import {
   storeSep10Challenge,
   verifySep10ChallengeTransaction
 } from '../../services/auth.service';
-import { 
+import {
   extractAccountFromSep10Transaction
 } from '../../utils/sep10-stellar';
 import { config } from '../../config/env';
 import { NetworkType } from '../../config/networks';
 import logger from '../../utils/logger';
 
+// RFC 1123 compliant hostname: no consecutive dots/hyphens, labels must start/end with alphanumeric
+const CLIENT_DOMAIN_REGEX = /^(?!-)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.(?!-)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.(?!-)(?:[a-zA-Z]{2,}|xn--[a-zA-Z0-9]+)(?:-[a-zA-Z0-9]+)*$/;
+
+function validateClientDomain(domain: string): boolean {
+  const trimmed = domain.trim();
+  if (!trimmed) return false;
+  if (/^https?:\/\//i.test(trimmed)) return false;
+  if (/^javascript:/i.test(trimmed)) return false;
+  if (/\s/.test(trimmed)) return false;
+  return CLIENT_DOMAIN_REGEX.test(trimmed);
+}
+
 interface ChallengeRequest {
   account: string;
+  client_domain?: string;
   signers?: SignerInfo[];
   threshold?: 'low' | 'medium' | 'high';
   multiKey?: boolean;
@@ -61,7 +74,7 @@ export const getChallenge = async (
   res: Response,
   redisService: RedisService
 ): Promise<Response> => {
-  const { account, signers, threshold, multiKey }: ChallengeRequest = req.body;
+  const { account, client_domain, signers, threshold, multiKey }: ChallengeRequest = req.body;
 
   if (!account) {
     return res.status(400).json({
@@ -69,16 +82,25 @@ export const getChallenge = async (
     });
   }
 
+  if (client_domain !== undefined) {
+    if (!validateClientDomain(client_domain)) {
+      return res.status(400).json({
+        error: 'invalid_client_domain',
+        message: 'client_domain must be a valid hostname without scheme'
+      });
+    }
+  }
+
   try {
     // Generate a new challenge
     const challenge = generateChallenge();
-    
+
     // Handle multi-key authentication
     let multiKeyChallenge: MultiKeyChallenge | undefined;
     if (multiKey && signers && signers.length > 0) {
       multiKeyChallenge = generateMultiKeyChallenge(signers, threshold || 'medium');
     }
-    
+
     // Store the challenge in Redis with TTL
     await storeChallenge(redisService, account, challenge);
 
@@ -131,7 +153,7 @@ export const getToken = async (
     // Handle multi-key authentication
     if (signatures && signatures.length > 0) {
       const validation = validateMultiKeySignatures(signatures, threshold || 'medium');
-      
+
       if (!validation.valid) {
         return res.status(400).json({
           error: 'Insufficient signature weight for required threshold'
@@ -172,7 +194,7 @@ export const getToken = async (
 
       return res.json(response);
     }
-    
+
     // Single-key authentication (existing logic)
     const networkType = config.STELLAR_NETWORK === 'public' ? NetworkType.PUBLIC : NetworkType.TESTNET;
 
@@ -187,18 +209,15 @@ export const getToken = async (
 
     // Hardware wallet specific validation
     try {
-      // Check if this is a hardware wallet transaction (Trezor/Ledger)
-      // Hardware wallets typically use different signing patterns
       const isHardwareWallet = await validateHardwareWalletSignature(transaction);
       if (isHardwareWallet) {
         logger.info('Hardware wallet signature detected', { account, hardwareWallet: true });
       }
     } catch (error) {
-      logger.warn('Hardware wallet validation failed', { 
-        account, 
-        error: error instanceof Error ? error.message : String(error) 
+      logger.warn('Hardware wallet validation failed', {
+        account,
+        error: error instanceof Error ? error.message : String(error)
       });
-      // Continue with normal validation even if hardware wallet validation fails
     }
 
     // Get the stored challenge
@@ -261,12 +280,12 @@ export const refreshToken = async (
 
   try {
     const decoded = verifyToken(token);
-    
+
     let multiKeyData: MultiKeyVerifiedToken | undefined;
     if ('signers' in decoded) {
       multiKeyData = decoded as MultiKeyVerifiedToken;
     }
-    
+
     // Issue a new token
     const newToken = signToken(decoded.sub, multiKeyData);
 
@@ -293,33 +312,24 @@ async function validateHardwareWalletSignature(
   transaction: string,
 ): Promise<boolean> {
   try {
-    // Hardware wallets typically use different signing patterns
-    // Check for common hardware wallet signatures
     const transactionObj = JSON.parse(transaction);
-    
-    // For Trezor/Ledger, check if the transaction has specific hardware wallet indicators
-    // This is a simplified check - real implementation would be more sophisticated
+
     if (transactionObj && typeof transactionObj === 'object') {
-      // Look for hardware wallet specific fields
       const hasHardwareIndicators = (
         transactionObj.hardwareWallet ||
         transactionObj.trezor ||
         transactionObj.ledger ||
         transactionObj.signerType === 'hardware'
       );
-      
+
       return hasHardwareIndicators;
     }
-    
+
     return false;
   } catch (error) {
-    // If parsing fails, it might be a valid XDR string
-    // Try to parse as XDR instead
     try {
-      // In real implementation, we'd use Stellar SDK to parse XDR
-      // For now, just check if it looks like XDR
       if (transaction.length > 100 && transaction.length < 2000) {
-        return true; // Assume hardware wallet for longer transactions
+        return true;
       }
       return false;
     } catch {

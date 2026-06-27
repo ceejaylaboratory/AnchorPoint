@@ -19,6 +19,7 @@ import configRouter from './api/routes/config.route';
 import sep31Router from './api/routes/sep31.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
+import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
 import configService from './services/config.service';
 import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
@@ -37,6 +38,8 @@ notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvide
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 
 const app = express();
+app.disable('x-powered-by');
+app.use(securityHeadersMiddleware);
 const PORT = config.PORT;
 
 const corsOptions = {

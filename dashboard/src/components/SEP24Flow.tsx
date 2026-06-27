@@ -14,21 +14,9 @@ const DEPOSIT_STEPS = [1, 3, 4] as const;
 const WITHDRAW_STEPS = [1, 2, 3, 4] as const;
 
 const ASSET_OPTIONS: AssetOption[] = [
-  {
-    code: 'USDC',
-    name: 'USD Coin',
-    subtitle: 'Dollar-backed liquidity for institutional settlement',
-  },
-  {
-    code: 'EURT',
-    name: 'Euro Token',
-    subtitle: 'Euro-denominated transfer rail for SEP-24 flows',
-  },
-  {
-    code: 'ARST',
-    name: 'ARS Token',
-    subtitle: 'Argentine peso corridor asset for local payouts',
-  },
+  { code: 'USDC', name: 'USD Coin', subtitle: 'Dollar-backed liquidity for institutional settlement' },
+  { code: 'EURT', name: 'Euro Token', subtitle: 'Euro-denominated transfer rail for SEP-24 flows' },
+  { code: 'ARST', name: 'ARS Token', subtitle: 'Argentine peso corridor asset for local payouts' },
 ];
 
 export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig: UiConfig }) => {
@@ -69,9 +57,7 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                 <button
                   type="button"
                   onClick={() => {
-                    if (!isFuture) {
-                      goToStep(s);
-                    }
+                    if (!isFuture) goToStep(s);
                   }}
                   disabled={isFuture}
                   className={`relative flex h-10 w-10 items-center justify-center rounded-full font-bold transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
@@ -128,7 +114,7 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                     <button
                       onClick={() => goToStep(isWithdraw ? 2 : 3)}
                       aria-label={`Select ${asset} for ${flowLabel.toLowerCase()}`}
-                      className="flex w-full items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 transition-all hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      className="action-button flex w-full items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                     >
                       <div className="flex items-center gap-3">
                         <div
@@ -180,7 +166,7 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
               <WithdrawalForm fields={transactionFields} onSubmit={() => goToStep(3)} />
               <button
                 onClick={() => goToStep(1)}
-                className="rounded text-sm text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:text-slate-300"
+                className="rounded text-sm text-slate-500 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
               >
                 ← Back to asset selection
               </button>
@@ -200,7 +186,8 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
             <div className="space-y-4">
               <h2 className="font-display text-2xl font-bold">Identity Verification</h2>
               <p className="text-slate-400">
-                KYC requirements are backend-driven, so each anchor can tighten or relax the form without redeploying the dashboard.
+                KYC requirements are backend-driven, so each anchor can tighten or relax the form without redeploying
+                the dashboard.
               </p>
               <InteractiveWebview
                 anchorName={uiConfig.brandName}

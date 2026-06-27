@@ -198,7 +198,7 @@ export const InteractiveWebview = ({
                 <div className="flex gap-3">
                   <button
                     onClick={handleReject}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 transition-all hover:border-rose-500/40 hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50"
+                    className="action-button flex items-center gap-1.5 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:border-rose-500/40 hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50"
                     aria-label="Cancel KYC verification"
                   >
                     <X size={14} aria-hidden="true" /> Cancel

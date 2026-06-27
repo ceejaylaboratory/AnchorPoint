@@ -116,7 +116,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
-                className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors"
+                className="action-button rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
               >
                 {cancelText}
               </button>
@@ -124,7 +124,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                 type="button"
                 onClick={handleConfirm}
                 disabled={requireTypingConfirm && typedConfirm.toUpperCase() !== 'CONFIRM'}
-                className={`rounded-lg px-5 py-2 text-sm font-medium text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                className={`action-button rounded-lg px-5 py-2 text-sm font-medium text-white disabled:opacity-30 ${
                   isDanger
                     ? 'bg-rose-600 hover:bg-rose-500 shadow-lg shadow-rose-600/20'
                     : 'bg-amber-600 hover:bg-amber-500 shadow-lg shadow-amber-600/20'

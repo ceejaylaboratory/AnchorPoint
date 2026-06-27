@@ -51,7 +51,6 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     }
   }, [isOpen]);
 
-  // Poll for new notifications every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       fetchNotifications();
@@ -119,13 +118,13 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative rounded-lg border border-slate-500 bg-slate-900 p-2 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+        className="action-button relative rounded-lg border border-slate-700 bg-slate-900 p-2 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         aria-label={`Notifications ${unreadCount > 0 ? `(${unreadCount} unread)` : ''}`}
         aria-expanded={isOpen}
       >
         <Bell size={20} className="text-slate-300" />
         {unreadCount > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-400 text-xs font-bold text-slate-950">
+          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -138,9 +137,9 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
-            className="absolute right-0 z-50 mt-2 w-96 rounded-lg border border-slate-500 bg-slate-900 shadow-xl"
+            className="absolute right-0 z-50 mt-2 w-96 rounded-lg border border-slate-700 bg-slate-900 shadow-xl"
           >
-            <div className="flex items-center justify-between border-b border-slate-600 p-4">
+            <div className="flex items-center justify-between border-b border-slate-700 p-4">
               <h3 className="font-semibold text-slate-100">Notifications</h3>
               <button
                 onClick={() => setIsOpen(false)}
@@ -154,17 +153,17 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             <div className="max-h-96 overflow-y-auto">
               {loading && notifications.length === 0 ? (
                 <div className="flex items-center justify-center p-8">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-500 border-t-primary-text" />
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-700 border-t-primary" />
                 </div>
               ) : error ? (
                 <div className="p-4 text-center text-sm text-red-400">{error}</div>
               ) : notifications.length === 0 ? (
                 <div className="p-8 text-center">
-                  <Bell size={32} className="mx-auto mb-2 text-slate-400" />
+                  <Bell size={32} className="mx-auto mb-2 text-slate-600" />
                   <p className="text-sm text-slate-400">No notifications yet</p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-600">
+                <div className="divide-y divide-slate-800">
                   {notifications.slice(0, 5).map((notification) => (
                     <div
                       key={notification.id}
@@ -174,9 +173,9 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-1">{getStatusIcon(notification.status)}</div>
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm text-slate-200">{notification.message}</p>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+                          <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                             <span className="capitalize">{notification.type.toLowerCase()}</span>
                             <span>•</span>
                             <span>{formatTimestamp(notification.createdAt)}</span>
@@ -190,13 +189,13 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             </div>
 
             {notifications.length > 0 && (
-              <div className="border-t border-slate-600 p-3">
+              <div className="border-t border-slate-700 p-3">
                 <button
                   onClick={() => {
                     setIsOpen(false);
                     onViewAll?.();
                   }}
-                  className="w-full rounded-lg bg-slate-800 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
+                  className="action-button w-full rounded-lg bg-slate-800 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
                 >
                   View All Notifications
                 </button>
