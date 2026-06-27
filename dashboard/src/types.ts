@@ -2,8 +2,10 @@ export type FieldRequirement = {
   key: string;
   label: string;
   required: boolean;
+  type?: 'text' | 'file';
   placeholder?: string;
   helpText?: string;
+  accept?: string;
 };
 
 export type UiConfig = {

@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 use core::cmp;
 use soroban_sdk::{
@@ -9,9 +9,9 @@ use soroban_sdk::{
 const MIN_TICK: i32 = -887272;
 const MAX_TICK: i32 = 887272;
 const TICK_SPACING: i32 = 60; // Default tick spacing
-const MIN_FEE_BPS: u32 = 30; // 0.3% (30 basis points)
-const MAX_FEE_BPS: u32 = 100; // 1.0% (100 basis points)
-const FEE_DENOMINATOR: u32 = 10000;
+pub const MIN_FEE_BPS: u32 = 30; // 0.3% (30 basis points)
+pub const MAX_FEE_BPS: u32 = 100; // 1.0% (100 basis points)
+pub const FEE_DENOMINATOR: u32 = 10000;
 const WINDOW_SIZE: u64 = 3600; // 1 hour window
 const VOLUME_THRESHOLD: i128 = 500_000_0000000; // 500k volume threshold for scaling
 const VOLATILITY_THRESHOLD: u128 = 10_000_000; // price change threshold for scaling
@@ -807,6 +807,90 @@ impl MultiAssetSwap {
         env.storage().instance().set(&DataKey::ReferralFeeRate, &fee_rate);
         
         env.events().publish((symbol_short!("set_refee"),), fee_rate);
+    }
+}
+
+/// Pure slippage and fee math extracted for property/fuzz testing.
+pub struct SwapMath;
+
+impl SwapMath {
+    pub fn apply_fee(amount_in: i128, fee_bps: u32) -> i128 {
+        amount_in
+            .checked_mul((FEE_DENOMINATOR - fee_bps) as i128)
+            .and_then(|v| v.checked_div(FEE_DENOMINATOR as i128))
+            .unwrap_or(0)
+    }
+
+    pub fn swap_step_zero_for_one(amount_remaining: i128, sqrt_price: u128, liquidity: i128) -> i128 {
+        if liquidity <= 0 || amount_remaining <= 0 {
+            return 0;
+        }
+        let numerator = amount_remaining.checked_mul(sqrt_price as i128).unwrap_or(0);
+        let denominator = (liquidity as u128)
+            .checked_mul(1u128 << 96)
+            .and_then(|v| v.checked_add(amount_remaining as u128))
+            .unwrap_or(0);
+        if denominator == 0 {
+            return 0;
+        }
+        numerator.checked_div(denominator as i128).unwrap_or(0)
+    }
+
+    pub fn swap_step_one_for_zero(amount_remaining: i128, sqrt_price: u128, liquidity: i128) -> i128 {
+        if liquidity <= 0 || amount_remaining <= 0 || sqrt_price == 0 {
+            return 0;
+        }
+        let numerator = amount_remaining.checked_mul((1u128 << 96) as i128).unwrap_or(0);
+        let denominator = (liquidity as u128).checked_mul(sqrt_price).unwrap_or(0);
+        if denominator == 0 {
+            return 0;
+        }
+        numerator.checked_div(denominator as i128).unwrap_or(0)
+    }
+
+    pub fn meets_slippage(amount_out: i128, min_amount_out: i128) -> bool {
+        amount_out >= min_amount_out
+    }
+
+    pub fn calculate_dynamic_fee_bps(volume_factor: u128, volatility_factor: u128) -> u32 {
+        let total_factor = (volume_factor + volatility_factor).min(100) as u32;
+        let fee_increase = (MAX_FEE_BPS - MIN_FEE_BPS) * total_factor / 100;
+        MIN_FEE_BPS + fee_increase
+    }
+
+    pub fn simulate_swap_output(
+        amount_in: i128,
+        fee_bps: u32,
+        sqrt_price: u128,
+        liquidity: i128,
+        zero_for_one: bool,
+        max_steps: u32,
+    ) -> i128 {
+        if amount_in <= 0 || liquidity <= 0 {
+            return 0;
+        }
+        let mut amount_remaining = Self::apply_fee(amount_in, fee_bps);
+        let mut amount_out = 0_i128;
+        let mut steps = 0_u32;
+
+        while amount_remaining > 0 && steps < max_steps {
+            let step_out = if zero_for_one {
+                Self::swap_step_zero_for_one(amount_remaining, sqrt_price, liquidity)
+            } else {
+                Self::swap_step_one_for_zero(amount_remaining, sqrt_price, liquidity)
+            };
+
+            if step_out == 0 {
+                break;
+            }
+
+            let actual = core::cmp::min(step_out, amount_remaining);
+            amount_out += actual;
+            amount_remaining -= actual;
+            steps += 1;
+        }
+
+        amount_out
     }
 }
 

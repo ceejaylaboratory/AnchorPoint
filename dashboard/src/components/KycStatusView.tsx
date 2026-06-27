@@ -2,10 +2,17 @@ import { useState } from 'react';
 import { ShieldCheck, XCircle, AlertTriangle, RefreshCw, Mail, CheckCircle2, Clock } from 'lucide-react';
 import type { UiConfig } from '../types';
 import { RequirementList } from './RequirementList';
+import { KycDocumentUpload } from './KycDocumentUpload';
 
 export type KycState = 'not_started' | 'pending' | 'approved' | 'rejected';
 
-export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
+type KycStatusViewProps = {
+  uiConfig: UiConfig;
+  apiBaseUrl: string;
+  account?: string;
+};
+
+export const KycStatusView = ({ uiConfig, apiBaseUrl, account }: KycStatusViewProps) => {
   const [kycState, setKycState] = useState<KycState>('rejected');
 
   return (
@@ -51,11 +58,23 @@ export const KycStatusView = ({ uiConfig }: { uiConfig: UiConfig }) => {
               verification to unlock all features.
             </p>
             <div className="mt-10 w-full max-w-xl rounded-2xl border border-slate-800/50 bg-slate-900/50 p-6 text-left">
-              <RequirementList title="Required Information" fields={uiConfig.fieldRequirements.kyc} />
+              <RequirementList
+                title="Required Information"
+                fields={uiConfig.fieldRequirements.kyc.filter((f) => f.type !== 'file')}
+              />
             </div>
-            <button className="mt-8 btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text">
-              Start Verification
-            </button>
+            {account ? (
+              <KycDocumentUpload
+                apiBaseUrl={apiBaseUrl}
+                account={account}
+                fields={uiConfig.fieldRequirements.kyc}
+                onComplete={() => setKycState('pending')}
+              />
+            ) : (
+              <p className="mt-8 text-sm text-amber-300/90">
+                Connect your wallet to upload KYC documents.
+              </p>
+            )}
           </div>
         )}
 
