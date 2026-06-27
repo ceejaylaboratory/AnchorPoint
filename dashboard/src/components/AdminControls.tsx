@@ -1,15 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { Network, Trash2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Network, Trash2, CheckCircle2, AlertCircle, Bell, Key, Save } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
 
 interface AdminControlsProps {
   apiBaseUrl: string;
 }
 
+interface WebhookConfig {
+  WEBHOOK_URL?: string;
+  WEBHOOK_SECRET?: string;
+  WEBHOOK_TIMEOUT_MS: number;
+  WEBHOOK_MAX_RETRIES: number;
+  WEBHOOK_RETRY_DELAY_MS: number;
+}
+
 export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
   const [network, setNetwork] = useState<string>('TESTNET');
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; isError: boolean } | null>(null);
+  
+  // Webhook config state
+  const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>({
+    WEBHOOK_TIMEOUT_MS: 5000,
+    WEBHOOK_MAX_RETRIES: 3,
+    WEBHOOK_RETRY_DELAY_MS: 500
+  });
+  const [isWebhookLoading, setIsWebhookLoading] = useState(false);
 
   // Modal States
   const [isNetworkModalOpen, setIsNetworkModalOpen] = useState(false);
@@ -18,6 +34,7 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
 
   useEffect(() => {
     fetchCurrentNetwork();
+    fetchWebhookConfig();
   }, []);
 
   const fetchCurrentNetwork = async () => {
@@ -31,6 +48,73 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
       }
     } catch (err) {
       console.error('Failed to fetch network config:', err);
+    }
+  };
+
+  const fetchWebhookConfig = async () => {
+    try {
+      setIsWebhookLoading(true);
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${apiBaseUrl}/api/config`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.data) {
+          setWebhookConfig({
+            WEBHOOK_URL: data.data.WEBHOOK_URL,
+            WEBHOOK_SECRET: data.data.WEBHOOK_SECRET,
+            WEBHOOK_TIMEOUT_MS: data.data.WEBHOOK_TIMEOUT_MS,
+            WEBHOOK_MAX_RETRIES: data.data.WEBHOOK_MAX_RETRIES,
+            WEBHOOK_RETRY_DELAY_MS: data.data.WEBHOOK_RETRY_DELAY_MS
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch webhook config:', err);
+    } finally {
+      setIsWebhookLoading(false);
+    }
+  };
+
+  const saveWebhookConfig = async () => {
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('authToken');
+      // First fetch full current config
+      const configRes = await fetch(`${apiBaseUrl}/api/config`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!configRes.ok) throw new Error('Failed to fetch current config');
+      
+      const fullConfig = await configRes.json();
+      const newConfig = {
+        ...fullConfig.data,
+        ...webhookConfig
+      };
+      
+      const saveRes = await fetch(`${apiBaseUrl}/api/config`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(newConfig)
+      });
+      
+      if (!saveRes.ok) throw new Error('Failed to save webhook config');
+      
+      showStatus('Webhook configuration saved successfully!', false);
+    } catch (err) {
+      showStatus(err instanceof Error ? err.message : 'Failed to save webhook configuration', true);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -178,6 +262,113 @@ export const AdminControls: React.FC<AdminControlsProps> = ({ apiBaseUrl }) => {
           >
             Purge Queues
           </button>
+        </div>
+
+        {/* Webhook Settings */}
+        <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="space-y-1">
+              <h4 className="font-semibold text-slate-200 flex items-center gap-2">
+                <Bell size={16} className="text-primary" />
+                Webhook Configuration
+              </h4>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Configure webhook endpoints and settings for transaction and KYC event notifications.
+              </p>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="webhook-url" className="mb-2 block text-sm font-medium text-slate-400">
+                Webhook URL
+              </label>
+              <input
+                id="webhook-url"
+                type="url"
+                value={webhookConfig.WEBHOOK_URL || ''}
+                onChange={(e) => setWebhookConfig({ ...webhookConfig, WEBHOOK_URL: e.target.value })}
+                placeholder="https://example.com/webhook"
+                disabled={isWebhookLoading || loading}
+                className="input-field w-full"
+              />
+            </div>
+            
+            <div>
+              <label htmlFor="webhook-secret" className="mb-2 block text-sm font-medium text-slate-400 flex items-center gap-2">
+                <Key size={14} />
+                Webhook Secret
+              </label>
+              <input
+                id="webhook-secret"
+                type="password"
+                value={webhookConfig.WEBHOOK_SECRET || ''}
+                onChange={(e) => setWebhookConfig({ ...webhookConfig, WEBHOOK_SECRET: e.target.value })}
+                placeholder="Your secret key"
+                disabled={isWebhookLoading || loading}
+                className="input-field w-full"
+              />
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label htmlFor="webhook-timeout" className="mb-2 block text-sm font-medium text-slate-400">
+                  Timeout (ms)
+                </label>
+                <input
+                  id="webhook-timeout"
+                  type="number"
+                  min="1000"
+                  max="30000"
+                  value={webhookConfig.WEBHOOK_TIMEOUT_MS}
+                  onChange={(e) => setWebhookConfig({ ...webhookConfig, WEBHOOK_TIMEOUT_MS: parseInt(e.target.value, 10) })}
+                  disabled={isWebhookLoading || loading}
+                  className="input-field w-full"
+                />
+              </div>
+              
+              <div>
+                <label htmlFor="webhook-retries" className="mb-2 block text-sm font-medium text-slate-400">
+                  Max Retries
+                </label>
+                <input
+                  id="webhook-retries"
+                  type="number"
+                  min="0"
+                  max="10"
+                  value={webhookConfig.WEBHOOK_MAX_RETRIES}
+                  onChange={(e) => setWebhookConfig({ ...webhookConfig, WEBHOOK_MAX_RETRIES: parseInt(e.target.value, 10) })}
+                  disabled={isWebhookLoading || loading}
+                  className="input-field w-full"
+                />
+              </div>
+              
+              <div>
+                <label htmlFor="webhook-retry-delay" className="mb-2 block text-sm font-medium text-slate-400">
+                  Retry Delay (ms)
+                </label>
+                <input
+                  id="webhook-retry-delay"
+                  type="number"
+                  min="0"
+                  value={webhookConfig.WEBHOOK_RETRY_DELAY_MS}
+                  onChange={(e) => setWebhookConfig({ ...webhookConfig, WEBHOOK_RETRY_DELAY_MS: parseInt(e.target.value, 10) })}
+                  disabled={isWebhookLoading || loading}
+                  className="input-field w-full"
+                />
+              </div>
+            </div>
+            
+            <button
+              type="button"
+              onClick={saveWebhookConfig}
+              disabled={isWebhookLoading || loading}
+              className="action-button flex items-center justify-center gap-1.5 rounded-lg bg-primary hover:bg-primary/80 text-white px-4 py-2 text-sm font-medium disabled:opacity-40 w-full sm:w-auto"
+            >
+              <Save size={16} />
+              Save Webhook Configuration
+            </button>
+          </div>
         </div>
       </div>
 
