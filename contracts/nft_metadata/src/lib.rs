@@ -12,7 +12,7 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, String, Vec, Map};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Vec};
 
 // ============================================================================
 // Storage Keys
@@ -35,7 +35,27 @@ pub enum DataKey {
     TokenApproval(u64, Address),
     /// Whether an operator is approved for all tokens of an owner
     OperatorApproval(Address, Address),
-    Registry,
+    /// Branding / project metadata (description, icon_url, website)
+    ContractMeta,
+}
+
+// ============================================================================
+// Data Structures
+// ============================================================================
+
+/// On-chain branding metadata for the contract.
+///
+/// Stored independently of NFT logic so it can be updated at any time
+/// by the admin without touching token state.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContractMetadata {
+    /// Human-readable description of the contract.
+    pub description: String,
+    /// URL pointing to the project icon / logo.
+    pub icon_url: String,
+    /// Project or protocol website URL.
+    pub website: String,
 }
 
 // ============================================================================
@@ -48,6 +68,8 @@ pub enum DataKey {
 pub struct NftMetadata {
     /// Unique token identifier
     pub token_id: u64,
+    /// URI pointing to the token metadata document
+    pub metadata_uri: String,
     /// Name of the NFT
     pub name: String,
     /// Description of the NFT
@@ -116,15 +138,17 @@ pub struct CollectionMetadata {
 #[contracttype]
 pub enum NftEvent {
     /// Emitted when an NFT is minted
-    Minted { token_id: u64, to: Address },
+    Minted(u64, Address),
     /// Emitted when an NFT is transferred
-    Transferred { token_id: u64, from: Address, to: Address },
+    Transferred(u64, Address, Address),
     /// Emitted when metadata is updated
-    MetadataUpdated { token_id: u64 },
+    MetadataUpdated(u64),
+    /// Emitted when metadata URIs are batch updated
+    MetadataBatchUpdated(u32),
     /// Emitted when approval is granted
-    Approved { token_id: u64, owner: Address, approved: Address },
+    Approved(u64, Address, Address),
     /// Emitted when operator approval is set
-    OperatorApprovalSet { owner: Address, operator: Address, approved: bool },
+    OperatorApprovalSet(Address, Address, bool),
 }
 
 // ============================================================================
@@ -175,12 +199,13 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::CollectionMetadata, &collection);
         env.storage().instance().set(&DataKey::TokenCounter, &0u64);
-    }
 
-    pub fn set_registry(env: Env, registry: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Registry, &registry);
+        // Initialise branding metadata with empty strings.
+        env.storage().instance().set(&DataKey::ContractMeta, &ContractMetadata {
+            description: String::from_str(&env, ""),
+            icon_url: String::from_str(&env, ""),
+            website: String::from_str(&env, ""),
+        });
     }
 
     // ========================================================================
@@ -214,7 +239,6 @@ impl NftMetadataContract {
         royalty_percentage: u32,
         is_mutable: bool,
     ) -> u64 {
-        Self::ensure_not_paused(&env);
         minter.require_auth();
 
         let admin: Address = env
@@ -231,10 +255,11 @@ impl NftMetadataContract {
             .instance()
             .get(&DataKey::TokenCounter)
             .unwrap_or(0);
-        let token_id = counter + 1;
+        let token_id = counter.checked_add(1).expect("token id overflow");
 
         let metadata = NftMetadata {
             token_id,
+            metadata_uri: String::from_str(&env, ""),
             name,
             description,
             image,
@@ -254,8 +279,8 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::TokenCounter, &token_id);
 
         env.events().publish(
-            (symbol_short!("mint"), token_id),
-            to,
+            (symbol_short!("mint"), to, token_id),
+            (),
         );
 
         token_id
@@ -277,7 +302,6 @@ impl NftMetadataContract {
         to: Address,
         metadata: NftMetadata,
     ) -> u64 {
-        Self::ensure_not_paused(&env);
         minter.require_auth();
 
         let admin: Address = env
@@ -294,7 +318,7 @@ impl NftMetadataContract {
             .instance()
             .get(&DataKey::TokenCounter)
             .unwrap_or(0);
-        let token_id = counter + 1;
+        let token_id = counter.checked_add(1).expect("token id overflow");
 
         let mut final_metadata = metadata;
         final_metadata.token_id = token_id;
@@ -305,8 +329,8 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::TokenCounter, &token_id);
 
         env.events().publish(
-            (symbol_short!("mint"), token_id),
-            to,
+            (symbol_short!("mint"), to, token_id),
+            (),
         );
 
         token_id
@@ -354,7 +378,6 @@ impl NftMetadataContract {
         description: String,
         image: String,
     ) {
-        Self::ensure_not_paused(&env);
         caller.require_auth();
 
         let owner: Address = env
@@ -387,7 +410,54 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::NftMetadata(token_id), &metadata);
 
         env.events().publish(
-            (symbol_short!("updated"), token_id),
+            (symbol_short!("updated"), caller, token_id),
+            (),
+        );
+    }
+
+    /// Update metadata URIs for a batch of NFTs in a single transaction.
+    ///
+    /// This is intended for collection-wide metadata refreshes such as reveal
+    /// operations or CDN/IPFS migrations, while preserving per-token metadata
+    /// storage and immutability guarantees.
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `caller` - Contract administrator
+    /// * `token_ids` - Token IDs to update
+    /// * `metadata_uris` - Replacement metadata URIs matching `token_ids`
+    ///
+    /// # Panics
+    /// Panics if caller is not admin, lengths differ, batch is empty, token is
+    /// missing, or metadata is immutable.
+    pub fn batch_update_metadata_uris(
+        env: Env,
+        caller: Address,
+        token_ids: Vec<u64>,
+        metadata_uris: Vec<String>,
+    ) {
+        caller.require_auth();
+        Self::assert_admin(&env, &caller);
+
+        assert!(token_ids.len() > 0, "batch cannot be empty");
+        assert!(
+            token_ids.len() == metadata_uris.len(),
+            "token_ids and metadata_uris length mismatch"
+        );
+
+        for i in 0..token_ids.len() {
+            let token_id = token_ids.get(i).unwrap();
+            let metadata_uri = metadata_uris.get(i).unwrap();
+            Self::set_metadata_uri(&env, token_id, metadata_uri);
+
+            env.events().publish(
+                (symbol_short!("meta_uri"), token_id),
+                caller.clone(),
+            );
+        }
+
+        env.events().publish(
+            (symbol_short!("meta_bat"), token_ids.len()),
             caller,
         );
     }
@@ -405,7 +475,6 @@ impl NftMetadataContract {
         token_id: u64,
         attribute: NftAttribute,
     ) {
-        Self::ensure_not_paused(&env);
         caller.require_auth();
 
         let owner: Address = env
@@ -414,7 +483,13 @@ impl NftMetadataContract {
             .get(&DataKey::TokenOwner(token_id))
             .expect("token not found");
 
-        assert!(caller == owner, "only owner can update");
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to update");
 
         let mut metadata: NftMetadata = env
             .storage()
@@ -424,12 +499,53 @@ impl NftMetadataContract {
 
         assert!(metadata.is_mutable, "metadata is not mutable");
 
-        metadata.attributes.push_back(attribute);
+        metadata.attributes.push_back(attribute.clone());
 
         env.storage().instance().set(&DataKey::NftMetadata(token_id), &metadata);
 
         env.events().publish(
-            (symbol_short!("attr_add"), token_id),
+            (symbol_short!("attr_add"), caller, token_id),
+            attribute,
+        );
+    }
+
+    /// Set all attributes for an NFT (replaces existing ones)
+    pub fn set_attrs(
+        env: Env,
+        caller: Address,
+        token_id: u64,
+        attributes: Vec<NftAttribute>,
+    ) {
+        caller.require_auth();
+
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenOwner(token_id))
+            .expect("token not found");
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to update");
+
+        let mut metadata: NftMetadata = env
+            .storage()
+            .instance()
+            .get(&DataKey::NftMetadata(token_id))
+            .expect("token not found");
+
+        assert!(metadata.is_mutable, "metadata is not mutable");
+
+        metadata.attributes = attributes;
+
+        env.storage().instance().set(&DataKey::NftMetadata(token_id), &metadata);
+
+        env.events().publish(
+            (symbol_short!("set_attrs"), token_id),
             caller,
         );
     }
@@ -449,7 +565,6 @@ impl NftMetadataContract {
         percentage: u32,
         recipient: Address,
     ) {
-        Self::ensure_not_paused(&env);
         caller.require_auth();
 
         let owner: Address = env
@@ -505,7 +620,6 @@ impl NftMetadataContract {
         to: Address,
         token_id: u64,
     ) {
-        Self::ensure_not_paused(&env);
         from.require_auth();
 
         let owner: Address = env
@@ -522,11 +636,43 @@ impl NftMetadataContract {
         env.storage().instance().remove(&DataKey::TokenApproval(token_id, from.clone()));
 
         env.events().publish(
-            (symbol_short!("transfer"), token_id),
-            (from, to),
+            (symbol_short!("transfer"), from, to, token_id),
+            (),
         );
     }
 
+    /// Burn an NFT (destroy it)
+    ///
+    /// # Arguments
+    /// * `env` - The environment
+    /// * `caller` - Address calling the burn (must be owner or admin)
+    /// * `token_id` - Token to burn
+    pub fn burn(env: Env, caller: Address, token_id: u64) {
+        caller.require_auth();
+
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenOwner(token_id))
+            .expect("token not found");
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+
+        assert!(caller == owner || caller == admin, "not authorized to burn");
+
+        env.storage().instance().remove(&DataKey::TokenOwner(token_id));
+        env.storage().instance().remove(&DataKey::NftMetadata(token_id));
+        env.storage().instance().remove(&DataKey::TokenApproval(token_id, owner));
+
+        env.events().publish(
+            (symbol_short!("burn"), caller, token_id),
+            (),
+        );
+    }
     // ========================================================================
     // Approvals
     // ========================================================================
@@ -544,7 +690,6 @@ impl NftMetadataContract {
         approved: Address,
         token_id: u64,
     ) {
-        Self::ensure_not_paused(&env);
         owner.require_auth();
 
         let token_owner: Address = env
@@ -558,8 +703,8 @@ impl NftMetadataContract {
         env.storage().instance().set(&DataKey::TokenApproval(token_id, owner.clone()), &approved);
 
         env.events().publish(
-            (symbol_short!("approved"), token_id),
-            (owner, approved),
+            (symbol_short!("approved"), owner, approved, token_id),
+            (),
         );
     }
 
@@ -576,7 +721,6 @@ impl NftMetadataContract {
         operator: Address,
         approved: bool,
     ) {
-        Self::ensure_not_paused(&env);
         owner.require_auth();
 
         if approved {
@@ -585,9 +729,10 @@ impl NftMetadataContract {
             env.storage().instance().remove(&DataKey::OperatorApproval(owner.clone(), operator.clone()));
         }
 
+        // Topic: event name only; owner + operator + approved in data.
         env.events().publish(
-            (symbol_short!("approval_all"), owner.clone()),
-            (operator, approved),
+            (symbol_short!("appr_all"),),
+            (owner, operator, approved),
         );
     }
 
@@ -658,7 +803,6 @@ impl NftMetadataContract {
         description: String,
         image: String,
     ) {
-        Self::ensure_not_paused(&env);
         caller.require_auth();
 
         let admin: Address = env
@@ -680,6 +824,50 @@ impl NftMetadataContract {
         collection.image = image;
 
         env.storage().instance().set(&DataKey::CollectionMetadata, &collection);
+    }
+
+    // ========================================================================
+    // Contract Metadata
+    // ========================================================================
+
+    /// Update the contract's branding metadata (admin only).
+    ///
+    /// All three fields are replaced atomically. Pass the current value for
+    /// any field you do not want to change.
+    ///
+    /// # Arguments
+    /// * `caller`      – Must be the contract admin
+    /// * `description` – New human-readable description
+    /// * `icon_url`    – New icon / logo URL
+    /// * `website`     – New project website URL
+    pub fn update_contract_meta(
+        env: Env,
+        caller: Address,
+        description: String,
+        icon_url: String,
+        website: String,
+    ) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+        assert!(caller == admin, "only admin can update contract metadata");
+
+        let meta = ContractMetadata { description, icon_url, website };
+        env.storage().instance().set(&DataKey::ContractMeta, &meta);
+
+        env.events().publish((symbol_short!("meta_upd"),), meta);
+    }
+
+    /// Return the current contract branding metadata.
+    pub fn get_contract_meta(env: Env) -> ContractMetadata {
+        env.storage()
+            .instance()
+            .get(&DataKey::ContractMeta)
+            .expect("contract metadata not initialised")
     }
 
     /// Get total supply of tokens
@@ -725,18 +913,34 @@ impl NftMetadataContract {
             .get(&DataKey::NftMetadata(token_id))
             .expect("token not found");
 
-        let royalty_amount = (sale_price * metadata.royalty_percentage as i128) / 10000;
+        let royalty_amount = sale_price
+            .checked_mul(metadata.royalty_percentage as i128).expect("royalty overflow") / 10000;
 
         (metadata.royalty_recipient, royalty_amount)
     }
 
-    fn ensure_not_paused(env: &Env) {
-        if let Some(registry_addr) = env.storage().instance().get::<_, Address>(&DataKey::Registry) {
-            let is_paused: bool = env.invoke_contract(&registry_addr, &soroban_sdk::symbol_short!("is_paused"), ().into_val(env));
-            if is_paused {
-                panic!("system is paused");
-            }
-        }
+    fn assert_admin(env: &Env, caller: &Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+        assert!(caller == &admin, "only admin can perform this action");
+    }
+
+    fn set_metadata_uri(env: &Env, token_id: u64, metadata_uri: String) {
+        let mut metadata: NftMetadata = env
+            .storage()
+            .instance()
+            .get(&DataKey::NftMetadata(token_id))
+            .expect("token not found");
+
+        assert!(metadata.is_mutable, "metadata is not mutable");
+
+        metadata.metadata_uri = metadata_uri;
+        env.storage()
+            .instance()
+            .set(&DataKey::NftMetadata(token_id), &metadata);
     }
 }
 
@@ -845,9 +1049,126 @@ mod tests {
         );
         
         let metadata = client.get_metadata(&token_id);
+        assert_eq!(metadata.metadata_uri, String::from_str(&env, ""));
         assert_eq!(metadata.name, String::from_str(&env, "New Name"));
         assert_eq!(metadata.description, String::from_str(&env, "New Description"));
         assert_eq!(metadata.image, String::from_str(&env, "ipfs://new"));
+    }
+
+    #[test]
+    fn test_batch_update_metadata_uris() {
+        let (env, client, admin) = setup();
+        let owner_a = Address::generate(&env);
+        let owner_b = Address::generate(&env);
+
+        let token_a = client.mint(
+            &admin,
+            &owner_a,
+            &String::from_str(&env, "NFT A"),
+            &String::from_str(&env, "A"),
+            &String::from_str(&env, "ipfs://image-a"),
+            &500u32,
+            &true,
+        );
+
+        let token_b = client.mint(
+            &admin,
+            &owner_b,
+            &String::from_str(&env, "NFT B"),
+            &String::from_str(&env, "B"),
+            &String::from_str(&env, "ipfs://image-b"),
+            &500u32,
+            &true,
+        );
+
+        let mut token_ids = Vec::new(&env);
+        token_ids.push_back(token_a);
+        token_ids.push_back(token_b);
+
+        let mut metadata_uris = Vec::new(&env);
+        metadata_uris.push_back(String::from_str(&env, "ipfs://metadata-a-v2"));
+        metadata_uris.push_back(String::from_str(&env, "ipfs://metadata-b-v2"));
+
+        client.batch_update_metadata_uris(&admin, &token_ids, &metadata_uris);
+
+        let metadata_a = client.get_metadata(&token_a);
+        let metadata_b = client.get_metadata(&token_b);
+        assert_eq!(metadata_a.metadata_uri, String::from_str(&env, "ipfs://metadata-a-v2"));
+        assert_eq!(metadata_b.metadata_uri, String::from_str(&env, "ipfs://metadata-b-v2"));
+    }
+
+    #[test]
+    #[should_panic(expected = "only admin can perform this action")]
+    fn test_batch_update_metadata_uris_requires_admin() {
+        let (env, client, admin) = setup();
+        let owner = Address::generate(&env);
+
+        let token_id = client.mint(
+            &admin,
+            &owner,
+            &String::from_str(&env, "NFT"),
+            &String::from_str(&env, "A"),
+            &String::from_str(&env, "ipfs://image"),
+            &500u32,
+            &true,
+        );
+
+        let mut token_ids = Vec::new(&env);
+        token_ids.push_back(token_id);
+
+        let mut metadata_uris = Vec::new(&env);
+        metadata_uris.push_back(String::from_str(&env, "ipfs://metadata-v2"));
+
+        client.batch_update_metadata_uris(&owner, &token_ids, &metadata_uris);
+    }
+
+    #[test]
+    #[should_panic(expected = "token_ids and metadata_uris length mismatch")]
+    fn test_batch_update_metadata_uris_rejects_length_mismatch() {
+        let (env, client, admin) = setup();
+        let owner = Address::generate(&env);
+
+        let token_id = client.mint(
+            &admin,
+            &owner,
+            &String::from_str(&env, "NFT"),
+            &String::from_str(&env, "A"),
+            &String::from_str(&env, "ipfs://image"),
+            &500u32,
+            &true,
+        );
+
+        let mut token_ids = Vec::new(&env);
+        token_ids.push_back(token_id);
+
+        let metadata_uris = Vec::new(&env);
+
+        client.batch_update_metadata_uris(&admin, &token_ids, &metadata_uris);
+    }
+
+    #[test]
+    #[should_panic(expected = "metadata is not mutable")]
+    fn test_batch_update_metadata_uris_rejects_immutable_tokens() {
+        let (env, client, admin) = setup();
+        let owner = Address::generate(&env);
+
+        let token_id = client.mint(
+            &admin,
+            &owner,
+            &String::from_str(&env, "NFT"),
+            &String::from_str(&env, "A"),
+            &String::from_str(&env, "ipfs://image"),
+            &500u32,
+            &false,
+        );
+
+        let mut token_ids = Vec::new(&env);
+        token_ids.push_back(token_id);
+
+        let mut metadata_uris = Vec::new(&env);
+        metadata_uris.push_back(String::from_str(&env, "ipfs://metadata-v2"));
+
+        client.batch_update_metadata_uris(&admin, &token_ids, &metadata_uris);
     }
 
     #[test]
@@ -918,5 +1239,44 @@ mod tests {
         client.approve(&to, &spender, &token_id);
         
         assert!(client.is_approved(&token_id, &spender));
+    }
+
+    #[test]
+    fn test_update_contract_meta() {
+        let (env, client, admin) = setup();
+
+        // Initial metadata should be empty strings.
+        let initial = client.get_contract_meta();
+        assert_eq!(initial.description, String::from_str(&env, ""));
+        assert_eq!(initial.icon_url, String::from_str(&env, ""));
+        assert_eq!(initial.website, String::from_str(&env, ""));
+
+        // Admin updates branding.
+        client.update_contract_meta(
+            &admin,
+            &String::from_str(&env, "NFT collection on Stellar"),
+            &String::from_str(&env, "https://example.com/icon.png"),
+            &String::from_str(&env, "https://example.com"),
+        );
+
+        let updated = client.get_contract_meta();
+        assert_eq!(updated.description, String::from_str(&env, "NFT collection on Stellar"));
+        assert_eq!(updated.icon_url, String::from_str(&env, "https://example.com/icon.png"));
+        assert_eq!(updated.website, String::from_str(&env, "https://example.com"));
+    }
+
+    #[test]
+    #[should_panic(expected = "only admin can update contract metadata")]
+    fn test_update_contract_meta_non_admin() {
+        let (env, client, _admin) = setup();
+        let non_admin = Address::generate(&env);
+
+        // Non-admin should be rejected.
+        client.update_contract_meta(
+            &non_admin,
+            &String::from_str(&env, "Hacked"),
+            &String::from_str(&env, ""),
+            &String::from_str(&env, ""),
+        );
     }
 }

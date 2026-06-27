@@ -13,9 +13,7 @@
 
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, IntoVal,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, Address, Env};
 
 // Fixed-point precision: 1e18
 const PRECISION: i128 = 1_000_000_000_000_000_000;
@@ -40,7 +38,6 @@ pub enum DataKey {
     UserRewardPerTokenPaid(Address),
     /// Accrued but unclaimed rewards for a user
     Rewards(Address),
-    Registry,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -50,6 +47,14 @@ pub struct YieldDistribution;
 
 #[contractimpl]
 impl YieldDistribution {
+
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+            panic!("already set");
+        }
+        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     // ── Admin / initialisation ────────────────────────────────────────────
 
     /// Initialise the contract once.
@@ -59,16 +64,16 @@ impl YieldDistribution {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::StakeToken, &stake_token);
-        env.storage().instance().set(&DataKey::RewardToken, &reward_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::StakeToken, &stake_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardToken, &reward_token);
         env.storage().instance().set(&DataKey::TotalStaked, &0_i128);
-        env.storage().instance().set(&DataKey::RewardPerTokenStored, &0_i128);
-    }
-
-    pub fn set_registry(env: Env, registry: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Registry, &registry);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardPerTokenStored, &0_i128);
     }
 
     /// Deposit `amount` of reward tokens into the contract for distribution.
@@ -76,7 +81,14 @@ impl YieldDistribution {
     ///
     /// O(1) — no iteration over holders.
     pub fn deposit_rewards(env: Env, from: Address, amount: i128) {
-        Self::ensure_not_paused(&env);
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         from.require_auth();
         assert!(amount > 0, "amount must be positive");
 
@@ -104,23 +116,31 @@ impl YieldDistribution {
                 .get(&DataKey::RewardPerTokenStored)
                 .unwrap_or(0);
             // Δ reward_per_token = amount * PRECISION / total_staked
-            rpt += amount * PRECISION / total_staked;
+            rpt = rpt.checked_add(
+                amount.checked_mul(PRECISION).expect("rpt overflow") / total_staked
+            ).expect("rpt overflow");
             env.storage()
                 .instance()
                 .set(&DataKey::RewardPerTokenStored, &rpt);
         }
 
-        env.events().publish(
-            (symbol_short!("dep_rwd"), from),
-            amount,
-        );
+        // Topic: event name only; from + amount in data.
+        env.events()
+            .publish((symbol_short!("dep_rwd"),), (from, amount));
     }
 
     // ── Staking ───────────────────────────────────────────────────────────
 
     /// Stake `amount` of the staking token.
     pub fn stake(env: Env, user: Address, amount: i128) {
-        Self::ensure_not_paused(&env);
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
@@ -137,7 +157,7 @@ impl YieldDistribution {
         let prev: i128 = Self::_stake_of(&env, &user);
         env.storage()
             .persistent()
-            .set(&DataKey::Stake(user.clone()), &(prev + amount));
+            .set(&DataKey::Stake(user.clone()), &prev.checked_add(amount).expect("stake overflow"));
 
         let total: i128 = env
             .storage()
@@ -146,14 +166,23 @@ impl YieldDistribution {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalStaked, &(total + amount));
+            .set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
 
-        env.events().publish((symbol_short!("staked"), user), amount);
+        // Topic: event name only; user + amount in data.
+        env.events()
+            .publish((symbol_short!("staked"),), (user, amount));
     }
 
     /// Unstake `amount` of the staking token.
     pub fn unstake(env: Env, user: Address, amount: i128) {
-        Self::ensure_not_paused(&env);
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
@@ -164,7 +193,7 @@ impl YieldDistribution {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Stake(user.clone()), &(prev - amount));
+            .set(&DataKey::Stake(user.clone()), &prev.checked_sub(amount).expect("stake underflow"));
 
         let total: i128 = env
             .storage()
@@ -173,7 +202,7 @@ impl YieldDistribution {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&DataKey::TotalStaked, &(total - amount));
+            .set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
         token::Client::new(&env, &stake_token).transfer(
@@ -182,14 +211,23 @@ impl YieldDistribution {
             &amount,
         );
 
-        env.events().publish((symbol_short!("unstaked"), user), amount);
+        // Topic: event name only; user + amount in data.
+        env.events()
+            .publish((symbol_short!("unstaked"),), (user, amount));
     }
 
     // ── Claiming ──────────────────────────────────────────────────────────
 
     /// Claim all accrued rewards for `user`.
     pub fn claim(env: Env, user: Address) -> i128 {
-        Self::ensure_not_paused(&env);
+
+        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
+            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         user.require_auth();
         Self::_update_reward(&env, &user);
 
@@ -212,8 +250,9 @@ impl YieldDistribution {
                 &reward,
             );
 
+            // Topic: event name only; user + reward in data.
             env.events()
-                .publish((symbol_short!("claimed"), user), reward);
+                .publish((symbol_short!("claimed"),), (user, reward));
         }
 
         reward
@@ -240,7 +279,7 @@ impl YieldDistribution {
             .get(&DataKey::Rewards(user))
             .unwrap_or(0);
 
-        accrued + stake * (rpt - user_rpt) / PRECISION
+        accrued + stake.checked_mul(rpt - user_rpt).expect("rewards overflow") / PRECISION
     }
 
     pub fn total_staked(env: Env) -> i128 {
@@ -273,7 +312,7 @@ impl YieldDistribution {
             .unwrap_or(0);
 
         let stake = Self::_stake_of(env, user);
-        let earned = stake * (rpt - user_rpt) / PRECISION;
+        let earned = stake.checked_mul(rpt - user_rpt).expect("rewards overflow") / PRECISION;
 
         if earned > 0 {
             let prev: i128 = env
@@ -283,7 +322,7 @@ impl YieldDistribution {
                 .unwrap_or(0);
             env.storage()
                 .persistent()
-                .set(&DataKey::Rewards(user.clone()), &(prev + earned));
+                .set(&DataKey::Rewards(user.clone()), &prev.checked_add(earned).expect("rewards overflow"));
         }
 
         // Snapshot current global rate for this user
@@ -298,15 +337,6 @@ impl YieldDistribution {
             .get(&DataKey::Stake(user.clone()))
             .unwrap_or(0)
     }
-
-    fn ensure_not_paused(env: &Env) {
-        if let Some(registry_addr) = env.storage().instance().get::<_, Address>(&DataKey::Registry) {
-            let is_paused: bool = env.invoke_contract(&registry_addr, &soroban_sdk::symbol_short!("is_paused"), ().into_val(env));
-            if is_paused {
-                panic!("system is paused");
-            }
-        }
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -315,7 +345,7 @@ impl YieldDistribution {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _},
+        testutils::Address as _,
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env,
     };
@@ -342,9 +372,20 @@ mod tests {
 
         let contract_id = env.register_contract(None, YieldDistribution);
         let client = YieldDistributionClient::new(&env, &contract_id);
-        client.initialize(&admin, &stake_token_id.address(), &reward_token_id.address());
+        client.initialize(
+            &admin,
+            &stake_token_id.address(),
+            &reward_token_id.address(),
+        );
 
-        (env, contract_id, admin, alice, bob, reward_token_id.address())
+        (
+            env,
+            contract_id,
+            admin,
+            alice,
+            bob,
+            reward_token_id.address(),
+        )
     }
 
     #[test]

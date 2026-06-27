@@ -1,0 +1,13 @@
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_status_codes: []
+      preferred_ip_protocol: ip4
+      follow_redirects: true
+      fail_if_ssl: false
+      fail_if_not_ssl: false
+      headers:
+        Accept: application/json

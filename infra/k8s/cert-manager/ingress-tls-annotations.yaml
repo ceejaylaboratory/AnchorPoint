@@ -1,0 +1,103 @@
+# =============================================================================
+# Ingress TLS Annotations - Issue #419
+# =============================================================================
+# These annotations configure the NGINX Ingress Controller to use cert-manager
+# issued certificates. Add these annotations to your Ingress resources.
+#
+# Usage: Copy the annotations section into your Ingress manifest under 'metadata'
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Annotation Reference for NGINX Ingress
+# Add these annotations to your Ingress resources to enable TLS with cert-manager
+# -----------------------------------------------------------------------------
+annotations:
+  # Enable cert-manager to manage TLS for this ingress
+  cert-manager.io/cluster-issuer: anchorpoint-staging-issuer
+  
+  # NGINX specific TLS configuration
+  nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  
+  # Ensure proper SSL settings
+  nginx.ingress.kubernetes.io/ssl-passthrough: "false"
+  
+  # HSTS - adds Strict-Transport-Security header
+  nginx.ingress.kubernetes.io/hsts: "true"
+  
+  # HSTS max age in seconds (1 year)
+  nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+  
+  # Include subdomains in HSTS
+  nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+  
+  # TLS cipher recommendations
+  nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256,ECDHE-RSA-AES128-GCM-SHA256,ECECDHE-ECDSA-AES256-GCM-SHA384,ECDHE-RSA-AES256-GCM-SHA384"
+
+# -----------------------------------------------------------------------------
+# Example Ingress Resource with TLS
+# Reference for configuring Ingress to use cert-manager certificates
+# -----------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: anchorpoint-api-ingress
+  namespace: anchorpoint-testnet
+  annotations:
+    # cert-manager will create/refresh certificates based on the Certificate resource
+    cert-manager.io/cluster-issuer: anchorpoint-staging-issuer
+    
+    # NGINX ingress annotations
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+spec:
+  tls:
+    # Reference the TLS secret created by cert-manager
+    - hosts:
+        - api.anchorpoint-testnet.example.com
+      secretName: anchorpoint-api-tls
+  rules:
+    - host: api.anchorpoint-testnet.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: anchorpoint-worker-svc
+                port:
+                  number: 3002
+
+# =============================================================================
+# Manual QA Steps:
+# =============================================================================
+# 1. Apply your Ingress with the annotations:
+#    kubectl apply -f your-ingress.yaml
+#
+# 2. Check Ingress was created:
+#    kubectl get ingress -n anchorpoint-testnet
+#
+# 3. Check Certificate was triggered:
+#    kubectl get certificates -n anchorpoint-testnet
+#
+# 4. Watch certificate issuance progress:
+#    kubectl describe certificate anchorpoint-api-cert -n anchorpoint-testnet
+#
+# 5. Check CertificateRequest status:
+#    kubectl get certificaterequest -n anchorpoint-testnet
+#
+# 6. Check Order status (ACME challenge):
+#    kubectl get order -n anchorpoint-testnet
+#
+# 7. Check Challenge status:
+#    kubectl get challenge -n anchorpoint-testnet
+#
+# 8. Verify TLS secret exists:
+#    kubectl get secret -n anchorpoint-testnet anchorpoint-api-tls
+#
+# 9. Test HTTPS:
+#    curl -v https://api.anchorpoint-testnet.example.com
+#
+# 10. Check cert-manager logs:
+#     kubectl logs -n cert-manager -l app=cert-manager
+# =============================================================================

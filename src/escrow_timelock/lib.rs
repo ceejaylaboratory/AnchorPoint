@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, token};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
 
 #[contracttype]
 #[derive(Clone)]
@@ -7,7 +7,6 @@ pub enum DataKey {
     EscrowInitialized,
     EscrowDetails,
     RefundClaimed,
-    Registry,
 }
 
 #[contracttype]
@@ -26,18 +25,31 @@ pub struct EscrowTimelock;
 
 #[contractimpl]
 impl EscrowTimelock {
+    pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
+        if env
+            .storage()
+            .instance()
+            .has(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            panic!("already set");
+        }
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+    }
+
     /// Initialize a time-locked escrow contract
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `sender` - The address sending the funds into escrow
     /// * `recipient` - The address that will receive the funds when unlocked
     /// * `token` - The token contract address
     /// * `amount` - The amount of tokens to escrow
     /// * `unlock_time` - The timestamp (in seconds since epoch) when funds can be claimed
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// * If the contract is already initialized
     /// * If the unlock_time is in the past
     /// * If the amount is zero or negative
@@ -72,8 +84,12 @@ impl EscrowTimelock {
             conditions_met: false,
         };
 
-        e.storage().instance().set(&DataKey::EscrowDetails, &details);
-        e.storage().instance().set(&DataKey::EscrowInitialized, &true);
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowDetails, &details);
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowInitialized, &true);
         e.storage().instance().set(&DataKey::RefundClaimed, &false);
 
         // Transfer tokens from sender to this contract
@@ -81,15 +97,8 @@ impl EscrowTimelock {
         token_client.transfer(&sender, &e.current_contract_address(), &amount);
     }
 
-    pub fn set_registry(e: Env, registry: Address) {
-        let details: EscrowDetails = e.storage().instance().get(&DataKey::EscrowDetails).expect("not initialized");
-        details.sender.require_auth();
-        e.storage().instance().set(&DataKey::Registry, &registry);
-    }
-
     /// Mark conditions as met (can only be called by sender)
     pub fn mark_conditions_met(e: Env) {
-        Self::ensure_not_paused(&e);
         let mut details: EscrowDetails = e
             .storage()
             .instance()
@@ -99,12 +108,28 @@ impl EscrowTimelock {
         details.sender.require_auth();
         details.conditions_met = true;
 
-        e.storage().instance().set(&DataKey::EscrowDetails, &details);
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowDetails, &details);
     }
 
     /// Claim funds as the recipient (only after unlock_time or if conditions are met)
     pub fn claim(e: Env) {
-        Self::ensure_not_paused(&e);
+        if let Some(registry) = e
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = e.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&e, "is_paused"),
+                soroban_sdk::vec![&e],
+            );
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         let details: EscrowDetails = e
             .storage()
             .instance()
@@ -136,13 +161,31 @@ impl EscrowTimelock {
         let contract_balance = token_client.balance(&e.current_contract_address());
 
         if contract_balance > 0 {
-            token_client.transfer(&e.current_contract_address(), &details.recipient, &contract_balance);
+            token_client.transfer(
+                &e.current_contract_address(),
+                &details.recipient,
+                &contract_balance,
+            );
         }
     }
 
     /// Request refund as sender (only if unlock_time has passed and recipient hasn't claimed)
     pub fn refund(e: Env) {
-        Self::ensure_not_paused(&e);
+        if let Some(registry) = e
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = e.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&e, "is_paused"),
+                soroban_sdk::vec![&e],
+            );
+            if is_paused {
+                panic!("contract is paused");
+            }
+        }
+
         let details: EscrowDetails = e
             .storage()
             .instance()
@@ -174,7 +217,11 @@ impl EscrowTimelock {
         let contract_balance = token_client.balance(&e.current_contract_address());
 
         if contract_balance > 0 {
-            token_client.transfer(&e.current_contract_address(), &details.sender, &contract_balance);
+            token_client.transfer(
+                &e.current_contract_address(),
+                &details.sender,
+                &contract_balance,
+            );
         }
     }
 
@@ -198,21 +245,14 @@ impl EscrowTimelock {
     pub fn get_current_time(e: Env) -> u64 {
         e.ledger().timestamp()
     }
-
-    fn ensure_not_paused(env: &Env) {
-        if let Some(registry_addr) = env.storage().instance().get::<_, Address>(&DataKey::Registry) {
-            let is_paused: bool = env.invoke_contract(&registry_addr, &soroban_sdk::symbol_short!("is_paused"), ().into_val(env));
-            if is_paused {
-                panic!("system is paused");
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{
+        testutils::Address as _, testutils::Ledger, token::StellarAssetClient, Address, Env,
+    };
 
     #[test]
     fn test_initialize_escrow() {
@@ -222,15 +262,17 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
-        let token_client = token::Client::new(&e, &token_id);
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         // Mint tokens to sender
         let amount = 1000;
-        token_client.mint(&sender, &amount);
+        stellar_client.mint(&sender, &amount);
         assert_eq!(token_client.balance(&sender), amount);
 
         // Set unlock time to future (current time + 1000 seconds)
@@ -262,15 +304,17 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         // Mint tokens and initialize
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000; // Set to a fixed time
         e.ledger().with_mut(|li| li.timestamp = 500); // Set current time before unlock
@@ -298,14 +342,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         // Set unlock time far in future
         let unlock_time = 10000;
@@ -330,14 +376,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000;
         e.ledger().with_mut(|li| li.timestamp = 500);
@@ -364,14 +412,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let _token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000;
         e.ledger().with_mut(|li| li.timestamp = 500); // Before unlock
@@ -390,14 +440,16 @@ mod tests {
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
         let admin = Address::generate(&e);
-        let token_id = e.register_stellar_asset_contract(admin.clone());
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
 
-        let contract_id = e.register_contract(None, EscrowTimelock);
+        let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
         let amount = 1000;
-        let token_client = token::Client::new(&e, &token_id);
-        token_client.mint(&sender, &amount);
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        let _token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
 
         let unlock_time = 1000;
         e.ledger().with_mut(|li| li.timestamp = 1500); // After unlock

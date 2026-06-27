@@ -1,0 +1,14 @@
+# mutants.toml
+# Configuration for cargo-mutants mutation testing
+
+# Only mutate core token and staking contracts as requested
+examine_re = "src/(token|staking)/.*"
+
+# Standard timeout for Soroban contract tests
+timeout = 300
+
+# Skip tests and examples
+exclude_re = "tests/.*|examples/.*"
+
+# Mutants to skip (e.g. things that are hard to test or not relevant)
+# For now, we want to be as thorough as possible.

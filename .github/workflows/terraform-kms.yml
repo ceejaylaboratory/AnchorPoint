@@ -1,0 +1,62 @@
+# ==============================================================================
+# .github/workflows/terraform-kms.yml
+# CI pipeline for AnchorPoint KMS Terraform — Issue #412
+#
+# Runs on every pull request that touches infra/terraform/**
+# Stages: fmt → validate → checkov → plan
+# ==============================================================================
+
+name: Terraform KMS CI
+
+on:
+  pull_request:
+    paths:
+      - 'infra/terraform/**'
+
+jobs:
+  terraform-kms:
+    name: Lint, Validate, Scan, Plan
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: infra/terraform/kms
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Terraform setup ───────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      # ── Format check ─────────────────────────────────────────────────────────
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      # ── Init (no backend — dry run only) ─────────────────────────────────────
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      # ── Validate ─────────────────────────────────────────────────────────────
+      - name: Terraform Validate
+        run: terraform validate
+
+      # ── Security scan ─────────────────────────────────────────────────────────
+      - name: Checkov Security Scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/terraform/kms
+          framework: terraform
+          soft_fail: false
+
+      # ── Plan (dry run against testnet vars) ──────────────────────────────────
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -backend=false \
+            -var="environment=testnet" \
+            -var="key_alias=anchorpoint-stellar-keys"

@@ -7,7 +7,6 @@ dist
 build
 
 # Prisma
-prisma/migrations
 prisma/dev.db
 
 # Environment files

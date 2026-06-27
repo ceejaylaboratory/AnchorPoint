@@ -1,0 +1,166 @@
+# =============================================================================
+# Certificates for AnchorPoint Hostnames - Issue #419
+# =============================================================================
+# Certificate resources define the TLS certificates to be issued for each hostname.
+# These reference the ClusterIssuer for Let's Encrypt integration.
+#
+# Each Certificate requires:
+#   - A hostname that resolves to the cluster ingress
+#   - The appropriate issuer reference
+#   - Proper DNS records pointing to the ingress controller
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Certificate for API Endpoint
+# Used for the API ingress hostname (api.anchorpoint-testnet.example.com)
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  # Name of the certificate resource
+  name: anchorpoint-api-cert
+  # Namespace where this certificate is created
+  namespace: anchorpoint-testnet
+  # Consistent labeling for all AnchorPoint TLS resources
+  labels:
+    app: anchorpoint
+    component: cert-manager
+    environment: testnet
+    role: api
+spec:
+  # Reference to the ClusterIssuer (staging or production)
+  issuerRef:
+    name: anchorpoint-staging-issuer
+    kind: ClusterIssuer
+  # DNS names for the certificate - must match ingress host
+  dnsNames:
+    - api.anchorpoint-testnet.example.com
+  # Secret where the TLS certificate will be stored
+  secretName: anchorpoint-api-tls
+  # Certificate duration and renewal window
+  duration: 2160h  # 90 days
+  renewBefore: 360h  # 15 days before expiration
+
+# -----------------------------------------------------------------------------
+# Certificate for Worker Metrics Endpoint
+# Used for Prometheus scraping and worker monitoring
+# -----------------------------------------------------------------------------
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: anchorpoint-worker-cert
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: cert-manager
+    environment: testnet
+    role: metrics
+spec:
+  # Reference to the ClusterIssuer (staging or production)
+  issuerRef:
+    name: anchorpoint-staging-issuer
+    kind: ClusterIssuer
+  # DNS names for the certificate
+  dnsNames:
+    - worker.anchorpoint-testnet.example.com
+  # Secret where the TLS certificate will be stored
+  secretName: anchorpoint-worker-tls
+  # Certificate duration and renewal window
+  duration: 2160h  # 90 days
+  renewBefore: 360h  # 15 days before expiration
+
+# -----------------------------------------------------------------------------
+# Certificate for Dashboard/UI
+# Used for the frontend dashboard interface
+# -----------------------------------------------------------------------------
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: anchorpoint-dashboard-cert
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: cert-manager
+    environment: testnet
+    role: dashboard
+spec:
+  # Reference to the ClusterIssuer (staging or production)
+  issuerRef:
+    name: anchorpoint-staging-issuer
+    kind: ClusterIssuer
+  # DNS names for the certificate
+  dnsNames:
+    - dashboard.anchorpoint-testnet.example.com
+  # Secret where the TLS certificate will be stored
+  secretName: anchorpoint-dashboard-tls
+  # Certificate duration and renewal window
+  duration: 2160h  # 90 days
+  renewBefore: 360h  # 15 days before expiration
+
+# -----------------------------------------------------------------------------
+# Certificate for Soroban RPC Endpoint
+# Used for the Soroban JSON-RPC API
+# -----------------------------------------------------------------------------
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: anchorpoint-soroban-cert
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: cert-manager
+    environment: testnet
+    role: soroban
+spec:
+  # Reference to the ClusterIssuer (staging or production)
+  issuerRef:
+    name: anchorpoint-staging-issuer
+    kind: ClusterIssuer
+  # DNS names for the certificate
+  dnsNames:
+    - soroban.anchorpoint-testnet.example.com
+  # Secret where the TLS certificate will be stored
+  secretName: anchorpoint-soroban-tls
+  # Certificate duration and renewal window
+  duration: 2160h  # 90 days
+  renewBefore: 360h  # 15 days before expiration
+
+# =============================================================================
+# Manual QA Steps:
+# =============================================================================
+# 1. Apply the certificates:
+#    kubectl apply -f certificates.yaml
+#
+# 2. Check certificate status:
+#    kubectl get certificates -n anchorpoint-testnet
+#
+# 3. Check certificate ready status:
+#    kubectl get certificates -n anchorpoint-testnet -o wide
+#
+# 4. View certificate details:
+#    kubectl describe certificate <cert-name> -n anchorpoint-testnet
+#
+# 5. Check cert-manager logs for errors:
+#    kubectl logs -n cert-manager -l app=cert-manager
+#
+# 6. Verify TLS secret was created:
+#    kubectl get secret -n anchorpoint-testnet
+#
+# 7. Test HTTPS connection:
+#    curl -v https://api.anchorpoint-testnet.example.com
+#
+# 8. Switch to production (after testing with staging):
+#    # Update issuerRef.name to 'anchorpoint-prod-issuer' in all Certificate resources
+#    # Or delete and recreate with updated references
+#    kubectl patch certificate anchorpoint-api-cert -n anchorpoint-testnet \
+#      --type merge -f - <<EOF
+#    apiVersion: cert-manager.io/v1
+#    kind: Certificate
+#    spec:
+#      issuerRef:
+#        name: anchorpoint-prod-issuer
+#    EOF
+# =============================================================================

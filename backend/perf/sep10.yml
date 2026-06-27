@@ -1,0 +1,27 @@
+config:
+  target: "http://localhost:3002/api"
+  phases:
+    - duration: 20
+      arrivalRate: 5
+      rampTo: 50
+      name: "Ramp up load"
+    - duration: 60
+      arrivalRate: 50
+      name: "Sustained load"
+  payload:
+    # Use a dummy CSV or generate random accounts in a JS file, but for SEP-10 challenge,
+    # we can just use a static account or generate a random one using Artillery functions.
+  processor: "./sep10-processor.js"
+
+scenarios:
+  - name: "SEP-10 Challenge"
+    flow:
+      - function: "generateAccount"
+      - post:
+          url: "/auth"
+          json:
+            account: "{{ account }}"
+            home_domain: "localhost"
+          capture:
+            - json: "$.transaction"
+              as: "challengeTransaction"

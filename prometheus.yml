@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/prometheus-alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'anchorpoint-backend'
+    static_configs:
+      - targets: ['backend:9464']
+    scrape_interval: 5s
+    metrics_path: '/metrics'
+    
+  - job_name: 'anchorpoint-backend-metrics'
+    static_configs:
+      - targets: ['backend:3002']
+    scrape_interval: 5s
+    metrics_path: '/metrics'
+
+  # Synthetic health check for PagerDuty routing. This probes the API's /health
+  # endpoint independently of the application metrics scrape.
+  - job_name: 'anchorpoint-backend-health'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://backend:3002/health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

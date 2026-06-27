@@ -7,6 +7,8 @@ import {
   normalizeAssetCode,
   SUPPORTED_ASSETS,
 } from '../../services/kyc.service';
+import prisma from '../../lib/prisma';
+import { isValidStellarPublicKey } from '../../utils/stellar-address';
 
 const router = Router();
 
@@ -15,6 +17,7 @@ interface InteractiveRequest {
   account?: string;
   amount?: string;
   lang?: string;
+  quote_id?: string;
 }
 
 interface InteractiveResponse {
@@ -27,7 +30,14 @@ const unsupportedAssetResponse = (assetCode: string) => ({
   error: `Asset ${assetCode} is not supported. Supported assets: ${SUPPORTED_ASSETS.join(', ')}`,
 });
 
+const invalidAccountResponse = () => ({
+  error: 'account must be a valid Stellar public key',
+});
+
 const getBaseInteractiveUrl = (): string => process.env.INTERACTIVE_URL || 'http://localhost:3000';
+
+const hasInvalidAccount = (account: unknown): boolean =>
+  account !== undefined && !isValidStellarPublicKey(account);
 
 /**
  * @swagger
@@ -51,7 +61,7 @@ const getBaseInteractiveUrl = (): string => process.env.INTERACTIVE_URL || 'http
  *                 example: USDC
  *               account:
  *                 type: string
- *                 description: Stellar account address
+ *                 description: Stellar Ed25519 public key (G...)
  *               amount:
  *                 type: string
  *                 description: Amount to deposit
@@ -79,8 +89,8 @@ const getBaseInteractiveUrl = (): string => process.env.INTERACTIVE_URL || 'http
  *       400:
  *         description: Invalid request parameters
  */
-router.post('/transactions/deposit/interactive', (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en' }: InteractiveRequest = req.body;
+router.post('/transactions/deposit/interactive', async (req: Request, res: Response) => {
+  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
 
   if (!asset_code) {
     return res.status(400).json({
@@ -91,6 +101,20 @@ router.post('/transactions/deposit/interactive', (req: Request, res: Response) =
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
     return res.status(400).json(unsupportedAssetResponse(asset_code));
+  }
+
+  if (hasInvalidAccount(account)) {
+    return res.status(400).json(invalidAccountResponse());
+  }
+
+  if (quote_id) {
+    const quote = await prisma.quote.findUnique({ where: { id: quote_id } });
+    if (!quote) {
+      return res.status(400).json({ error: 'Quote not found' });
+    }
+    if (quote.expiresAt && new Date() > quote.expiresAt) {
+      return res.status(400).json({ error: 'Quote has expired' });
+    }
   }
 
   const transactionId = randomUUID();
@@ -132,7 +156,7 @@ router.post('/transactions/deposit/interactive', (req: Request, res: Response) =
  *                 example: USDC
  *               account:
  *                 type: string
- *                 description: Destination Stellar account address
+ *                 description: Destination Stellar Ed25519 public key (G...)
  *               amount:
  *                 type: string
  *                 description: Amount to withdraw
@@ -160,8 +184,8 @@ router.post('/transactions/deposit/interactive', (req: Request, res: Response) =
  *       400:
  *         description: Invalid request parameters
  */
-router.post('/transactions/withdraw/interactive', (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en' }: InteractiveRequest = req.body;
+router.post('/transactions/withdraw/interactive', async (req: Request, res: Response) => {
+  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
 
   if (!asset_code) {
     return res.status(400).json({
@@ -172,6 +196,20 @@ router.post('/transactions/withdraw/interactive', (req: Request, res: Response) 
   const normalizedAssetCode = normalizeAssetCode(asset_code);
   if (!isSupportedAsset(normalizedAssetCode)) {
     return res.status(400).json(unsupportedAssetResponse(asset_code));
+  }
+
+  if (hasInvalidAccount(account)) {
+    return res.status(400).json(invalidAccountResponse());
+  }
+
+  if (quote_id) {
+    const quote = await prisma.quote.findUnique({ where: { id: quote_id } });
+    if (!quote) {
+      return res.status(400).json({ error: 'Quote not found' });
+    }
+    if (quote.expiresAt && new Date() > quote.expiresAt) {
+      return res.status(400).json({ error: 'Quote has expired' });
+    }
   }
 
   const transactionId = randomUUID();

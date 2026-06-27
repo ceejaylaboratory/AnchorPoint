@@ -1,0 +1,36 @@
+# ==============================================================================
+# terraform.tfvars.example — AnchorPoint KMS — Issue #412
+#
+# !! DO NOT COMMIT terraform.tfvars !!
+# This file is a safe-to-commit template. Copy it to terraform.tfvars and
+# fill in real values before running plan/apply.
+#
+# terraform.tfvars is gitignored — it contains real IAM ARNs.
+# ==============================================================================
+
+environment = "testnet"
+
+key_alias = "anchorpoint-stellar-keys"
+
+# IAM roles that can rotate, disable, and delete the key.
+# Typically your CI/CD deploy role and a DevOps admin role.
+key_administrator_arns = [
+  "arn:aws:iam::YOUR_ACCOUNT_ID:role/anchorpoint-devops-admin",
+  "arn:aws:iam::YOUR_ACCOUNT_ID:role/anchorpoint-cicd-role",
+]
+
+# IAM role attached to the AnchorPoint Node.js API runtime (ECS task / EC2).
+api_server_role_arn = "arn:aws:iam::YOUR_ACCOUNT_ID:role/anchorpoint-api-server-role"
+
+# IAM role attached to the BullMQ worker process.
+# Must be a separate role from api_server_role_arn.
+worker_role_arn = "arn:aws:iam::YOUR_ACCOUNT_ID:role/anchorpoint-worker-role"
+
+# Set to true if you have a CloudTrail trail in this account.
+enable_cloudtrail_encryption = false
+
+# Cannot be changed after key creation.
+multi_region = false
+
+# 10-day window for testnet. Raise to 30 for mainnet.
+deletion_window_in_days = 10

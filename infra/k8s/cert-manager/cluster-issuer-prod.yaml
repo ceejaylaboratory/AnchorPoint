@@ -1,0 +1,49 @@
+# =============================================================================
+# ClusterIssuer for Let's Encrypt Production - Issue #419
+# =============================================================================
+# This ClusterIssuer uses the Let's Encrypt production environment.
+# Switch to this after testing with the staging issuer.
+#
+# IMPORTANT: Before using, replace 'your-email@example.com' with a valid email.
+# This email is used for ACME registration and certificate expiration notices.
+#
+# Rate Limits (production):
+#   - 50 certificates per registered domain per week
+#   - 5 duplicate certificate requests per week
+#   - 5 renewal requests per week
+# =============================================================================
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  # Name referenced by Certificate resources in production
+  name: anchorpoint-prod-issuer
+  # Consistent labeling for all AnchorPoint resources
+  labels:
+    app: anchorpoint
+    component: cert-manager
+    environment: production
+spec:
+  # ACME protocol for Let's Encrypt integration
+  acme:
+    # Server endpoint - Let's Encrypt production (use for live traffic)
+    server: https://acme-v02.api.letsencrypt.org/directory
+    
+    # Email for ACME registration and notifications
+    email: your-email@example.com
+    
+    # Private key for ACME account (stored in Kubernetes)
+    privateKeySecretRef:
+      name: anchorpoint-prod-issuer-account-key
+    
+    # ACME challenge configuration
+    solvers:
+      # HTTP-01 challenge - requires ingress controller with annotation support
+      - http01:
+          ingress:
+            # Ingress class for the solver (nginx)
+            class: nginx
+            # Pod namespace for the ingress controller
+            podNamespace: ingress-nginx
+            # Service type for the ingress controller service
+            serviceType: ClusterIP

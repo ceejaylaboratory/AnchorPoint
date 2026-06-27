@@ -1,0 +1,12 @@
+[package]
+name = "liquidation"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+
+[dependencies]
+soroban-sdk = "26.0.1"
