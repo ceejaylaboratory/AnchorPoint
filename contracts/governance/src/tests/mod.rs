@@ -44,3 +44,29 @@ pub fn setup_governance_env() -> (Env, GovernanceContractClient<'static>, std::v
     
     (env, client, voters)
 }
+
+#[test]
+fn test_initialization() {
+    let env = Env::default();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+    
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.quorum_threshold(), 200);
+    assert_eq!(client.voting_duration(), 100);
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_initialize_twice_fails() {
+    let env = Env::default();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+    client.initialize(&admin, &200, &100);
+}

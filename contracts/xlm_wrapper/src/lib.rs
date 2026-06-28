@@ -342,7 +342,7 @@ impl XLMWrapper {
         
         env.storage().instance().remove(&DataKey::LendingAuthorized(lending_address.clone()));
         env.events()
-            .publish((symbol_short!("lend_revk"), lending_address), true);
+            .publish((soroban_sdk::Symbol::new(&env, "lend_revoke"), lending_address.clone()), true);
     }
 
     /// Check if an address is authorized for Lending interactions
