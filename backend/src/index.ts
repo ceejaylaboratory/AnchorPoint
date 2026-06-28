@@ -17,6 +17,7 @@ import relayerRouter from './api/routes/relayer.route';
 import recurringPaymentsRouter from './api/routes/recurring-payments.route';
 import configRouter from './api/routes/config.route';
 import sep31Router from './api/routes/sep31.route';
+import authRouter from './api/routes/auth.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
@@ -25,7 +26,7 @@ import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
-import { publicLimiter } from './api/middleware/rate-limit.middleware';
+import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
 import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
@@ -143,6 +144,9 @@ app.use('/api/relayer', relayerRouter);
 
 // SEP-40 Swap Rates API
 app.use('/sep40', sep40Router);
+
+// SEP-10 Auth routes
+app.use('/sep10', authLimiter, authRouter);
 
 // SEP-12 KYC routes
 app.use('/sep12', sep12Router);
