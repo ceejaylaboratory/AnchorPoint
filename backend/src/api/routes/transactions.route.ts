@@ -142,9 +142,9 @@ router.get('/', authMiddleware, validate({ query: querySchema }), async (req: Au
     let matchingTxHashes: string[] = [];
 
     if (eventSearchClauses.length > 0) {
-      const eventRows = await prisma.$queryRawUnsafe<{ txHash: string }[]>(
+      const eventRows = (await prisma.$queryRawUnsafe(
         `SELECT DISTINCT txHash FROM "ContractEvent" WHERE ${eventSearchClauses.join(' AND ')}`
-      );
+      )) as { txHash: string }[];
 
       matchingTxHashes = eventRows.map((row: { txHash: string }) => row.txHash).filter(Boolean);
       if (matchingTxHashes.length === 0) {

@@ -1,3 +1,5 @@
+import logger from '../utils/logger';
+
 /**
  * Provider-agnostic interface for cloud object storage.
  * Implementations exist for S3 and GCS; the mock is used in development/test.
@@ -35,3 +37,39 @@ export class MockStorageProvider implements StorageProvider {
 export const storageProvider: StorageProvider = new MockStorageProvider(
   process.env.STORAGE_BUCKET ?? 'mock-bucket'
 );
+
+export function validateStorageConfigOnStartup(): void {
+  const provider = process.env.STORAGE_PROVIDER;
+  if (!provider) {
+    logger.error('STORAGE_PROVIDER environment variable is missing.');
+    process.exit(1);
+  }
+
+  if (provider !== 's3' && provider !== 'gcs') {
+    logger.error(`Invalid STORAGE_PROVIDER: "${provider}". Must be either 's3' or 'gcs'.`);
+    process.exit(1);
+  }
+
+  const bucket = process.env.STORAGE_BUCKET;
+  if (!bucket) {
+    logger.error('STORAGE_BUCKET environment variable is missing.');
+    process.exit(1);
+  }
+
+  if (provider === 's3') {
+    const region = process.env.STORAGE_REGION;
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    if (!region || !accessKeyId || !secretAccessKey) {
+      logger.error('Missing required S3 configuration keys (STORAGE_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY).');
+      process.exit(1);
+    }
+  } else if (provider === 'gcs') {
+    const credentials = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    if (!credentials) {
+      logger.error('Missing required GCS configuration key (GOOGLE_APPLICATION_CREDENTIALS).');
+      process.exit(1);
+    }
+  }
+}
+

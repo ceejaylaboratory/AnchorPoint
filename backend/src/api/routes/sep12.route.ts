@@ -97,6 +97,10 @@ router.delete('/customer/:account', sep12Controller.deleteCustomer.bind(sep12Con
  *         description: Unauthorized – missing or invalid SEP-10 session token
  */
 router.get('/customer/upload-url', authMiddleware, sep12Controller.getUploadUrl.bind(sep12Controller));
+
+/**
+ * @swagger
+ * /sep12/customer/upload-url:
  *   post:
  *     summary: Request a pre-signed URL for direct file upload
  *     tags: [SEP-12]

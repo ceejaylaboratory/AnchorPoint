@@ -31,6 +31,8 @@ import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './
 import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup } from './lib/key-management.service';
 import queueDashboardRouter from './api/routes/queue-dashboard.route';
+import { validateStorageConfigOnStartup } from './services/storage-provider.service';
+import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
@@ -166,6 +168,7 @@ app.use(errorHandler);
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
   validateKmsConfigOnStartup(config);
+  validateStorageConfigOnStartup();
 
   configService.initialize()
     .catch((error) => {
@@ -176,6 +179,7 @@ if (process.env.NODE_ENV !== 'test') {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
         feeReportScheduler.start();
+        uploadExpiryScheduler.start();
       });
     });
 }
