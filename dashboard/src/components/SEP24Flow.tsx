@@ -3,9 +3,12 @@ import { ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RequirementList } from './RequirementList';
 import { WithdrawalForm } from './WithdrawalForm';
+import { DepositForm } from './DepositForm';
+import { DepositErrorAlert } from './DepositErrorAlert';
 import { InteractiveWebview } from './InteractiveWebview';
 import { AssetDropdown } from './AssetDropdown';
 import type { AssetOption } from './AssetDropdown';
+import type { DepositError } from './DepositErrorAlert';
 import type { UiConfig } from '../types';
 
 const STEP_LABELS = ['Select Asset', 'Fill Details', 'Identity Verification', 'Transaction Complete'] as const;
@@ -22,6 +25,8 @@ const ASSET_OPTIONS: AssetOption[] = [
 export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; uiConfig: UiConfig }) => {
   const [step, setStep] = useState(1);
   const [selectedAsset, setSelectedAsset] = useState(ASSET_OPTIONS[0].code);
+  const [depositError, setDepositError] = useState<DepositError | null>(null);
+  const [kycError, setKycError] = useState<DepositError | null>(null);
   const transactionFields = uiConfig.fieldRequirements[type];
   const flowLabel = type === 'deposit' ? 'Deposit' : 'Withdrawal';
 
@@ -31,7 +36,30 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
   const currentStepIndex = visibleSteps.indexOf(step as never);
   const displayStep = currentStepIndex + 1;
 
-  const goToStep = (s: number) => setStep(s);
+  const goToStep = (s: number) => {
+    setStep(s);
+    // Clear errors when navigating
+    setDepositError(null);
+    setKycError(null);
+  };
+
+  const handleDepositFormSubmit = () => {
+    // Simulate potential deposit errors for demonstration
+    // In production, this would call the backend API
+    setDepositError(null);
+    goToStep(3);
+  };
+
+  const handleKycDismiss = () => {
+    // Show error when KYC is dismissed
+    setKycError({
+      type: 'kyc',
+      title: 'Verification Required',
+      message: 'Identity verification is required to complete your deposit.',
+      details: 'Please complete the KYC process to proceed.',
+      retryable: true,
+    });
+  };
 
   return (
     <div className="mx-auto max-w-4xl glass-card p-6 sm:p-8">
@@ -112,7 +140,10 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                 {(['USDC', 'EURT', 'ARST'] as const).map((asset) => (
                   <li key={asset}>
                     <button
-                      onClick={() => goToStep(isWithdraw ? 2 : 3)}
+                      onClick={() => {
+                        setSelectedAsset(asset);
+                        goToStep(isWithdraw ? 2 : 3);
+                      }}
                       aria-label={`Select ${asset} for ${flowLabel.toLowerCase()}`}
                       className="action-button flex w-full items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                     >
@@ -175,7 +206,41 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
           </motion.div>
         )}
 
-        {step === 3 && (
+        {step === 3 && !isWithdraw && (
+          <motion.div
+            key="step-deposit-details"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]"
+          >
+            <div className="space-y-4">
+              <h2 className="font-display text-2xl font-bold">Deposit Details</h2>
+              <p className="text-slate-400">
+                All fields are validated before proceeding. Required fields are marked accordingly.
+              </p>
+              <DepositErrorAlert
+                error={depositError}
+                onDismiss={() => setDepositError(null)}
+                dismissible={true}
+              />
+              <DepositForm
+                fields={transactionFields}
+                assetCode={selectedAsset}
+                onSubmit={() => handleDepositFormSubmit()}
+              />
+              <button
+                onClick={() => goToStep(1)}
+                className="rounded text-sm text-slate-500 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              >
+                ← Back to asset selection
+              </button>
+            </div>
+            <RequirementList title="Deposit Requirements" fields={transactionFields} />
+          </motion.div>
+        )}
+
+        {step === 3 && isWithdraw && (
           <motion.div
             key="step-kyc"
             initial={{ opacity: 0, x: 20 }}
@@ -189,10 +254,15 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
                 KYC requirements are backend-driven, so each anchor can tighten or relax the form without redeploying
                 the dashboard.
               </p>
+              <DepositErrorAlert
+                error={kycError}
+                onDismiss={() => setKycError(null)}
+                dismissible={true}
+              />
               <InteractiveWebview
                 anchorName={uiConfig.brandName}
                 onComplete={() => goToStep(4)}
-                onDismiss={() => goToStep(isWithdraw ? 2 : 1)}
+                onDismiss={() => handleKycDismiss()}
                 title="SEP-24 KYC Webview"
               />
             </div>
