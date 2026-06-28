@@ -92,7 +92,7 @@ impl Registry {
                 contract_type: contract_type.clone(),
                 deployed_at: timestamp,
                 active: true,
-                previous_version: Some(existing_info.address),
+                previous_version: Some(existing_info.address.clone()),
             };
             
             env.storage().instance().set(&contract_key, &updated_info);
