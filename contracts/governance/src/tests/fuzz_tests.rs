@@ -4,6 +4,7 @@
 #![cfg(test)]
 
 use proptest::prelude::*;
+use std::format;
 use crate::ProposalMath;
 
 proptest! {

@@ -75,6 +75,32 @@ router.delete('/customer/:account', sep12Controller.deleteCustomer.bind(sep12Con
 /**
  * @swagger
  * /sep12/customer/upload-url:
+ *   get:
+ *     summary: Get a pre-signed URL for uploading KYC documents
+ *     description: >
+ *       Returns a short-lived, pre-signed upload URL for a KYC document.
+ *       Requires a valid SEP-10 session JWT (Bearer token).
+ *     security:
+ *       - BearerAuth: []
+ *     tags: [SEP-12]
+ *     parameters:
+ *       - in: query
+ *         name: field
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The KYC field name the upload is intended for (e.g. id_photo_front)
+ *     responses:
+ *       200:
+ *         description: Pre-signed upload URL returned successfully
+ *       401:
+ *         description: Unauthorized – missing or invalid SEP-10 session token
+ */
+router.get('/customer/upload-url', authMiddleware, sep12Controller.getUploadUrl.bind(sep12Controller));
+
+/**
+ * @swagger
+ * /sep12/customer/upload-url:
  *   post:
  *     summary: Request a pre-signed URL for direct file upload
  *     tags: [SEP-12]

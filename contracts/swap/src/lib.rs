@@ -5,6 +5,12 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, Vec,
 };
 
+/// Fetch the decimal precision of a token contract dynamically.
+/// Falls back to 7 (the Stellar native/SAC default) on any error.
+fn get_token_decimals(env: &Env, token_addr: &Address) -> u32 {
+    token::Client::new(env, token_addr).decimals()
+}
+
 // Constants for tick math
 const MIN_TICK: i32 = -887272;
 const MAX_TICK: i32 = 887272;
@@ -364,7 +370,6 @@ impl MultiAssetSwap {
         
         // Add to user positions list if new
         if position.liquidity == liquidity {
-            let mut positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(recipient.clone())).unwrap_or(Vec::new(&env));
             let mut positions: Vec<(i32, i32)> = env.storage().instance().get(&DataKey::UserPositions(recipient.clone())).unwrap_or_else(|| Vec::new(&env));
             positions.push_back((tick_lower, tick_upper));
             env.storage().instance().set(&DataKey::UserPositions(recipient.clone()), &positions);
@@ -483,6 +488,17 @@ impl MultiAssetSwap {
         recipient.require_auth();
         assert!(amount_in > 0, "amount must be positive");
         assert!(min_amount_out >= 0, "min_amount_out must be non-negative");
+
+        // Validate token decimal compatibility: both tokens must use the same
+        // decimal precision so that amounts are comparable in the swap math.
+        let token_a_addr: Address = env.storage().instance().get(&DataKey::TokenA).expect("not initialized");
+        let token_b_addr: Address = env.storage().instance().get(&DataKey::TokenB).expect("not initialized");
+        let decimals_a = get_token_decimals(&env, &token_a_addr);
+        let decimals_b = get_token_decimals(&env, &token_b_addr);
+        assert!(
+            decimals_a == decimals_b,
+            "token decimal mismatch: tokens must share the same decimal precision"
+        );
         
         let token_a: Address = env.storage().instance().get(&DataKey::TokenA).expect("not initialized");
         let token_b: Address = env.storage().instance().get(&DataKey::TokenB).expect("not initialized");
@@ -540,7 +556,6 @@ impl MultiAssetSwap {
                 break;
             }
             
-            let actual_amount = cmp::min(amount_calculated, amount_remaining);
             let actual_amount = core::cmp::min(amount_calculated, amount_remaining);
             amount_out += actual_amount;
             amount_remaining -= actual_amount;
@@ -642,15 +657,9 @@ impl MultiAssetSwap {
         let fee_growth_global_0: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal0X128).unwrap_or(0);
         let fee_growth_global_1: i128 = env.storage().instance().get(&DataKey::FeeGrowthGlobal1X128).unwrap_or(0);
         
-        let tokens_owed_0 = position.tokens_owed_0 + 
-            (((fee_growth_global_0 - position.fee_growth_inside_0_last_x128) * position.liquidity).wrapping_shr(128));
-        let tokens_owed_1 = position.tokens_owed_1 + 
-            (((fee_growth_global_1 - position.fee_growth_inside_1_last_x128) * position.liquidity).wrapping_shr(128));
-        
-        let amount0 = cmp::min(amount0_requested, tokens_owed_0);
-        let amount1 = cmp::min(amount1_requested, tokens_owed_1);
+        let tokens_owed_0 = position.tokens_owed_0 +
             ((fee_growth_global_0 - position.fee_growth_inside_0_last_x128) * position.liquidity) / PRECISION;
-        let tokens_owed_1 = position.tokens_owed_1 + 
+        let tokens_owed_1 = position.tokens_owed_1 +
             ((fee_growth_global_1 - position.fee_growth_inside_1_last_x128) * position.liquidity) / PRECISION;
         
         let amount0 = core::cmp::min(amount0_requested, tokens_owed_0);
@@ -901,10 +910,6 @@ mod tests {
             &alice,
             &token_a,
             &swap_amount,
-            &sqrt_price_limit
-            &alice, 
-            &token_a, 
-            &1_000, 
             &sqrt_price_limit,
             &0  // min_amount_out
         );
@@ -926,17 +931,13 @@ mod tests {
         let tick_upper = 60;
         let (liquidity, _, _) = client.mint(&alice, &tick_lower, &tick_upper, &100_000_i128, &100_000_i128);
 
-        // Perform a swap to generate fees
-        let current_price = MultiAssetSwap::tick_to_sqrt_price_x96(0);
-        let sqrt_price_limit = current_price - 1;
-        client.swap(&alice, &token_a, &5_000_000_i128, &sqrt_price_limit);
+        // Perform some swaps to generate fees
+        let sqrt_price_limit = MultiAssetSwap::tick_to_sqrt_price_x96(-1);
+        client.swap(&alice, &token_a, &1_000, &sqrt_price_limit, &0);
 
         // Collect any remaining owed tokens
         let (fees0, fees1) = client.collect(&alice, &tick_lower, &tick_upper, &1_000_000_000_000_i128, &1_000_000_000_000_i128);
         assert!(fees0 >= 0 && fees1 >= 0);
-        // Perform some swaps to generate fees
-        let sqrt_price_limit = MultiAssetSwap::tick_to_sqrt_price_x96(-1);
-        client.swap(&alice, &token_a, &1_000, &sqrt_price_limit, &0);
 
         // Burn position
         let (amount0, amount1) = client.burn(&alice, &tick_lower, &tick_upper, &liquidity);
@@ -975,11 +976,11 @@ mod tests {
 
         // First swap at base fee
         let price_limit_1 = current_price - 1;
-        let _amount_out_1 = client.swap(&alice, &token_a, &5_000_000_i128, &price_limit_1);
+        let _amount_out_1 = client.swap(&alice, &token_a, &5_000_000_i128, &price_limit_1, &0);
 
         // Second swap
         let price_limit_2 = current_price - 2;
-        let amount_out_2 = client.swap(&alice, &token_a, &5_000_000_i128, &price_limit_2);
+        let amount_out_2 = client.swap(&alice, &token_a, &5_000_000_i128, &price_limit_2, &0);
 
         // Verify swap succeeds and returns a positive amount
         assert!(amount_out_2 > 0);
@@ -1021,7 +1022,7 @@ mod tests {
 
         // Verify referrer was set
         let referrer = client.get_referrer(&alice);
-        assert_eq!(referrer, Some(bob));
+        assert_eq!(referrer, Some(bob.clone()));
 
         // Add liquidity
         client.mint(&alice, &-60, &60, &10_000, &10_000);
