@@ -29,7 +29,6 @@
     "migrate:status": "prisma migrate status",
     "migrate:validate-env": "node scripts/validate-migration-env.js",
     "migrate:bootstrap": "bash scripts/bootstrap-db.sh",
-    "clean": "rm -rf logs coverage && find . -name '*.db-journal' -delete && find . -name '*.sqlite-journal' -delete"
     "clean": "node -e \"const fs=require('fs'),path=require('path');function walk(dir){if(!fs.existsSync(dir))return;for(const f of fs.readdirSync(dir)){const fp=path.join(dir,f);if(fs.statSync(fp).isDirectory())walk(fp);else if(['.db-journal','.db-wal','.db-shm'].some(e=>f.endsWith(e))){fs.unlinkSync(fp);console.log('Removed:',fp)}}};walk('.');['logs','coverage'].forEach(d=>{if(fs.existsSync(d)){fs.rmSync(d,{recursive:true,force:true});console.log('Removed:',d)}});console.log('Clean complete');\""
   },
   "dependencies": {
