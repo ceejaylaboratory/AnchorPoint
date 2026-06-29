@@ -44,24 +44,23 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isOpen]);
+// Load notifications immediately and keep them up to date.
+useEffect(() => {
+  setNotifications();
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchNotifications();
-    }
-  }, [isOpen]);
+  const interval = setInterval(() => {
+    setNotifications();
+  }, 30000);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchNotifications();
-    }, 30000);
+  return () => clearInterval(interval);
+}, []);
 
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchNotifications = async () => {
-    setLoading(true);
-    setError(null);
+// Refresh notifications whenever the dropdown is opened.
+useEffect(() => {
+  if (isOpen) {
+    setNotifications();
+  }
+}, [isOpen]);
 
     try {
       const token = localStorage.getItem('authToken');

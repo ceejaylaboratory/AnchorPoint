@@ -14,6 +14,7 @@ import {
   RefreshCcw,
   Activity,
 } from 'lucide-react';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { LogoMark } from './components/LogoMark';
