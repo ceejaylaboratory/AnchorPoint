@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { LogoMark } from './components/LogoMark';
 import { NotificationBell } from './components/NotificationBell';
+import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { FreighterAdapter } from './lib/wallet/FreighterAdapter';
 
@@ -336,6 +337,10 @@ const App = () => {
                 </span>
               ) : null}
             </div>
+            <UserAvatarDropdown
+              onSettings={() => setActiveTab('settings')}
+              onNotifications={() => setActiveTab('notifications')}
+            />
           </div>
         </header>
 
