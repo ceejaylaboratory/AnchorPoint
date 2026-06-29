@@ -77,6 +77,8 @@ impl LiquidStaking {
         env.storage().instance().set(&DataKey::NftContract, &nft_contract);
         env.storage().instance().set(&DataKey::TotalStaked, &0_i128);
         env.storage().instance().set(&DataKey::RewardPerTokenStored, &0_i128);
+        // Initialise the emergency-pause flag to false (not paused).
+        env.storage().instance().set(&DataKey::Paused, &false);
 
         // Initialise branding metadata with empty strings.
         env.storage().instance().set(&DataKey::ContractMeta, &ContractMetadata {
@@ -150,6 +152,11 @@ impl LiquidStaking {
 
     pub fn stake(env: Env, user: Address, amount: i128, lock_duration: u64) -> u64 {
         user.require_auth();
+        // Emergency pause check: block staking when the contract is paused.
+        assert!(
+            !env.storage().instance().get::<DataKey, bool>(&DataKey::Paused).unwrap_or(false),
+            "contract is paused"
+        );
         assert!(amount > 0, "amount must be positive");
         Self::_check_not_paused(&env);
 
@@ -383,6 +390,44 @@ impl LiquidStaking {
             lock_time,
             pending_rewards: pending,
         }
+    }
+
+    // ── Emergency Pause ───────────────────────────────────────────────────────
+
+    /// Pause the contract, blocking stake and unstake (admin only).
+    pub fn pause(env: Env, caller: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+        assert!(caller == admin, "only admin can pause");
+
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), caller);
+    }
+
+    /// Unpause the contract, re-enabling stake and unstake (admin only).
+    pub fn unpause(env: Env, caller: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not found");
+        assert!(caller == admin, "only admin can unpause");
+
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), caller);
+    }
+
+    /// Returns true if the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     // ── Contract Metadata ─────────────────────────────────────────────────────
@@ -710,6 +755,7 @@ mod tests {
 
     #[test]
     fn test_nft_attributes() {
+
         let (env, ls_id, nft_id, admin, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
         let nft_client = nft_metadata::NftMetadataContractClient::new(&env, &nft_id);

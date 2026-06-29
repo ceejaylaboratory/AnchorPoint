@@ -342,7 +342,7 @@ impl XLMWrapper {
         
         env.storage().instance().remove(&DataKey::LendingAuthorized(lending_address.clone()));
         env.events()
-            .publish((symbol_short!("lend_revk"), lending_address), true);
+            .publish((soroban_sdk::Symbol::new(&env, "lend_revoke"), lending_address.clone()), true);
     }
 
     /// Check if an address is authorized for Lending interactions
@@ -1045,7 +1045,7 @@ mod invariants {
         verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
 
         client.withdraw(&alice, &100);
-        verify_supply_conservation(&env, &client, &[alice, bob, carol]);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
 
         // Verify final invariants
         let total_balance = client.balance_of(&alice) + client.balance_of(&bob) + client.balance_of(&carol);
@@ -1108,7 +1108,7 @@ mod invariants {
 
         // Transfer B -> A (reverse)
         client.transfer(&bob, &alice, &300);
-        verify_supply_conservation(&env, &client, &[alice, bob]);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
 
         // After round-trip, balances should be back to original
         assert_eq!(
@@ -1127,7 +1127,7 @@ mod invariants {
     #[test]
     fn property_multi_user_supply_conservation() {
         let (env, client, _) = setup_fresh();
-        let users: Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
+        let users: std::vec::Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
 
         // Random-like deposits
         let mut total_deposited = 0_i128;

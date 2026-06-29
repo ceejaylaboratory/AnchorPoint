@@ -350,7 +350,7 @@ mod tests {
         Address, Env,
     };
 
-    fn setup() -> (Env, Address, Address, Address, Address, Address) {
+    fn setup() -> (Env, Address, Address, Address, Address, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -385,12 +385,13 @@ mod tests {
             alice,
             bob,
             reward_token_id.address(),
+            stake_token_id.address(),
         )
     }
 
     #[test]
     fn test_stake_and_claim() {
-        let (env, contract_id, admin, alice, _bob, reward_token) = setup();
+        let (env, contract_id, admin, alice, _bob, reward_token, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         // Alice stakes 500_000
@@ -415,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_proportional_split() {
-        let (env, contract_id, admin, alice, bob, _) = setup();
+        let (env, contract_id, admin, alice, bob, _, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         // Alice: 300_000, Bob: 700_000  →  30% / 70% split
@@ -431,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_rewards_accrue_correctly_after_late_stake() {
-        let (env, contract_id, admin, alice, bob, _) = setup();
+        let (env, contract_id, admin, alice, bob, _, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         // Alice stakes first, rewards deposited, then Bob joins
@@ -450,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_unstake_settles_rewards() {
-        let (env, contract_id, admin, alice, _bob, reward_token) = setup();
+        let (env, contract_id, admin, alice, _bob, reward_token, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         client.stake(&alice, &500_000);
@@ -464,5 +465,67 @@ mod tests {
         client.claim(&alice);
         let reward_client = TokenClient::new(&env, &reward_token);
         assert_eq!(reward_client.balance(&alice), 1_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be positive")]
+    fn test_deposit_limit() {
+        let (env, contract_id, _admin, alice, _bob, _, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        client.stake(&alice, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be positive")]
+    fn test_withdraw_limit_zero() {
+        let (env, contract_id, _admin, alice, _bob, _, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        client.stake(&alice, &100);
+        client.unstake(&alice, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "insufficient stake")]
+    fn test_withdraw_limit_insufficient() {
+        let (env, contract_id, _admin, alice, _bob, _, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        client.stake(&alice, &100);
+        client.unstake(&alice, &200);
+    }
+
+    #[test]
+    fn test_contract_invariants() {
+        let (env, contract_id, _admin, alice, bob, _reward_token, stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        let stake_client = TokenClient::new(&env, &stake_token);
+        
+        // Initial state
+        assert_eq!(client.total_staked(), 0);
+        assert_eq!(stake_client.balance(&contract_id), 0);
+        
+        // Alice stakes
+        client.stake(&alice, &300_000);
+        assert_eq!(client.total_staked(), 300_000);
+        assert_eq!(stake_client.balance(&contract_id), 300_000);
+        
+        // Bob stakes
+        client.stake(&bob, &700_000);
+        assert_eq!(client.total_staked(), 1_000_000);
+        assert_eq!(stake_client.balance(&contract_id), 1_000_000);
+        
+        // Total supply matches balance reserves invariant
+        assert_eq!(client.total_staked(), stake_client.balance(&contract_id));
+        
+        // Alice unstakes partially
+        client.unstake(&alice, &100_000);
+        assert_eq!(client.total_staked(), 900_000);
+        assert_eq!(stake_client.balance(&contract_id), 900_000);
+        
+        // Sum of all stakes equals total staked
+        assert_eq!(client.stake_of(&alice) + client.stake_of(&bob), client.total_staked());
     }
 }

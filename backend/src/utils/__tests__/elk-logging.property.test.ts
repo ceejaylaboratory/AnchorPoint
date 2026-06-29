@@ -320,8 +320,8 @@ describe("P9 – DLQ capacity cap drops oldest entries", () => {
 
           expect(dlqRef.length).toBe(maxBufferSize);
 
-          // Capture the oldest entry (index 0) before overflow
-          const oldestPayload = dlqRef[0].payload;
+          // Capture the expected remaining payloads in FIFO order
+          const expectedRemaining = dlqRef.slice(1).map((e) => e.payload);
 
           // Now trigger overflow via the transport's log() method
           // We need to call the internal enqueue — use log() with the transport
@@ -342,9 +342,9 @@ describe("P9 – DLQ capacity cap drops oldest entries", () => {
           // Queue size must remain at maxBufferSize
           expect(dlqRef.length).toBe(maxBufferSize);
 
-          // The oldest entry must have been dropped
-          const payloads = dlqRef.map((e) => e.payload);
-          expect(payloads).not.toContain(oldestPayload);
+          // Verify that the first item (oldest) was evicted and order of others is preserved
+          const remainingPayloads = dlqRef.slice(0, -1).map((e) => e.payload);
+          expect(remainingPayloads).toEqual(expectedRemaining);
 
           // The overflow entry must be at the tail (as a JSON string)
           const lastPayload = dlqRef[dlqRef.length - 1].payload;
