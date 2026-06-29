@@ -19,22 +19,42 @@ on:
       - "scripts/security-audit.sh"
 
 jobs:
-  test:
+  build:
+    name: Build and test smart contracts
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown,wasm32v1-none
+          components: rustfmt, clippy
+
       - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build (wasm32)
+        run: cargo build --target wasm32-unknown-unknown --release
+
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-scout-audit@0.3.16
+
       - name: Install Scout system dependencies
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config gcc
+
       - name: Test sep41-token
         run: cargo test -p sep41-token
+
       - name: Test upgradeable
         run: cargo test -p upgradeable
+
       - name: Run Security Audit
         run: ./scripts/security-audit.sh --warn-only
