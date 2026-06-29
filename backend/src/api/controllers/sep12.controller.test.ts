@@ -321,6 +321,65 @@ describe('Sep12Controller', () => {
     expect(prismaMock.kycCustomer.update).not.toHaveBeenCalled();
   });
 
+  describe('confirmUpload', () => {
+    it('returns 200 when session account matches record account', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+        user: { publicKey: 'GACC' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue({
+        id: 'kyc-record-1',
+        user: { publicKey: 'GACC' },
+      });
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('returns 403 when session account does not match record account', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+        user: { publicKey: 'GDIFF' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue({
+        id: 'kyc-record-1',
+        user: { publicKey: 'GACC' },
+      });
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('returns 404 when record does not exist', async () => {
+      const req = {
+        params: { id: 'no-such-record' },
+        user: { publicKey: 'GACC' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue(null);
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('returns 401 when no authenticated user on request', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(prismaMock.kycCustomer.findUnique).not.toHaveBeenCalled();
   describe('getUploadUrl', () => {
     it('returns 400 when field query param is missing', async () => {
       const req = {

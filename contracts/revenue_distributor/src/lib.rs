@@ -153,8 +153,108 @@ mod tests {
         let (env, distributor_id, admin, _, _, _) = setup();
         let distributor_client = RevenueDistributorClient::new(&env, &distributor_id);
 
-        distributor_client.set_shares(&admin, &8000); // Change to 80%
+        distributor_client.set_shares(&admin, &8000);
         let (_, _, gov_share) = distributor_client.get_config();
         assert_eq!(gov_share, 8000);
+    }
+
+    #[test]
+    fn test_zero_balance_distribute_is_noop() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let gov_stakers = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+
+        let distributor_id = env.register_contract(None, RevenueDistributor);
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        client.initialize(&admin, &treasury, &gov_stakers, &5000);
+
+        client.distribute(&token_id.address());
+
+        let token_client = token::Client::new(&env, &token_id.address());
+        assert_eq!(token_client.balance(&treasury), 0);
+        assert_eq!(token_client.balance(&gov_stakers), 0);
+    }
+
+    #[test]
+    fn test_full_gov_share() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let gov_stakers = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+
+        let distributor_id = env.register_contract(None, RevenueDistributor);
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        client.initialize(&admin, &treasury, &gov_stakers, &10000);
+        token::StellarAssetClient::new(&env, &token_id.address()).mint(&distributor_id, &1000);
+
+        client.distribute(&token_id.address());
+
+        let token_client = token::Client::new(&env, &token_id.address());
+        assert_eq!(token_client.balance(&gov_stakers), 1000);
+        assert_eq!(token_client.balance(&treasury), 0);
+    }
+
+    #[test]
+    fn test_zero_gov_share() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let gov_stakers = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+
+        let distributor_id = env.register_contract(None, RevenueDistributor);
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        client.initialize(&admin, &treasury, &gov_stakers, &0);
+        token::StellarAssetClient::new(&env, &token_id.address()).mint(&distributor_id, &1000);
+
+        client.distribute(&token_id.address());
+
+        let token_client = token::Client::new(&env, &token_id.address());
+        assert_eq!(token_client.balance(&gov_stakers), 0);
+        assert_eq!(token_client.balance(&treasury), 1000);
+    }
+
+    #[test]
+    fn test_distribution_after_set_shares() {
+        let (env, distributor_id, admin, treasury, gov_stakers, token_addr) = setup();
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        let token_client = token::Client::new(&env, &token_addr);
+
+        client.set_shares(&admin, &3000);
+        client.distribute(&token_addr);
+
+        assert_eq!(token_client.balance(&gov_stakers), 300);
+        assert_eq!(token_client.balance(&treasury), 700);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid share bps")]
+    fn test_invalid_bps_panics_on_initialize() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let gov_stakers = Address::generate(&env);
+
+        let distributor_id = env.register_contract(None, RevenueDistributor);
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        client.initialize(&admin, &treasury, &gov_stakers, &10001);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid share bps")]
+    fn test_invalid_bps_panics_on_set_shares() {
+        let (env, distributor_id, admin, _, _, _) = setup();
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        client.set_shares(&admin, &10001);
     }
 }
