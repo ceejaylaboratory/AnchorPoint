@@ -96,6 +96,11 @@ const envSchema = z.object({
     .pipe(z.number().int().min(5).max(60)),
   ANCHOR_PUBLIC_KEY: z.string().optional(), // For SEP-10 challenges
   ANCHOR_SECRET_KEY: z.string().optional(), // For SEP-10 challenges
+  SEP12_MAX_FILE_SIZE_MB: z
+    .string()
+    .default('20')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().positive()),
 });
 
 const parsed = envSchema.safeParse({

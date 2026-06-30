@@ -205,7 +205,7 @@ router.post('/token', async (req: Request, res: Response) => {
  *         description: Invalid or missing token
  */
 router.post('/refresh', async (req: Request, res: Response) => {
-  return refreshToken(req, res, redisService);
+  return refreshToken(req, res);
 });
 
 export default router;

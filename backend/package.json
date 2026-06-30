@@ -28,7 +28,8 @@
     "migrate:rollback": "ts-node scripts/generate-rollback.ts",
     "migrate:status": "prisma migrate status",
     "migrate:validate-env": "node scripts/validate-migration-env.js",
-    "migrate:bootstrap": "bash scripts/bootstrap-db.sh"
+    "migrate:bootstrap": "bash scripts/bootstrap-db.sh",
+    "clean": "node -e \"const fs=require('fs'),path=require('path');function walk(dir){if(!fs.existsSync(dir))return;for(const f of fs.readdirSync(dir)){const fp=path.join(dir,f);if(fs.statSync(fp).isDirectory())walk(fp);else if(['.db-journal','.db-wal','.db-shm'].some(e=>f.endsWith(e))){fs.unlinkSync(fp);console.log('Removed:',fp)}}};walk('.');['logs','coverage'].forEach(d=>{if(fs.existsSync(d)){fs.rmSync(d,{recursive:true,force:true});console.log('Removed:',d)}});console.log('Clean complete');\""
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.500.0",
@@ -89,6 +90,7 @@
     "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^9.0.0",
     "@types/winston": "^2.4.4",
+    "nodemailer-mock": "^2.0.5",
     "@typescript-eslint/eslint-plugin": "^7.3.1",
     "@typescript-eslint/parser": "^7.3.1",
     "eslint": "^8.57.0",
@@ -98,6 +100,8 @@
     "nodemon": "^3.1.0",
     "prisma": "^6.19.2",
     "supertest": "^6.3.4",
+    "sinon": "^17.0.0",
+    "@types/sinon": "^17.0.0",
     "ts-jest": "^29.1.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.3"

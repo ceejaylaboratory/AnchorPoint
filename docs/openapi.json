@@ -1,0 +1,3217 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AnchorPoint API",
+    "version": "1.0.0",
+    "description": "AnchorPoint Backend API for Stellar SEP-24 Anchor Operations",
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    },
+    "contact": {
+      "name": "AnchorPoint Support",
+      "url": "https://github.com/ceejaylaboratory/AnchorPoint"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Development server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT authorization token obtained from /auth/token endpoint"
+      }
+    },
+    "schemas": {
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Transaction unique identifier"
+          },
+          "userPublicKey": {
+            "type": "string",
+            "description": "User Stellar public key"
+          },
+          "assetCode": {
+            "type": "string",
+            "description": "Asset code (e.g., USD, EUR)"
+          },
+          "amount": {
+            "type": "string",
+            "description": "Transaction amount"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "deposit",
+              "withdrawal"
+            ],
+            "description": "Transaction type"
+          },
+          "status": {
+            "type": "string",
+            "description": "Transaction status"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Transaction creation timestamp"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Transaction update timestamp"
+          }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "description": "Total number of items"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Current page number"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of items per page"
+          },
+          "totalPages": {
+            "type": "integer",
+            "description": "Total number of pages"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "error"
+          },
+          "message": {
+            "type": "string",
+            "description": "Error message"
+          }
+        }
+      },
+      "Challenge": {
+        "type": "object",
+        "properties": {
+          "transaction": {
+            "type": "string",
+            "description": "SEP-10 challenge transaction XDR"
+          },
+          "network_passphrase": {
+            "type": "string",
+            "description": "Stellar network passphrase"
+          }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "JWT authentication token"
+          }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "NORMAL",
+              "HIGH",
+              "URGENT"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "ACTIVE",
+              "COMPLETED",
+              "FAILED",
+              "DELAYED",
+              "RETRYING"
+            ]
+          },
+          "contractId": {
+            "type": "string"
+          },
+          "functionName": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object"
+          },
+          "result": {
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "maxAttempts": {
+            "type": "integer"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "MultisigTransaction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "envelopeXdr": {
+            "type": "string"
+          },
+          "creatorPublicKey": {
+            "type": "string"
+          },
+          "requiredSigners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "threshold": {
+            "type": "integer"
+          },
+          "currentSignatures": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "PARTIALLY_SIGNED",
+              "READY",
+              "SUBMITTED",
+              "FAILED",
+              "EXPIRED"
+            ]
+          },
+          "signatures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "signerPublicKey": {
+                  "type": "string"
+                },
+                "signedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "memo": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "submittedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stellarTxId": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health check endpoints"
+    },
+    {
+      "name": "Transactions",
+      "description": "Transaction history and management"
+    },
+    {
+      "name": "SEP-10 Authentication",
+      "description": "Stellar SEP-10 authentication endpoints"
+    },
+    {
+      "name": "SEP-24",
+      "description": "Stellar SEP-24 deposit and withdrawal operations"
+    },
+    {
+      "name": "SEP-1 Info",
+      "description": "Stellar SEP-1 anchor info endpoint"
+    },
+    {
+      "name": "Batch Payments",
+      "description": "Batch payment operations for reducing Stellar network fees"
+    }
+  ],
+  "paths": {
+    "/api/users/hierarchy": {
+      "get": {
+        "summary": "Get User Referral Hierarchy",
+        "description": "Fetches the downline referral hierarchy for the authenticated user using a recursive CTE.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hierarchy retrieved successfully"
+          }
+        }
+      }
+    },
+    "/api/transactions": {
+      "get": {
+        "summary": "Get transaction history",
+        "description": "Fetches transaction history for the authenticated user with pagination support.",
+        "tags": [
+          "Transactions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number for pagination"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            },
+            "description": "Number of items per page"
+          },
+          {
+            "in": "query",
+            "name": "assetCode",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter transactions by asset code (e.g., USDC, BTC)"
+          },
+          {
+            "in": "query",
+            "name": "sender",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search for transactions with matching sender metadata in indexed events"
+          },
+          {
+            "in": "query",
+            "name": "receiver",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search for transactions with matching receiver metadata in indexed events"
+          },
+          {
+            "in": "query",
+            "name": "memo",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search for transactions by memo or indexed event text"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction history retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "transactions": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Transaction"
+                          }
+                        },
+                        "pagination": {
+                          "$ref": "#/components/schemas/Pagination"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transactions/submit": {
+      "post": {
+        "summary": "Submit a pre-signed transaction",
+        "description": "Validates and submits a pre-signed Stellar transaction XDR to the network.",
+        "tags": [
+          "Transactions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "xdr"
+                ],
+                "properties": {
+                  "xdr": {
+                    "type": "string",
+                    "description": "Base64 encoded transaction XDR"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transaction submitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "hash": {
+                          "type": "string"
+                        },
+                        "ledger": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid transaction or disallowed operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sep24/transactions/deposit/interactive": {
+      "post": {
+        "summary": "Interactive Deposit",
+        "description": "SEP-24 Interactive Deposit Endpoint. Returns a URL for the user to complete KYC/Deposit.",
+        "tags": [
+          "SEP-24"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "asset_code"
+                ],
+                "properties": {
+                  "asset_code": {
+                    "type": "string",
+                    "description": "Asset code to deposit (e.g., USDC, USD, BTC, ETH)",
+                    "example": "USDC"
+                  },
+                  "account": {
+                    "type": "string",
+                    "description": "Stellar Ed25519 public key (G...)"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Amount to deposit"
+                  },
+                  "lang": {
+                    "type": "string",
+                    "description": "Language preference for the UI",
+                    "default": "en"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Interactive deposit URL generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "example": "interactive_customer_info_needed"
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "URL for user to complete deposit"
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Unique transaction identifier"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request parameters"
+          }
+        }
+      }
+    },
+    "/sep24/transactions/withdraw/interactive": {
+      "post": {
+        "summary": "Interactive Withdrawal",
+        "description": "SEP-24 Interactive Withdraw Endpoint. Returns a URL for the user to complete KYC/Withdraw.",
+        "tags": [
+          "SEP-24"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "asset_code"
+                ],
+                "properties": {
+                  "asset_code": {
+                    "type": "string",
+                    "description": "Asset code to withdraw (e.g., USDC, USD, BTC, ETH)",
+                    "example": "USDC"
+                  },
+                  "account": {
+                    "type": "string",
+                    "description": "Destination Stellar Ed25519 public key (G...)"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Amount to withdraw"
+                  },
+                  "lang": {
+                    "type": "string",
+                    "description": "Language preference for the UI",
+                    "default": "en"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Interactive withdrawal URL generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "example": "interactive_customer_info_needed"
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "URL for user to complete withdrawal"
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Unique transaction identifier"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request parameters"
+          }
+        }
+      }
+    },
+    "/sep12/customer": {
+      "put": {
+        "summary": "Upload customer information and documents",
+        "tags": [
+          "SEP-12"
+        ]
+      },
+      "get": {
+        "summary": "Get customer KYC status",
+        "tags": [
+          "SEP-12"
+        ]
+      }
+    },
+    "/sep12/customer/{account}": {
+      "delete": {
+        "summary": "Delete customer PII",
+        "tags": [
+          "SEP-12"
+        ]
+      }
+    },
+    "/sep12/customer/upload-url": {
+      "post": {
+        "summary": "Request a pre-signed URL for direct file upload",
+        "tags": [
+          "SEP-12"
+        ]
+      }
+    },
+    "/sep12/customer/upload-confirm": {
+      "post": {
+        "summary": "Confirm a direct file upload was completed",
+        "tags": [
+          "SEP-12"
+        ]
+      }
+    },
+    "/sep12/webhook": {
+      "post": {
+        "summary": "Webhook for 3rd party KYC provider updates",
+        "tags": [
+          "SEP-12"
+        ]
+      }
+    },
+    "/api/relayer/approve": {
+      "post": {
+        "summary": "Submit a token approval request with signature",
+        "description": "The relayer verifies the signature and submits the transaction on behalf of the user",
+        "tags": [
+          "Relayer"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "userPublicKey",
+                  "spenderPublicKey",
+                  "amount",
+                  "nonce",
+                  "expiry",
+                  "signature"
+                ],
+                "properties": {
+                  "userPublicKey": {
+                    "type": "string",
+                    "description": "The user's public key"
+                  },
+                  "spenderPublicKey": {
+                    "type": "string",
+                    "description": "The spender's public key (address being approved)"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "The approval amount"
+                  },
+                  "assetCode": {
+                    "type": "string",
+                    "description": "Asset code (optional, defaults to XLM)"
+                  },
+                  "assetIssuer": {
+                    "type": "string",
+                    "description": "Asset issuer (optional, for custom assets)"
+                  },
+                  "nonce": {
+                    "type": "string",
+                    "description": "Unique nonce to prevent replay attacks"
+                  },
+                  "expiry": {
+                    "type": "number",
+                    "description": "Unix timestamp when the request expires"
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "Base64 encoded signature of the approval message"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Approval submitted successfully"
+          },
+          "400": {
+            "description": "Invalid request or signature verification failed"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/relayer/verify": {
+      "post": {
+        "summary": "Verify a signature without submitting",
+        "description": "Pre-verification of signature before submission",
+        "tags": [
+          "Relayer"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "userPublicKey",
+                  "signature"
+                ],
+                "properties": {
+                  "userPublicKey": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signature verification result"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/relayer/submit": {
+      "post": {
+        "summary": "Submit a pre-signed transaction",
+        "description": "Submit a transaction that's already signed by the user",
+        "tags": [
+          "Relayer"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "signedTransactionXdr",
+                  "networkPassphrase"
+                ],
+                "properties": {
+                  "signedTransactionXdr": {
+                    "type": "string",
+                    "description": "Base64 encoded signed transaction XDR"
+                  },
+                  "networkPassphrase": {
+                    "type": "string",
+                    "description": "Network passphrase (e.g., Test SDF Network)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transaction submitted successfully"
+          },
+          "400": {
+            "description": "Invalid request or transaction failed"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/relayer/nonce": {
+      "get": {
+        "summary": "Generate a nonce for approval requests",
+        "description": "Returns a unique nonce to prevent replay attacks",
+        "tags": [
+          "Relayer"
+        ],
+        "responses": {
+          "200": {
+            "description": "Nonce generated successfully"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/relayer/config": {
+      "get": {
+        "summary": "Get relayer configuration",
+        "description": "Returns public relayer configuration (excludes sensitive data)",
+        "tags": [
+          "Relayer"
+        ],
+        "responses": {
+          "200": {
+            "description": "Relayer configuration"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/queue/jobs": {
+      "post": {
+        "summary": "Add a new job to the queue",
+        "description": "Creates a new job for contract interaction",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "Job type (CONTRACT_CALL, CONTRACT_DEPLOY, SETTLEMENT, etc.)"
+                  },
+                  "contractId": {
+                    "type": "string",
+                    "description": "Stellar contract ID"
+                  },
+                  "functionName": {
+                    "type": "string",
+                    "description": "Contract function to call"
+                  },
+                  "parameters": {
+                    "type": "object",
+                    "description": "Function parameters"
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4,
+                    "description": "Job priority (1=LOW, 2=NORMAL, 3=HIGH, 4=URGENT)"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "description": "Additional metadata"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Job created successfully"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/settlement": {
+      "post": {
+        "summary": "Add a high-priority settlement job",
+        "description": "Creates an urgent settlement job",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contractId",
+                  "functionName",
+                  "parameters"
+                ],
+                "properties": {
+                  "contractId": {
+                    "type": "string"
+                  },
+                  "functionName": {
+                    "type": "string"
+                  },
+                  "parameters": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Settlement job created"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/contract-call": {
+      "post": {
+        "summary": "Add a contract call job",
+        "description": "Creates a job to call a smart contract function",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contractId",
+                  "functionName",
+                  "parameters"
+                ],
+                "properties": {
+                  "contractId": {
+                    "type": "string"
+                  },
+                  "functionName": {
+                    "type": "string"
+                  },
+                  "parameters": {
+                    "type": "object"
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Contract call job created"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/{jobId}": {
+      "get": {
+        "summary": "Get job status",
+        "description": "Retrieves the current status of a job",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "jobId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status retrieved"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/status/{status}": {
+      "get": {
+        "summary": "Get jobs by status",
+        "description": "Retrieves jobs with a specific status",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "status",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "ACTIVE",
+                "COMPLETED",
+                "FAILED",
+                "DELAYED",
+                "RETRYING"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs retrieved"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/my-jobs": {
+      "get": {
+        "summary": "Get user's jobs",
+        "description": "Retrieves all jobs created by the authenticated user",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs retrieved"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/{jobId}/retry": {
+      "post": {
+        "summary": "Retry a failed job",
+        "description": "Queues a failed job for retry",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "jobId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job queued for retry"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/jobs/{jobId}/cancel": {
+      "post": {
+        "summary": "Cancel a job",
+        "description": "Cancels a pending or active job",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "jobId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job cancelled"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/metrics": {
+      "get": {
+        "summary": "Get queue metrics",
+        "description": "Retrieves queue statistics and metrics",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metrics retrieved"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/queue/clean": {
+      "post": {
+        "summary": "Clean old jobs",
+        "description": "Removes old completed and failed jobs",
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "schema": {
+              "type": "integer",
+              "default": 30
+            },
+            "description": "Remove jobs older than this many days"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs cleaned"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/notifications/preferences": {
+      "get": {
+        "summary": "Get notification preferences",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "summary": "Update notification preferences",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/history": {
+      "get": {
+        "summary": "Get notification history",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/multisig/transactions": {
+      "post": {
+        "summary": "Create a new multisig transaction",
+        "description": "Creates a new multisig transaction that requires signatures from multiple parties",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "envelopeXdr",
+                  "requiredSigners",
+                  "threshold"
+                ],
+                "properties": {
+                  "envelopeXdr": {
+                    "type": "string",
+                    "description": "Base64 encoded transaction envelope"
+                  },
+                  "requiredSigners": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Array of public keys that must sign"
+                  },
+                  "threshold": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Number of signatures required"
+                  },
+                  "memo": {
+                    "type": "string",
+                    "description": "Optional memo for the transaction"
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Optional expiration date"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "description": "Optional additional metadata"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Transaction created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "transaction": {
+                          "$ref": "#/components/schemas/MultisigTransaction"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "Get multisig transactions for the authenticated user",
+        "description": "Retrieves all multisig transactions where the user is a required signer",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "PARTIALLY_SIGNED",
+                "READY",
+                "SUBMITTED",
+                "FAILED",
+                "EXPIRED"
+              ]
+            },
+            "description": "Filter by transaction status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transactions retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "transactions": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MultisigTransaction"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/multisig/transactions/{transactionId}/sign": {
+      "post": {
+        "summary": "Add a signature to a multisig transaction",
+        "description": "Adds the authenticated user's signature to a pending multisig transaction",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The multisig transaction ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "signedEnvelopeXdr"
+                ],
+                "properties": {
+                  "signedEnvelopeXdr": {
+                    "type": "string",
+                    "description": "Base64 encoded signed transaction envelope"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signature added successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "transaction": {
+                          "$ref": "#/components/schemas/MultisigTransaction"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or signature"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Transaction not found"
+          }
+        }
+      }
+    },
+    "/api/multisig/transactions/{transactionId}": {
+      "get": {
+        "summary": "Get a multisig transaction by ID",
+        "description": "Retrieves details of a specific multisig transaction",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The multisig transaction ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "transaction": {
+                          "$ref": "#/components/schemas/MultisigTransaction"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Transaction not found"
+          }
+        }
+      }
+    },
+    "/api/multisig/pending": {
+      "get": {
+        "summary": "Get pending transactions requiring signature",
+        "description": "Retrieves all pending multisig transactions that need the user's signature",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending transactions retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "transactions": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MultisigTransaction"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/multisig/transactions/{transactionId}/submit": {
+      "post": {
+        "summary": "Manually submit a transaction",
+        "description": "Manually submits a transaction that has reached the signature threshold",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The multisig transaction ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction submitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "transaction": {
+                          "$ref": "#/components/schemas/MultisigTransaction"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or transaction not ready"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Transaction not found"
+          }
+        }
+      }
+    },
+    "/api/multisig/notifications": {
+      "get": {
+        "summary": "Get notifications for the authenticated user",
+        "description": "Retrieves all notifications related to multisig transactions",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "unreadOnly",
+            "schema": {
+              "type": "string",
+              "enum": [
+                true,
+                false
+              ]
+            },
+            "description": "Filter to show only unread notifications"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notifications retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "notifications": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/multisig/notifications/read": {
+      "post": {
+        "summary": "Mark notifications as read",
+        "description": "Marks specified notifications as read",
+        "tags": [
+          "Multisig"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "notificationIds"
+                ],
+                "properties": {
+                  "notificationIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Notifications marked as read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/info": {
+      "get": {
+        "summary": "SEP-1 Info Endpoint",
+        "description": "Returns stellar.toml information in JSON or TOML format. Supports both JSON and TOML responses based on Accept header or format query parameter.",
+        "tags": [
+          "Info"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "toml"
+              ]
+            },
+            "description": "Response format preference (json or toml)"
+          },
+          {
+            "in": "header",
+            "name": "Accept",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Accept header for content negotiation"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Anchor information retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sep1Info"
+                }
+              },
+              "text/toml": {
+                "schema": {
+                  "type": "string",
+                  "description": "TOML formatted stellar.toml content"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fees/stats": {
+      "get": {
+        "summary": "Network fee statistics",
+        "description": "Returns current Stellar network fee stats including surge status and percentile fees.",
+        "tags": [
+          "Fees"
+        ],
+        "responses": {
+          "200": {
+            "description": "Fee statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "baseFeeStroops": {
+                      "type": "number",
+                      "example": 100
+                    },
+                    "surgeActive": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "surgeMultiplier": {
+                      "type": "number",
+                      "example": 1
+                    },
+                    "recommendedFeeStroops": {
+                      "type": "number",
+                      "example": 200
+                    },
+                    "p10FeeStroops": {
+                      "type": "number"
+                    },
+                    "p50FeeStroops": {
+                      "type": "number"
+                    },
+                    "p95FeeStroops": {
+                      "type": "number"
+                    },
+                    "ledgerCapacityUsage": {
+                      "type": "number",
+                      "example": 0.45
+                    },
+                    "fetchedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Failed to reach Horizon"
+          }
+        }
+      }
+    },
+    "/fees/estimate": {
+      "get": {
+        "summary": "Estimate transaction fee",
+        "description": "Returns an estimated fee for a transaction with the given number of operations.",
+        "tags": [
+          "Fees"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "operations",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            },
+            "description": "Number of operations in the transaction"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fee estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "estimatedFeeStroops": {
+                      "type": "number",
+                      "example": 200
+                    },
+                    "estimatedFeeXLM": {
+                      "type": "string",
+                      "example": "0.0000200"
+                    },
+                    "surgeActive": {
+                      "type": "boolean"
+                    },
+                    "surgeMultiplier": {
+                      "type": "number"
+                    },
+                    "operationCount": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Failed to reach Horizon"
+          }
+        }
+      }
+    },
+    "/fees/calculate": {
+      "get": {
+        "summary": "Calculate asset-specific fee",
+        "description": "Returns the calculated fee for a given asset and amount using the asset's configured fee strategy.",
+        "tags": [
+          "Fees"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Asset code (e.g. USDC, USD)"
+          },
+          {
+            "in": "query",
+            "name": "amount",
+            "required": true,
+            "schema": {
+              "type": "number"
+            },
+            "description": "Transaction amount"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calculated fee",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assetCode": {
+                      "type": "string",
+                      "example": "USDC"
+                    },
+                    "feeType": {
+                      "type": "string",
+                      "enum": [
+                        "flat",
+                        "percentage",
+                        "tiered"
+                      ],
+                      "example": "flat"
+                    },
+                    "inputAmount": {
+                      "type": "number",
+                      "example": 100
+                    },
+                    "feeAmount": {
+                      "type": "number",
+                      "example": 0.5
+                    },
+                    "feeFixed": {
+                      "type": "number"
+                    },
+                    "feePercent": {
+                      "type": "number"
+                    },
+                    "feeMinimum": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or unknown asset"
+          }
+        }
+      }
+    },
+    "/api/reports/daily": {
+      "get": {
+        "summary": "Generate daily fee report",
+        "description": "Generates a daily fee report for anchor operations",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Date for the report (YYYY-MM-DD). Defaults to today."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily fee report generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reportType": {
+                      "type": "string",
+                      "enum": [
+                        "DAILY"
+                      ]
+                    },
+                    "startDate": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "endDate": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "totalFees": {
+                      "type": "string"
+                    },
+                    "totalFeesXLM": {
+                      "type": "string"
+                    },
+                    "operationCounts": {
+                      "type": "object"
+                    },
+                    "feeBreakdown": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/reports/monthly": {
+      "get": {
+        "summary": "Generate monthly fee report",
+        "description": "Generates a monthly fee report for anchor operations",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Year for the report. Defaults to current year."
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            },
+            "description": "Month for the report (1-12). Defaults to current month."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Monthly fee report generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reportType": {
+                      "type": "string",
+                      "enum": [
+                        "MONTHLY"
+                      ]
+                    },
+                    "startDate": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "endDate": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "totalFees": {
+                      "type": "string"
+                    },
+                    "totalFeesXLM": {
+                      "type": "string"
+                    },
+                    "operationCounts": {
+                      "type": "object"
+                    },
+                    "feeBreakdown": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/reports/daily/export": {
+      "get": {
+        "summary": "Export daily fee report",
+        "description": "Exports a daily fee report as JSON or PDF file",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Date for the report (YYYY-MM-DD). Defaults to today."
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "JSON",
+                "PDF"
+              ],
+              "default": "JSON"
+            },
+            "description": "Export format"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Report file downloaded"
+          },
+          "400": {
+            "description": "Invalid format parameter"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/reports/monthly/export": {
+      "get": {
+        "summary": "Export monthly fee report",
+        "description": "Exports a monthly fee report as JSON or PDF file",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Year for the report. Defaults to current year."
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            },
+            "description": "Month for the report (1-12). Defaults to current month."
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "JSON",
+                "PDF"
+              ],
+              "default": "JSON"
+            },
+            "description": "Export format"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Report file downloaded"
+          },
+          "400": {
+            "description": "Invalid format parameter"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/reports/history": {
+      "get": {
+        "summary": "Get report history",
+        "description": "Retrieves historical fee reports",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DAILY",
+                "MONTHLY"
+              ]
+            },
+            "description": "Filter by report type"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            },
+            "description": "Maximum number of reports to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Report history retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "summary": "Retrieve indexed Soroban contract events",
+        "description": "Retrieve a history of indexed events from AnchorPoint contracts",
+        "tags": [
+          "Events"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "contractId",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by contract ID"
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by event type (e.g., contract)"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            },
+            "description": "Number of records to return"
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Number of records to skip"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContractEvent"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/events/health": {
+      "get": {
+        "summary": "Get event indexer health status",
+        "description": "Returns the current health of the event indexer, including last synced block and gap to ledger tip",
+        "tags": [
+          "Events"
+        ],
+        "responses": {
+          "200": {
+            "description": "Health status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "lastSyncedBlock": {
+                          "type": "number",
+                          "description": "The last block number synced to the database"
+                        },
+                        "ledgerTip": {
+                          "type": "number",
+                          "description": "The current ledger tip from the blockchain"
+                        },
+                        "gap": {
+                          "type": "number",
+                          "description": "The gap between local DB and ledger tip"
+                        },
+                        "isHealthy": {
+                          "type": "boolean",
+                          "description": "Whether the indexer is considered healthy (gap < 1000 blocks)"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "summary": "Get active configuration",
+        "description": "Retrieves the current active dynamic configuration for the backend. Requires an API key with appropriate permissions (usually admin tier, but for now uses general API Key auth).",
+        "tags": [
+          "Configuration"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active configuration retrieved"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "summary": "Update configuration",
+        "description": "Updates the dynamic configuration, bumping the version and broadcasting the change to other instances.",
+        "tags": [
+          "Configuration"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "The new configuration settings (must pass validation)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Configuration updated successfully"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/config/history": {
+      "get": {
+        "summary": "Get configuration history",
+        "description": "Retrieves past configuration versions (up to 20).",
+        "tags": [
+          "Configuration"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Configuration history retrieved"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/config/rollback/{version}": {
+      "post": {
+        "summary": "Rollback configuration",
+        "description": "Reverts the configuration to a specific previous version.",
+        "tags": [
+          "Configuration"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version",
+            "schema": {
+              "type": "integer"
+            },
+            "required": true,
+            "description": "The version number to rollback to"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rolled back successfully"
+          },
+          "400": {
+            "description": "Invalid version number"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Version not found"
+          }
+        }
+      }
+    },
+    "/auth": {
+      "post": {
+        "summary": "SEP-10 Challenge Endpoint",
+        "description": "Generates a SEP-10 challenge transaction for client authentication with multi-key support",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "account"
+                ],
+                "properties": {
+                  "account": {
+                    "type": "string",
+                    "description": "Stellar account public key",
+                    "example": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                  },
+                  "multiKey": {
+                    "type": "boolean",
+                    "description": "Enable multi-key authentication",
+                    "default": false
+                  },
+                  "signers": {
+                    "type": "array",
+                    "description": "List of signers for multi-key authentication",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "publicKey": {
+                          "type": "string",
+                          "description": "Signer public key"
+                        },
+                        "weight": {
+                          "type": "number",
+                          "description": "Signer weight"
+                        },
+                        "signed": {
+                          "type": "boolean",
+                          "description": "Whether signer has signed"
+                        }
+                      }
+                    }
+                  },
+                  "threshold": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ],
+                    "description": "Authentication threshold level",
+                    "default": "medium"
+                  },
+                  "home_domain": {
+                    "type": "string",
+                    "description": "Home domain for the challenge"
+                  },
+                  "client_domain": {
+                    "type": "string",
+                    "description": "Client domain"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Challenge transaction generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "transaction": {
+                      "type": "string",
+                      "description": "Base64 encoded challenge transaction"
+                    },
+                    "network_passphrase": {
+                      "type": "string",
+                      "description": "Stellar network passphrase"
+                    },
+                    "multiKeyChallenge": {
+                      "type": "object",
+                      "description": "Multi-key challenge requirements",
+                      "properties": {
+                        "requiredSigners": {
+                          "type": "number",
+                          "description": "Number of signers required"
+                        },
+                        "threshold": {
+                          "type": "string",
+                          "description": "Authentication threshold"
+                        },
+                        "signers": {
+                          "type": "array",
+                          "description": "Signer information"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/token": {
+      "post": {
+        "summary": "SEP-10 Token Endpoint",
+        "description": "Validates a signed challenge transaction and returns a JWT token with multi-key support",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "transaction"
+                ],
+                "properties": {
+                  "transaction": {
+                    "type": "string",
+                    "description": "Signed SEP-10 challenge transaction XDR"
+                  },
+                  "signatures": {
+                    "type": "array",
+                    "description": "Multi-key signatures for authentication",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "publicKey": {
+                          "type": "string",
+                          "description": "Signer public key"
+                        },
+                        "signature": {
+                          "type": "string",
+                          "description": "Signature data"
+                        },
+                        "weight": {
+                          "type": "number",
+                          "description": "Signer weight"
+                        }
+                      }
+                    }
+                  },
+                  "threshold": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ],
+                    "description": "Authentication threshold level",
+                    "default": "medium"
+                  },
+                  "client_signature": {
+                    "type": "string",
+                    "description": "Client signature (for single-key auth)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authentication successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string",
+                      "description": "JWT authentication token"
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "Token type",
+                      "enum": [
+                        "bearer"
+                      ]
+                    },
+                    "expires_in": {
+                      "type": "number",
+                      "description": "Token expiration time in seconds"
+                    },
+                    "authLevel": {
+                      "type": "string",
+                      "description": "Authentication level achieved",
+                      "enum": [
+                        "partial",
+                        "medium",
+                        "full"
+                      ]
+                    },
+                    "signers": {
+                      "type": "array",
+                      "description": "List of signer public keys",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired challenge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "summary": "SEP-10 Token Refresh Endpoint",
+        "description": "Refreshes an existing valid JWT token",
+        "tags": [
+          "Auth"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token successfully refreshed"
+          },
+          "401": {
+            "description": "Invalid or missing token"
+          }
+        }
+      }
+    },
+    "/admin/network": {
+      "get": {
+        "summary": "Get current Stellar network",
+        "tags": [
+          "Admin"
+        ],
+        "responses": {
+          "200": {
+            "description": "Current network type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "network": {
+                      "type": "string",
+                      "example": "TESTNET"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Switch Stellar network",
+        "tags": [
+          "Admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "network"
+                ],
+                "properties": {
+                  "network": {
+                    "type": "string",
+                    "enum": [
+                      "PUBLIC",
+                      "TESTNET",
+                      "FUTURENET"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Network switched successfully"
+          },
+          "400": {
+            "description": "Invalid network type"
+          }
+        }
+      }
+    },
+    "/api/admin/transactions/{id}": {
+      "patch": {
+        "summary": "Update transaction status",
+        "tags": [
+          "Admin"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending_sender",
+                      "pending_stellar",
+                      "pending_info_update",
+                      "pending_receiver",
+                      "pending_external",
+                      "completed",
+                      "error",
+                      "refunded"
+                    ]
+                  },
+                  "stellar_transaction_id": {
+                    "type": "string"
+                  },
+                  "external_transaction_id": {
+                    "type": "string"
+                  },
+                  "amount_out": {
+                    "type": "string"
+                  },
+                  "amount_fee": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transaction status updated successfully"
+          }
+        }
+      }
+    },
+    "/admin/password-reset/request": {
+      "post": {
+        "summary": "Request admin password reset",
+        "tags": [
+          "Admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reset request accepted"
+          },
+          "400": {
+            "description": "Invalid payload"
+          }
+        }
+      }
+    },
+    "/admin/password-reset/confirm": {
+      "post": {
+        "summary": "Confirm admin password reset",
+        "tags": [
+          "Admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "newPassword"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "minLength": 12
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password updated"
+          },
+          "400": {
+            "description": "Invalid token or payload"
+          }
+        }
+      }
+    },
+    "/admin/transactions": {
+      "get": {
+        "summary": "Get all transactions with pagination (Admin only)",
+        "tags": [
+          "Admin"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            },
+            "description": "Items per page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A paginated list of transactions"
+          },
+          "400": {
+            "description": "Invalid query parameters"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root endpoint",
+        "description": "Welcome message for the AnchorPoint API",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Welcome message",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "AnchorPoint Backend API is running."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Check if the API server is running",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "UP"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api-docs": {
+      "get": {
+        "summary": "API Documentation",
+        "description": "Interactive Swagger UI documentation for the AnchorPoint API",
+        "tags": [
+          "Documentation"
+        ],
+        "responses": {
+          "200": {
+            "description": "Swagger UI HTML page"
+          }
+        }
+      }
+    }
+  }
+}

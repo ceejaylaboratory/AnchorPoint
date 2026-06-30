@@ -27,6 +27,7 @@ pub enum DataKey {
     Name,
     Symbol,
     Decimals,
+    Token,
     /// Tracks if an address is authorized to interact with AMM
     AMMAuthorized(Address),
     /// Tracks if an address is authorized to interact with Lending
@@ -47,7 +48,7 @@ impl XLMWrapper {
     /// * `admin` - Administrator address with special privileges
     /// * `name` - Token name (e.g., "Wrapped XLM")
     /// * `symbol` - Token symbol (e.g., "wXLM")
-    pub fn initialize(env: Env, admin: Address, name: String, symbol: String) {
+    pub fn initialize(env: Env, admin: Address, token: Address, name: String, symbol: String) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
@@ -57,6 +58,7 @@ impl XLMWrapper {
         env.storage().instance().set(&DataKey::Name, &name);
         env.storage().instance().set(&DataKey::Symbol, &symbol);
         env.storage().instance().set(&DataKey::Decimals, &7u32); // XLM uses 7 decimals
+        env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Paused, &false);
         
         // Authorize the contract itself for AMM/Lending interactions
@@ -81,7 +83,8 @@ impl XLMWrapper {
         
         // Receive native XLM from user
         let contract_addr = env.current_contract_address();
-        token::StellarAssetClient::new(&env, &contract_addr)
+        let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        token::Client::new(&env, &token_address)
             .transfer(&from, &contract_addr, &amount);
         
         // Mint wXLM to user (1:1 ratio)
@@ -130,7 +133,8 @@ impl XLMWrapper {
         
         // Send native XLM back to user
         let contract_addr = env.current_contract_address();
-        token::StellarAssetClient::new(&env, &contract_addr)
+        let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        token::Client::new(&env, &token_address)
             .transfer(&contract_addr, &from, &amount);
         
         env.events()
@@ -294,7 +298,7 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().set(&DataKey::AMMAuthorized(amm_address), &true);
+        env.storage().instance().set(&DataKey::AMMAuthorized(amm_address.clone()), &true);
         env.events()
             .publish((symbol_short!("amm_auth"), amm_address), true);
     }
@@ -305,9 +309,9 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().remove(&DataKey::AMMAuthorized(amm_address));
+        env.storage().instance().remove(&DataKey::AMMAuthorized(amm_address.clone()));
         env.events()
-            .publish((symbol_short!("amm_revoke"), amm_address), true);
+            .publish((soroban_sdk::Symbol::new(&env, "amm_revoke"), amm_address), true);
     }
 
     /// Check if an address is authorized for AMM interactions
@@ -329,7 +333,7 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().set(&DataKey::LendingAuthorized(lending_address), &true);
+        env.storage().instance().set(&DataKey::LendingAuthorized(lending_address.clone()), &true);
         env.events()
             .publish((symbol_short!("lend_auth"), lending_address), true);
     }
@@ -340,9 +344,9 @@ impl XLMWrapper {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
-        env.storage().instance().remove(&DataKey::LendingAuthorized(lending_address));
+        env.storage().instance().remove(&DataKey::LendingAuthorized(lending_address.clone()));
         env.events()
-            .publish((symbol_short!("lend_revoke"), lending_address), true);
+            .publish((soroban_sdk::Symbol::new(&env, "lend_revoke"), lending_address.clone()), true);
     }
 
     /// Check if an address is authorized for Lending interactions
@@ -436,8 +440,10 @@ mod tests {
         let contract_id = env.register_contract(None, XLMWrapper);
         let client = XLMWrapperClient::new(&env, &contract_id);
         
+        let token = Address::generate(&env);
         client.initialize(
             &admin,
+            &token,
             &String::from_str(&env, "Wrapped XLM"),
             &String::from_str(&env, "wXLM"),
         );
@@ -639,8 +645,10 @@ mod invariants {
         let admin = Address::generate(&env);
         let contract_id = env.register_contract(None, XLMWrapper);
         let client = XLMWrapperClient::new(&env, &contract_id);
+        let token = Address::generate(&env);
         client.initialize(
             &admin,
+            &token,
             &String::from_str(&env, "Wrapped XLM"),
             &String::from_str(&env, "wXLM"),
         );
@@ -1045,7 +1053,7 @@ mod invariants {
         verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
 
         client.withdraw(&alice, &100);
-        verify_supply_conservation(&env, &client, &[alice, bob, carol]);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
 
         // Verify final invariants
         let total_balance = client.balance_of(&alice) + client.balance_of(&bob) + client.balance_of(&carol);
@@ -1108,7 +1116,7 @@ mod invariants {
 
         // Transfer B -> A (reverse)
         client.transfer(&bob, &alice, &300);
-        verify_supply_conservation(&env, &client, &[alice, bob]);
+        verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
 
         // After round-trip, balances should be back to original
         assert_eq!(
@@ -1127,7 +1135,7 @@ mod invariants {
     #[test]
     fn property_multi_user_supply_conservation() {
         let (env, client, _) = setup_fresh();
-        let users: Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
+        let users: std::vec::Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
 
         // Random-like deposits
         let mut total_deposited = 0_i128;

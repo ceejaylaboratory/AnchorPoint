@@ -36,26 +36,33 @@ impl RandomGen {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::MinCommits, &min_commits);
         env.storage().instance().set(&DataKey::Phase, &Phase::Commit);
-        
+
         let committers: Vec<Address> = Vec::new(&env);
         env.storage().instance().set(&DataKey::Committers, &committers);
     }
 
     /// Phase 1: Users commit a hash of their secret.
+    ///
+    /// Commit hashes are stored in **temporary** storage because they are only
+    /// needed during the current randomness-generation round. Using temporary
+    /// storage avoids paying persistent-entry rent fees for data that becomes
+    /// irrelevant once the round is finished, reducing the contract's overall
+    /// storage footprint.
     pub fn commit(env: Env, user: Address, hash: BytesN<32>) {
         user.require_auth();
-        
+
         let phase: Phase = env.storage().instance().get(&DataKey::Phase).unwrap_or(Phase::Commit);
         if phase != Phase::Commit {
             panic!("not in commit phase");
         }
 
         let commit_key = DataKey::Commit(user.clone());
-        if env.storage().persistent().has(&commit_key) {
+        if env.storage().temporary().has(&commit_key) {
             panic!("already committed");
         }
 
-        env.storage().persistent().set(&commit_key, &hash);
+        // Store commit hash in temporary storage — valid only for this round.
+        env.storage().temporary().set(&commit_key, &hash);
 
         let mut committers: Vec<Address> = env.storage().instance().get(&DataKey::Committers).unwrap();
         committers.push_back(user.clone());
@@ -74,6 +81,11 @@ impl RandomGen {
     }
 
     /// Phase 2: Users reveal their secrets.
+    ///
+    /// Revealed secrets are stored in **temporary** storage for the same reason
+    /// as commit hashes: they are only consumed during `finalize` and carry no
+    /// long-term value. Temporary storage eliminates the persistent rent cost
+    /// for these transient entries.
     pub fn reveal(env: Env, user: Address, secret: BytesN<32>) {
         user.require_auth();
 
@@ -83,7 +95,8 @@ impl RandomGen {
         }
 
         let commit_key = DataKey::Commit(user.clone());
-        let hash: BytesN<32> = env.storage().persistent().get(&commit_key).expect("no commitment found");
+        // Read commit hash from temporary storage.
+        let hash: BytesN<32> = env.storage().temporary().get(&commit_key).expect("no commitment found");
 
         // Verify the secret
         let actual_hash: BytesN<32> = env.crypto().sha256(&secret.clone().into()).into();
@@ -92,11 +105,12 @@ impl RandomGen {
         }
 
         let reveal_key = DataKey::Reveal(user.clone());
-        if env.storage().persistent().has(&reveal_key) {
+        if env.storage().temporary().has(&reveal_key) {
             panic!("already revealed");
         }
 
-        env.storage().persistent().set(&reveal_key, &secret);
+        // Store revealed secret in temporary storage.
+        env.storage().temporary().set(&reveal_key, &secret);
 
         // Emit event
         env.events().publish(
@@ -119,7 +133,8 @@ impl RandomGen {
 
         for user in committers.iter() {
             let reveal_key = DataKey::Reveal(user.clone());
-            if let Some(secret) = env.storage().persistent().get::<_, BytesN<32>>(&reveal_key) {
+            // Read revealed secrets from temporary storage.
+            if let Some(secret) = env.storage().temporary().get::<_, BytesN<32>>(&reveal_key) {
                 let secret_bytes = secret.to_array();
                 for i in 0..32 {
                     seed[i] ^= secret_bytes[i];
@@ -179,7 +194,7 @@ mod tests {
 
         let alice_secret = BytesN::from_array(&env, &[1u8; 32]);
         let alice_hash: BytesN<32> = env.crypto().sha256(&alice_secret.clone().into()).into();
-        
+
         let bob_secret = BytesN::from_array(&env, &[2u8; 32]);
         let bob_hash: BytesN<32> = env.crypto().sha256(&bob_secret.clone().into()).into();
 

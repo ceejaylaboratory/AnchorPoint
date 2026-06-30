@@ -131,7 +131,7 @@ describe('MultisigService', () => {
     it('should add signature successfully', async () => {
       const mockTx = {
         id: 'tx-123',
-        hash: 'abc123',
+        hash: Buffer.from('abc123', 'utf8').toString('hex'),
         envelopeXdr: 'AAAAAA==',
         requiredSigners: [mockPublicKey1, mockPublicKey2],
         threshold: 2,
@@ -143,7 +143,12 @@ describe('MultisigService', () => {
 
       const mockTransaction = {
         hash: () => Buffer.from('abc123', 'utf8'),
-        signatures: [],
+        signatures: [
+          {
+            hint: () => Buffer.from('1234', 'hex'),
+            signature: () => Buffer.from('signed-bytes'),
+          },
+        ],
       };
 
       (prisma.multisigTransaction.findUnique as jest.Mock).mockResolvedValue(mockTx);
@@ -152,6 +157,8 @@ describe('MultisigService', () => {
         id: 'sig-123',
         signerPublicKey: mockPublicKey1,
       });
+      (multisigService as any).extractSignature = jest.fn().mockReturnValue('signature-base64');
+      (multisigService as any).mergeSignatures = jest.fn().mockResolvedValue('merged-envelope');
 
       const updatedTx = {
         ...mockTx,
@@ -175,7 +182,7 @@ describe('MultisigService', () => {
     it('should reject signature from non-required signer', async () => {
       const mockTx = {
         id: 'tx-123',
-        hash: 'abc123',
+        hash: Buffer.from('abc123', 'utf8').toString('hex'),
         requiredSigners: [mockPublicKey1, mockPublicKey2],
         threshold: 2,
         status: MultisigStatus.PENDING,
@@ -197,7 +204,7 @@ describe('MultisigService', () => {
     it('should reject duplicate signature', async () => {
       const mockTx = {
         id: 'tx-123',
-        hash: 'abc123',
+        hash: Buffer.from('abc123', 'utf8').toString('hex'),
         requiredSigners: [mockPublicKey1, mockPublicKey2],
         threshold: 2,
         status: MultisigStatus.PARTIALLY_SIGNED,
@@ -222,7 +229,7 @@ describe('MultisigService', () => {
 
       const mockTx = {
         id: 'tx-123',
-        hash: 'abc123',
+        hash: Buffer.from('abc123', 'utf8').toString('hex'),
         requiredSigners: [mockPublicKey1, mockPublicKey2],
         threshold: 2,
         status: MultisigStatus.PENDING,
@@ -250,7 +257,7 @@ describe('MultisigService', () => {
     it('should retrieve transaction by ID', async () => {
       const mockTx = {
         id: 'tx-123',
-        hash: 'abc123',
+        hash: Buffer.from('abc123', 'utf8').toString('hex'),
         envelopeXdr: 'AAAAAA==',
         creatorPublicKey: mockPublicKey1,
         requiredSigners: [mockPublicKey1, mockPublicKey2],

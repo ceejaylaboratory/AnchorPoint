@@ -12,6 +12,7 @@ jest.mock('./api/middleware/rate-limit.middleware', () => ({
   apiLimiter: (req: any, res: any, next: any) => next(),
   authLimiter: (req: any, res: any, next: any) => next(),
   sensitiveApiLimiter: (req: any, res: any, next: any) => next(),
+  publicLimiter: (req: any, res: any, next: any) => next(),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires

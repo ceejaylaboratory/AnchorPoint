@@ -11,7 +11,11 @@ jest.mock('../../lib/prisma', () => ({
     findMany: jest.fn(),
     count: jest.fn(),
   },
+  user: {
+    findUnique: jest.fn().mockResolvedValue({ id: 'user_123', publicKey: 'GBXP...' }),
+  },
   $queryRaw: jest.fn(),
+  $queryRawUnsafe: jest.fn(),
 }));
 
 // Mock Rate Limiting
@@ -92,7 +96,7 @@ describe('Transactions Router', () => {
 
   it('should search transactions by indexed sender value', async () => {
     const eventRows = [{ txHash: 'tx123' }];
-    (prisma.$queryRaw as jest.Mock).mockResolvedValue(eventRows);
+    (prisma.$queryRawUnsafe as jest.Mock).mockResolvedValue(eventRows);
     (prisma.transaction.findMany as jest.Mock).mockResolvedValue([{ id: '1', stellarTxId: 'tx123', amount: '100' }]);
     (prisma.transaction.count as jest.Mock).mockResolvedValue(1);
 
@@ -102,7 +106,7 @@ describe('Transactions Router', () => {
       .query({ sender: 'GABC', page: '1', limit: '10' });
 
     expect(res.statusCode).toEqual(200);
-    expect(prisma.$queryRaw).toHaveBeenCalled();
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalled();
     expect(prisma.transaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         stellarTxId: { in: ['tx123'] },
