@@ -1215,7 +1215,6 @@ mod invariants {
             users.push(user);
             verify_supply_conservation(&env, &client, &users);
         }
-        let total_deposited = 1000;
         assert_eq!(client.total_supply(), total_deposited, "PROPERTY VIOLATION: Total supply doesn't match total deposited");
         for i in 0..5 {
             let from = &users[i];
