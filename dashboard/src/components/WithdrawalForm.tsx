@@ -2,6 +2,7 @@ import { useState, useId } from 'react';
 import type { FormEvent } from 'react';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import type { FieldRequirement } from '../types';
+import { validateField, validateAll } from '../lib/validation';
 
 interface FormValues {
   [key: string]: string;
@@ -18,58 +19,10 @@ interface WithdrawalFormProps {
   onSubmit: (values: FormValues) => void;
 }
 
-const AMOUNT_PATTERN = /^\d+(\.\d{1,2})?$/;
-const BANK_ACCOUNT_PATTERN = /^\d{6,20}$/;
-const WALLET_PATTERN = /^G[A-Z0-9]{55}$/;
-
 const getFieldType = (key: string): React.HTMLInputTypeAttribute => {
   if (key.toLowerCase().includes('amount')) return 'number';
   if (key.toLowerCase().includes('email')) return 'email';
   return 'text';
-};
-
-const validateField = (field: FieldRequirement, value: string): string => {
-  const trimmed = value.trim();
-
-  if (field.required && !trimmed) {
-    return `${field.label} is required.`;
-  }
-
-  if (!trimmed) return '';
-
-  const key = field.key.toLowerCase();
-
-  if (key.includes('amount')) {
-    if (!AMOUNT_PATTERN.test(trimmed)) {
-      return 'Enter a valid amount (e.g. 120.50).';
-    }
-    const num = parseFloat(trimmed);
-    if (num <= 0) return 'Amount must be greater than zero.';
-    if (num > 1_000_000) return 'Amount exceeds the maximum single-transaction limit.';
-  }
-
-  if (key.includes('bankaccount') || key.includes('bank_account') || key.includes('account')) {
-    if (!BANK_ACCOUNT_PATTERN.test(trimmed)) {
-      return 'Bank account must be 6–20 digits.';
-    }
-  }
-
-  if (key.includes('wallet') || key.includes('address')) {
-    if (!WALLET_PATTERN.test(trimmed)) {
-      return 'Enter a valid Stellar wallet address starting with G.';
-    }
-  }
-
-  return '';
-};
-
-const validateAll = (fields: FieldRequirement[], values: FormValues): FieldError => {
-  const errors: FieldError = {};
-  for (const field of fields) {
-    const err = validateField(field, values[field.key] ?? '');
-    if (err) errors[field.key] = err;
-  }
-  return errors;
 };
 
 export const WithdrawalForm = ({ fields, onSubmit }: WithdrawalFormProps) => {

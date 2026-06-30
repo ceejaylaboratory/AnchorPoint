@@ -43,7 +43,9 @@ const defaultUiConfig: UiConfig = {
       { key: 'amount', label: 'Amount', required: true, placeholder: '500.00' },
     ],
     withdraw: [
+      { key: 'iban', label: 'IBAN', required: true, placeholder: 'DE89370400440532013000' },
       { key: 'bankAccount', label: 'Bank Account', required: true, placeholder: 'Account number' },
+      { key: 'beneficiaryAddress', label: 'Beneficiary Address', required: true, placeholder: 'Street, city, postal code' },
       { key: 'amount', label: 'Amount', required: true, placeholder: '120.50' },
     ],
     kyc: [
