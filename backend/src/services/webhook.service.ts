@@ -20,7 +20,19 @@ export interface TransactionWebhookRecord {
   } | null;
 }
 
-// ... (rest of types)
+export interface KycWebhookRecord {
+  id: string;
+  userId: string;
+  provider?: string | null;
+  providerRef?: string | null;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+  user?: {
+    publicKey: string;
+  } | null;
+}
+
 export interface TransactionStatusChangedPayload {
   event: 'transaction.status_changed';
   occurredAt: string;
@@ -39,6 +51,24 @@ export interface TransactionStatusChangedPayload {
     updatedAt: string;
   };
 }
+
+export interface KycStatusChangedPayload {
+  event: 'kyc.status_changed';
+  occurredAt: string;
+  previousStatus: string;
+  customer: {
+    id: string;
+    userId: string;
+    account?: string;
+    provider?: string;
+    providerRef?: string;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+}
+
+type WebhookPayload = TransactionStatusChangedPayload | KycStatusChangedPayload;
 
 export interface WebhookConfig {
   url?: string;
@@ -148,6 +178,25 @@ export const buildTransactionStatusChangedPayload = (
   },
 });
 
+export const buildKycStatusChangedPayload = (
+  customer: KycWebhookRecord,
+  previousStatus: string
+): KycStatusChangedPayload => ({
+  event: 'kyc.status_changed',
+  occurredAt: new Date().toISOString(),
+  previousStatus,
+  customer: {
+    id: customer.id,
+    userId: customer.userId,
+    ...(customer.user?.publicKey ? { account: customer.user.publicKey } : {}),
+    ...(customer.provider ? { provider: customer.provider } : {}),
+    ...(customer.providerRef ? { providerRef: customer.providerRef } : {}),
+    status: customer.status,
+    createdAt: customer.createdAt.toISOString(),
+    updatedAt: customer.updatedAt.toISOString(),
+  },
+});
+
 export const signWebhookPayload = (payload: string, secret: string, timestamp: string): string => {
   const digest = createHmac('sha256', secret)
     .update(`${timestamp}.${payload}`)
@@ -235,20 +284,47 @@ export class WebhookService {
     return this.deliver(payload, transaction.id);
   }
 
+  async sendKycStatusChanged(
+    customer: KycWebhookRecord,
+    previousStatus: string
+  ): Promise<WebhookDeliveryResult> {
+    if (customer.status === previousStatus) {
+      return {
+        delivered: false,
+        attempts: 0,
+        skipped: true,
+      };
+    }
+
+    if (!this.isEnabled()) {
+      this.log.info('Skipping KYC webhook delivery because webhook configuration is incomplete', {
+        customerId: customer.id,
+      });
+      return {
+        delivered: false,
+        attempts: 0,
+        skipped: true,
+      };
+    }
+
+    const payload = buildKycStatusChangedPayload(customer, previousStatus);
+    return this.deliver(payload, customer.id);
+  }
+
   private async deliver(
-    payload: TransactionStatusChangedPayload,
-    transactionId: string
+    payload: WebhookPayload,
+    entityId: string
   ): Promise<WebhookDeliveryResult> {
     const config = this.getConfig();
     
     return traceAsync(
       'webhook.deliver',
       async (span) => {
-        span.setAttribute('webhook.transaction_id', transactionId);
+        span.setAttribute('webhook.entity_id', entityId);
         span.setAttribute('webhook.event_type', payload.event);
         span.setAttribute('webhook.url', config.url || 'unknown');
 
-        return this.executeDeliveryLoop(payload, transactionId, config);
+        return this.executeDeliveryLoop(payload, entityId, config);
       },
       SpanKind.CLIENT,
       {
@@ -259,8 +335,8 @@ export class WebhookService {
   }
 
   private async executeDeliveryLoop(
-    payload: TransactionStatusChangedPayload,
-    transactionId: string,
+    payload: WebhookPayload,
+    entityId: string,
     config: WebhookConfig
   ): Promise<WebhookDeliveryResult> {
     const requestBody = JSON.stringify(payload);
@@ -270,7 +346,7 @@ export class WebhookService {
 
     for (let attempt = 1; attempt <= config.maxRetries + 1; attempt += 1) {
       const { result, error, statusCode, responseBody } = await this.performRequestAttempt(
-        payload, requestBody, config, attempt, transactionId
+        payload, requestBody, config, attempt, entityId
       );
 
       if (result) return result;
@@ -292,11 +368,11 @@ export class WebhookService {
   }
 
   private async performRequestAttempt(
-    payload: TransactionStatusChangedPayload,
+    payload: WebhookPayload,
     requestBody: string,
     config: WebhookConfig,
     attempt: number,
-    transactionId: string
+    entityId: string
   ): Promise<{ result?: WebhookDeliveryResult; error?: unknown; statusCode?: number; responseBody?: string }> {
     const timestamp = new Date().toISOString();
     const signature = signWebhookPayload(requestBody, config.secret!, timestamp);
@@ -322,12 +398,12 @@ export class WebhookService {
       const responseBody = await response.text();
 
       if (response.ok) {
-        this.log.info('Webhook delivered successfully', { transactionId, attempts: attempt, statusCode });
+        this.log.info('Webhook delivered successfully', { entityId, attempts: attempt, statusCode });
         return { result: { delivered: true, attempts: attempt, statusCode, responseBody } };
       }
 
       if (!RETRYABLE_STATUS_CODES.has(statusCode) || attempt > config.maxRetries) {
-        this.log.warn('Webhook delivery failed without further retries', { transactionId, attempts: attempt, statusCode });
+        this.log.warn('Webhook delivery failed without further retries', { entityId, attempts: attempt, statusCode });
         return { result: { delivered: false, attempts: attempt, statusCode, responseBody, error: `Webhook responded with status ${statusCode}` } };
       }
 
@@ -336,7 +412,7 @@ export class WebhookService {
       clearTimeout(timeout);
       
       if (attempt > config.maxRetries) {
-        this.log.error('Webhook delivery exhausted retries after request error', { transactionId, attempts: attempt, error: error instanceof Error ? error.message : String(error) });
+        this.log.error('Webhook delivery exhausted retries after request error', { entityId, attempts: attempt, error: error instanceof Error ? error.message : String(error) });
         return { result: { delivered: false, attempts: attempt, error: error instanceof Error ? error.message : 'Unknown webhook error' } };
       }
       
@@ -449,4 +525,3 @@ export const updateTransactionStatusAndNotify = async ({
 };
 
 export default defaultWebhookService;
-
