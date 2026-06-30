@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import { validateSep38QuotesCacheConfig } from './sep38-quotes-cache.config';
 
 dotenv.config();
 
@@ -96,11 +97,47 @@ const envSchema = z.object({
     .pipe(z.number().int().min(5).max(60)),
   ANCHOR_PUBLIC_KEY: z.string().optional(), // For SEP-10 challenges
   ANCHOR_SECRET_KEY: z.string().optional(), // For SEP-10 challenges
-  SEP12_MAX_FILE_SIZE_MB: z
+  SEP38_INDICATIVE_QUOTE_EXPIRATION_SECONDS: z
     .string()
-    .default('20')
+    .default('60')
     .transform((val: string) => parseInt(val, 10))
-    .pipe(z.number().int().positive()),
+    .pipe(z.number().int().min(15).max(300)),
+  SEP38_FIRM_QUOTE_VALIDITY_SECONDS: z
+    .string()
+    .default('300')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(60).max(3600)),
+  SEP38_QUOTE_CACHE_TTL_SECONDS: z
+    .string()
+    .default('30')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(5).max(300)),
+  SEP38_QUOTE_CACHE_STALE_TTL_SECONDS: z
+    .string()
+    .default('30')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(300)),
+  SEP38_ASSETS_CACHE_TTL_SECONDS: z
+    .string()
+    .default('3600')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(60).max(86400)),
+}).superRefine((data, ctx) => {
+  if (
+    !validateSep38QuotesCacheConfig({
+      indicativeQuoteExpirationSeconds: data.SEP38_INDICATIVE_QUOTE_EXPIRATION_SECONDS,
+      firmQuoteValiditySeconds: data.SEP38_FIRM_QUOTE_VALIDITY_SECONDS,
+      quoteCacheTtlSeconds: data.SEP38_QUOTE_CACHE_TTL_SECONDS,
+      quoteCacheStaleTtlSeconds: data.SEP38_QUOTE_CACHE_STALE_TTL_SECONDS,
+      assetsCacheTtlSeconds: data.SEP38_ASSETS_CACHE_TTL_SECONDS,
+    })
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Invalid SEP-38 quotes cache timeout settings',
+      path: ['SEP38_QUOTE_CACHE_TTL_SECONDS'],
+    });
+  }
 });
 
 const parsed = envSchema.safeParse({

@@ -1,6 +1,12 @@
 import { Redis } from 'ioredis';
-import { PriceAggregationService, AggregatedPrice, PriceFetchOptions } from '../../services/price-aggregation.service';
-import { AdvancedCacheService, CacheAsideResult } from '../../services/advanced-cache.service';
+import { PriceAggregationService, PriceFetchOptions } from '../../services/price-aggregation.service';
+import { AdvancedCacheService } from '../../services/advanced-cache.service';
+import {
+  buildQuoteExpirationTime,
+  getSep38QuotesCacheConfig,
+  isQuoteExpired,
+  Sep38QuotesCacheConfig,
+} from '../../config/sep38-quotes-cache.config';
 import logger from '../../utils/logger';
 import prisma from '../../lib/prisma';
 
@@ -96,11 +102,12 @@ export class Sep38Controller {
   private priceService: PriceAggregationService;
   private cache: AdvancedCacheService;
   private assetsCacheKey = 'sep38:supported_assets';
-  private quoteCacheTtlSeconds = 30;
+  private cacheConfig: Sep38QuotesCacheConfig;
 
-  constructor(redis: Redis) {
+  constructor(redis: Redis, cacheConfig: Sep38QuotesCacheConfig = getSep38QuotesCacheConfig()) {
     this.priceService = new PriceAggregationService(redis);
     this.cache = new AdvancedCacheService(redis);
+    this.cacheConfig = cacheConfig;
   }
 
   /**
@@ -140,7 +147,7 @@ export class Sep38Controller {
         destination_asset: destinationAsset,
         destination_amount: sourceAmount,
         price: 1.0,
-        expiration_time: Math.floor(Date.now() / 1000) + 60,
+        expiration_time: buildQuoteExpirationTime(this.cacheConfig.indicativeQuoteExpirationSeconds),
         confidence: 1.0,
         sources_used: 0,
         is_partial: false,
@@ -162,7 +169,12 @@ export class Sep38Controller {
     if (forceRefresh) {
       const quote = await fetchQuote();
       // Store in cache for future requests
-      await this.cache.setL2(cacheKey, quote, this.quoteCacheTtlSeconds, 'sep38-quote');
+      await this.cache.setL2(
+        cacheKey,
+        quote,
+        this.cacheConfig.quoteCacheTtlSeconds,
+        'sep38-quote',
+      );
       return { ...quote, cached: false };
     }
 
@@ -170,12 +182,23 @@ export class Sep38Controller {
       cacheKey,
       fetchQuote,
       {
-        ttlSeconds: this.quoteCacheTtlSeconds,
+        ttlSeconds: this.cacheConfig.quoteCacheTtlSeconds,
         tags: ['sep38', 'quote', `asset:${source}`, `asset:${dest}`],
         staleWhileRevalidate: true,
-        staleTtlSeconds: 120,
+        staleTtlSeconds: this.cacheConfig.quoteCacheStaleTtlSeconds,
       }
     );
+
+    if (cached.fromCache && isQuoteExpired(cached.data)) {
+      const quote = await fetchQuote();
+      await this.cache.setL2(
+        cacheKey,
+        quote,
+        this.cacheConfig.quoteCacheTtlSeconds,
+        'sep38-quote',
+      );
+      return { ...quote, cached: false };
+    }
 
     return { ...cached.data, cached: cached.fromCache };
   }
@@ -191,7 +214,9 @@ export class Sep38Controller {
   ): Promise<QuoteResponse> {
     const indicativeQuote = await this.getPriceQuote(sourceAsset, sourceAmount, destinationAsset, context);
     
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes validity
+    const expiresAt = new Date(
+      Date.now() + this.cacheConfig.firmQuoteValiditySeconds * 1000,
+    );
 
     const dbQuote = await prisma.quote.create({
       data: {
@@ -261,7 +286,7 @@ export class Sep38Controller {
         destination_asset: destAsset,
         destination_amount: parseFloat(destinationAmount.toFixed(7)),
         price: parseFloat(crossRate.toFixed(7)),
-        expiration_time: Math.floor(Date.now() / 1000) + 60,
+        expiration_time: buildQuoteExpirationTime(this.cacheConfig.indicativeQuoteExpirationSeconds),
         confidence: parseFloat(avgConfidence.toFixed(4)),
         sources_used: Math.min(sourcePriceData.aggregatedFrom, destPriceData.aggregatedFrom),
         is_partial: isPartial,
@@ -306,7 +331,7 @@ export class Sep38Controller {
       destination_asset: destAsset,
       destination_amount: parseFloat(destinationAmount.toFixed(7)),
       price: parseFloat(crossRate.toFixed(7)),
-      expiration_time: Math.floor(Date.now() / 1000) + 60,
+      expiration_time: buildQuoteExpirationTime(this.cacheConfig.indicativeQuoteExpirationSeconds),
       confidence: 0.5,
       sources_used: 0,
       is_partial: true,
@@ -336,7 +361,7 @@ export class Sep38Controller {
       this.assetsCacheKey,
       fetchAssets,
       {
-        ttlSeconds: 3600,
+        ttlSeconds: this.cacheConfig.assetsCacheTtlSeconds,
         tags: ['sep38', 'assets'],
       }
     );
