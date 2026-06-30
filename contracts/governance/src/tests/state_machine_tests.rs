@@ -3,7 +3,7 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Ledger, Env, Error};
+use soroban_sdk::{testutils::Ledger, testutils::Address as _, Env, Error};
 use crate::{
     GovernanceContract, GovernanceContractClient,
     Phase, GovernanceError,
@@ -150,4 +150,27 @@ fn quorum_boundary_exactly_at_threshold_passes_one_below_fails() {
     env.ledger().set_sequence_number(env.ledger().sequence() + 100);
     
     assert_phase(&env, prop_2, Phase::ExecutionPending);
+}
+
+#[test]
+fn test_admin_transfer_success() {
+    let (env, client, _) = setup_governance_env();
+    let current_admin = client.get_admin();
+    let new_admin = soroban_sdk::Address::generate(&env);
+
+    env.mock_all_auths();
+    client.transfer_admin(&current_admin, &new_admin);
+
+    assert_eq!(client.get_admin(), new_admin);
+}
+
+#[test]
+#[should_panic]
+fn test_admin_transfer_unauthorized() {
+    let (env, client, voters) = setup_governance_env();
+    let bad_actor = &voters[0];
+    let new_admin = soroban_sdk::Address::generate(&env);
+
+    env.mock_all_auths();
+    client.transfer_admin(bad_actor, &new_admin);
 }

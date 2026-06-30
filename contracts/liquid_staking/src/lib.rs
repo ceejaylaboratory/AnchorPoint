@@ -1,8 +1,28 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, IntoVal, Map, Symbol
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env, String, Vec, IntoVal, Map, Symbol
 };
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    AlreadyInitialized = 1,
+    AmountNotPositive = 2,
+    RptOverflow = 3,
+    ContractPaused = 4,
+    LockTimeOverflow = 5,
+    NotTokenOwner = 6,
+    StakeLocked = 7,
+    NoStakeFound = 8,
+    TotalStakedUnderflow = 9,
+    TotalStakedOverflow = 10,
+    RewardsOverflow = 11,
+    AdminNotFound = 12,
+    OnlyAdmin = 13,
+}
+
 
 const PRECISION: i128 = 1_000_000_000_000_000_000;
 
@@ -20,6 +40,8 @@ pub enum DataKey {
     NftRewards(u64),              // NFT ID -> Accrued rewards
     /// Branding / project metadata (description, icon_url, website)
     ContractMeta,
+    /// Emergency pause flag; when true, stake and unstake are blocked.
+    Paused,
 }
 
 /// On-chain branding metadata for the contract.
@@ -66,7 +88,7 @@ impl LiquidStaking {
         nft_contract: Address,
     ) {
         if env.storage().instance().has(&DataKey::Admin) {
-            panic!("already initialized");
+            panic_with_error!(env, Error::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -75,6 +97,8 @@ impl LiquidStaking {
         env.storage().instance().set(&DataKey::NftContract, &nft_contract);
         env.storage().instance().set(&DataKey::TotalStaked, &0_i128);
         env.storage().instance().set(&DataKey::RewardPerTokenStored, &0_i128);
+        // Initialise the emergency-pause flag to false (not paused).
+        env.storage().instance().set(&DataKey::Paused, &false);
 
         // Initialise branding metadata with empty strings.
         env.storage().instance().set(&DataKey::ContractMeta, &ContractMetadata {
@@ -86,7 +110,9 @@ impl LiquidStaking {
 
     pub fn deposit_rewards(env: Env, from: Address, amount: i128) {
         from.require_auth();
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(env, Error::AmountNotPositive);
+        }
 
         let total_staked: i128 = env
             .storage()
@@ -108,8 +134,8 @@ impl LiquidStaking {
                 .get(&DataKey::RewardPerTokenStored)
                 .unwrap_or(0);
             rpt = rpt.checked_add(
-                amount.checked_mul(PRECISION).expect("rpt overflow") / total_staked
-            ).expect("rpt overflow");
+                amount.checked_mul(PRECISION).unwrap_or_else(|| panic_with_error!(env, Error::RptOverflow)) / total_staked
+            ).unwrap_or_else(|| panic_with_error!(env, Error::RptOverflow));
             env.storage()
                 .instance()
                 .set(&DataKey::RewardPerTokenStored, &rpt);
@@ -121,7 +147,13 @@ impl LiquidStaking {
 
     pub fn stake(env: Env, user: Address, amount: i128, lock_duration: u64) -> u64 {
         user.require_auth();
-        assert!(amount > 0, "amount must be positive");
+        // Emergency pause check: block staking when the contract is paused.
+        if env.storage().instance().get::<DataKey, bool>(&DataKey::Paused).unwrap_or(false) {
+            panic_with_error!(env, Error::ContractPaused);
+        }
+        if amount <= 0 {
+            panic_with_error!(env, Error::AmountNotPositive);
+        }
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
         token::Client::new(&env, &stake_token).transfer(
@@ -151,7 +183,7 @@ impl LiquidStaking {
         );
 
         env.storage().persistent().set(&DataKey::StakeAmount(token_id), &amount);
-        let lock_time = env.ledger().timestamp().checked_add(lock_duration).expect("lock time overflow");
+        let lock_time = env.ledger().timestamp().checked_add(lock_duration).unwrap_or_else(|| panic_with_error!(env, Error::LockTimeOverflow));
         let lock_time = env.ledger().timestamp() + lock_duration;
         
         // Populate attributes
@@ -189,7 +221,7 @@ impl LiquidStaking {
         env.storage().persistent().set(&DataKey::NftRewards(token_id), &0_i128);
 
         let total: i128 = env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0);
-        env.storage().instance().set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
+        env.storage().instance().set(&DataKey::TotalStaked, &total.checked_add(amount).unwrap_or_else(|| panic_with_error!(env, Error::TotalStakedOverflow)));
 
         // Topic: event name only; user + token_id + amount + lock_time in data.
         env.events().publish((symbol_short!("staked"),), (user, token_id, amount, lock_time));
@@ -199,20 +231,30 @@ impl LiquidStaking {
 
     pub fn unstake(env: Env, user: Address, token_id: u64) {
         user.require_auth();
-        
+        // Emergency pause check: block unstaking when the contract is paused.
+        if env.storage().instance().get::<DataKey, bool>(&DataKey::Paused).unwrap_or(false) {
+            panic_with_error!(env, Error::ContractPaused);
+        }
+
         let nft_contract: Address = env.storage().instance().get(&DataKey::NftContract).unwrap();
         let owner: Address = env.invoke_contract(
             &nft_contract,
             &symbol_short!("owner_of"),
             (token_id,).into_val(&env),
         );
-        assert_eq!(user, owner, "not token owner");
+        if user != owner {
+            panic_with_error!(env, Error::NotTokenOwner);
+        }
 
         let lock_time: u64 = env.storage().persistent().get(&DataKey::StakeLockTime(token_id)).unwrap_or(0);
-        assert!(env.ledger().timestamp() >= lock_time, "stake is locked");
+        if env.ledger().timestamp() < lock_time {
+            panic_with_error!(env, Error::StakeLocked);
+        }
 
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
-        assert!(amount > 0, "no stake found for token");
+        if amount <= 0 {
+            panic_with_error!(env, Error::NoStakeFound);
+        }
 
         Self::_update_reward(&env, token_id);
 
@@ -227,7 +269,7 @@ impl LiquidStaking {
         }
 
         let total: i128 = env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0);
-        env.storage().instance().set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
+        env.storage().instance().set(&DataKey::TotalStaked, &total.checked_sub(amount).unwrap_or_else(|| panic_with_error!(env, Error::TotalStakedUnderflow)));
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
         token::Client::new(&env, &stake_token).transfer(
@@ -261,7 +303,9 @@ impl LiquidStaking {
             &symbol_short!("owner_of"),
             (token_id,).into_val(&env),
         );
-        assert_eq!(user, owner, "not token owner");
+        if user != owner {
+            panic_with_error!(env, Error::NotTokenOwner);
+        }
 
         Self::_update_reward(&env, token_id);
 
@@ -297,8 +341,8 @@ impl LiquidStaking {
         let accrued: i128 = env.storage().persistent().get(&DataKey::NftRewards(token_id)).unwrap_or(0);
         
         let pending = accrued.checked_add(
-            amount.checked_mul(rpt - nft_rpt).expect("rewards overflow") / PRECISION
-        ).expect("rewards overflow");
+            amount.checked_mul(rpt - nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION
+        ).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow));
         let lock_time: u64 = env.storage().persistent().get(&DataKey::StakeLockTime(token_id)).unwrap_or(0);
 
         StakeInfo {
@@ -307,6 +351,48 @@ impl LiquidStaking {
             lock_time,
             pending_rewards: pending,
         }
+    }
+
+    // ── Emergency Pause ───────────────────────────────────────────────────────
+
+    /// Pause the contract, blocking stake and unstake (admin only).
+    pub fn pause(env: Env, caller: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, Error::AdminNotFound));
+        if caller != admin {
+            panic_with_error!(env, Error::OnlyAdmin);
+        }
+
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), caller);
+    }
+
+    /// Unpause the contract, re-enabling stake and unstake (admin only).
+    pub fn unpause(env: Env, caller: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, Error::AdminNotFound));
+        if caller != admin {
+            panic_with_error!(env, Error::OnlyAdmin);
+        }
+
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), caller);
+    }
+
+    /// Returns true if the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     // ── Contract Metadata ─────────────────────────────────────────────────────
@@ -334,8 +420,10 @@ impl LiquidStaking {
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .expect("admin not found");
-        assert!(caller == admin, "only admin can update contract metadata");
+            .unwrap_or_else(|| panic_with_error!(env, Error::AdminNotFound));
+        if caller != admin {
+            panic_with_error!(env, Error::OnlyAdmin);
+        }
 
         let meta = ContractMetadata { description, icon_url, website };
         env.storage().instance().set(&DataKey::ContractMeta, &meta);
@@ -348,18 +436,18 @@ impl LiquidStaking {
         env.storage()
             .instance()
             .get(&DataKey::ContractMeta)
-            .expect("contract metadata not initialised")
+            .unwrap_or_else(|| panic_with_error!(env, Error::AlreadyInitialized))
     }
 
     fn _update_reward(env: &Env, token_id: u64) {
         let rpt: i128 = env.storage().instance().get(&DataKey::RewardPerTokenStored).unwrap_or(0);
         let nft_rpt: i128 = env.storage().persistent().get(&DataKey::NftRewardPerTokenPaid(token_id)).unwrap_or(0);
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
-        let earned = amount.checked_mul(rpt - nft_rpt).expect("rewards overflow") / PRECISION;
+        let earned = amount.checked_mul(rpt - nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION;
 
         if earned > 0 {
             let prev: i128 = env.storage().persistent().get(&DataKey::NftRewards(token_id)).unwrap_or(0);
-            env.storage().persistent().set(&DataKey::NftRewards(token_id), &prev.checked_add(earned).expect("rewards overflow"));
+            env.storage().persistent().set(&DataKey::NftRewards(token_id), &prev.checked_add(earned).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)));
         }
 
         env.storage().persistent().set(&DataKey::NftRewardPerTokenPaid(token_id), &rpt);
@@ -529,7 +617,7 @@ mod tests {
     }
     
     #[test]
-    #[should_panic(expected = "stake is locked")]
+    #[should_panic(expected = "HostError: Error(Contract, 7)")]
     fn test_unstake_locked() {
         let (env, ls_id, _, _, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
@@ -566,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "only admin can update contract metadata")]
+    #[should_panic(expected = "HostError: Error(Contract, 13)")]
     fn test_update_contract_meta_non_admin() {
         let (env, ls_id, _, _, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
@@ -579,7 +667,75 @@ mod tests {
             &String::from_str(&env, ""),
         );
     }
+
+    #[test]
+    fn test_pause_blocks_stake() {
+        let (env, ls_id, _, admin, _alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Initially not paused.
+        assert!(!client.is_paused());
+
+        // Admin pauses the contract; state must reflect this.
+        client.pause(&admin);
+        assert!(client.is_paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "HostError: Error(Contract, 4)")]
+    fn test_stake_blocked_when_paused() {
+        let (env, ls_id, _, admin, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        client.pause(&admin);
+        // Should panic because the contract is paused.
+        client.stake(&alice, &500_000, &3600);
+    }
+
+    #[test]
+    #[should_panic(expected = "HostError: Error(Contract, 4)")]
+    fn test_unstake_blocked_when_paused() {
+        let (env, ls_id, _, admin, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Stake while unpaused so we have a valid token.
+        let token_id = client.stake(&alice, &500_000, &0);
+
+        // Pause, then attempt to unstake.
+        client.pause(&admin);
+        // Should panic because the contract is paused.
+        client.unstake(&alice, &token_id);
+    }
+
+    #[test]
+    fn test_unpause_re_enables_stake() {
+        let (env, ls_id, _, admin, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        client.pause(&admin);
+        assert!(client.is_paused());
+
+        client.unpause(&admin);
+        assert!(!client.is_paused());
+
+        // Stake should succeed again after unpause.
+        let token_id = client.stake(&alice, &500_000, &3600);
+        assert!(token_id > 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "HostError: Error(Contract, 13)")]
+    fn test_non_admin_cannot_pause() {
+        let (env, ls_id, _, _, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Non-admin calling pause should be rejected.
+        client.pause(&alice);
+    }
+
+    #[test]
     fn test_nft_attributes() {
+
         let (env, ls_id, nft_id, admin, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
         let nft_client = nft_metadata::NftMetadataContractClient::new(&env, &nft_id);

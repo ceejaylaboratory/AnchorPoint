@@ -64,11 +64,16 @@ jest.mock('../../utils/logger', () => ({
   },
 }));
 
-jest.mock('@stellar/stellar-sdk', () => ({
-  StrKey: {
-    isValidEd25519PublicKey: jest.fn((account: string) => account === VALID_ACCOUNT),
-  },
-}));
+jest.mock('@stellar/stellar-sdk', () => {
+  const actual = jest.requireActual('@stellar/stellar-sdk');
+  return {
+    ...actual,
+    StrKey: {
+      ...actual.StrKey,
+      isValidEd25519PublicKey: jest.fn((account: string) => account === VALID_ACCOUNT),
+    },
+  };
+});
 
 import { sep12Controller } from './sep12.controller';
 
@@ -314,5 +319,117 @@ describe('Sep12Controller', () => {
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(prismaMock.kycCustomer.update).not.toHaveBeenCalled();
+  });
+
+  describe('confirmUpload', () => {
+    it('returns 200 when session account matches record account', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+        user: { publicKey: 'GACC' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue({
+        id: 'kyc-record-1',
+        user: { publicKey: 'GACC' },
+      });
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('returns 403 when session account does not match record account', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+        user: { publicKey: 'GDIFF' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue({
+        id: 'kyc-record-1',
+        user: { publicKey: 'GACC' },
+      });
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('returns 404 when record does not exist', async () => {
+      const req = {
+        params: { id: 'no-such-record' },
+        user: { publicKey: 'GACC' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue(null);
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('returns 401 when no authenticated user on request', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(prismaMock.kycCustomer.findUnique).not.toHaveBeenCalled();
+  describe('getUploadUrl', () => {
+    it('returns 400 when field query param is missing', async () => {
+      const req = {
+        query: {},
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'field query parameter is required' });
+    });
+
+    it('returns 200 with upload_url when authenticated and field is provided', async () => {
+      const req = {
+        query: { field: 'id_photo_front' },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0];
+      expect(payload).toHaveProperty('upload_url');
+      expect(payload).toHaveProperty('expires_at');
+      expect(payload.field).toBe('id_photo_front');
+      // upload_url must contain a token derived from the account
+      expect(payload.upload_url).toContain('token=');
+    });
+
+    it('returns 401 when no token is provided (route-level auth check)', async () => {
+      // Simulate the authMiddleware rejecting an unauthenticated request by
+      // calling the middleware directly with no Authorization header.
+      const express = require('express');
+      const request = require('supertest');
+      const { authMiddleware: mw } = require('../middleware/auth.middleware');
+
+      const app = express();
+      app.use(express.json());
+      // Mount a lightweight version of the upload-url route.
+      app.get(
+        '/sep12/customer/upload-url',
+        mw,
+        (req: Request, res: Response) => res.status(200).send('ok')
+      );
+
+      const res = await request(app).get('/sep12/customer/upload-url');
+      expect(res.statusCode).toBe(401);
+    });
   });
 });

@@ -98,17 +98,13 @@ impl YieldDistribution {
             .get(&DataKey::TotalStaked)
             .unwrap_or(0);
 
-        // Transfer reward tokens into the contract
-        let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
-        token::Client::new(&env, &reward_token).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
-
+        // Update state before external token transfer (reentrancy guard pattern).
         // If nobody is staking yet, rewards accumulate but can't be distributed —
         // they will be claimable once the first stake occurs (reward_per_token
         // stays 0 until then, so the deposited tokens sit idle).
+        let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
+
+        // CEI: update state before external token transfer
         if total_staked > 0 {
             let mut rpt: i128 = env
                 .storage()
@@ -123,6 +119,15 @@ impl YieldDistribution {
                 .instance()
                 .set(&DataKey::RewardPerTokenStored, &rpt);
         }
+
+        // Transfer reward tokens into the contract after state is updated
+        let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
+        // External interaction last
+        token::Client::new(&env, &reward_token).transfer(
+            &from,
+            &env.current_contract_address(),
+            &amount,
+        );
 
         // Topic: event name only; from + amount in data.
         env.events()
@@ -147,13 +152,10 @@ impl YieldDistribution {
         // Settle any pending rewards before changing the stake
         Self::_update_reward(&env, &user);
 
+        // Update state before external token transfer (reentrancy guard pattern)
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
-        token::Client::new(&env, &stake_token).transfer(
-            &user,
-            &env.current_contract_address(),
-            &amount,
-        );
 
+        // CEI: update state before external token transfer
         let prev: i128 = Self::_stake_of(&env, &user);
         env.storage()
             .persistent()
@@ -167,6 +169,14 @@ impl YieldDistribution {
         env.storage()
             .instance()
             .set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
+
+        let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
+        // External interaction last
+        token::Client::new(&env, &stake_token).transfer(
+            &user,
+            &env.current_contract_address(),
+            &amount,
+        );
 
         // Topic: event name only; user + amount in data.
         env.events()
@@ -250,8 +260,8 @@ impl YieldDistribution {
                 &reward,
             );
 
-            // Topic: event name only; user + reward in data.
             env.events()
+                .publish(symbol_short!("claimed"), (user, reward));
                 .publish((symbol_short!("claimed"),), (user, reward));
         }
 
@@ -350,7 +360,7 @@ mod tests {
         Address, Env,
     };
 
-    fn setup() -> (Env, Address, Address, Address, Address, Address) {
+    fn setup() -> (Env, Address, Address, Address, Address, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -385,12 +395,13 @@ mod tests {
             alice,
             bob,
             reward_token_id.address(),
+            stake_token_id.address(),
         )
     }
 
     #[test]
     fn test_stake_and_claim() {
-        let (env, contract_id, admin, alice, _bob, reward_token) = setup();
+        let (env, contract_id, admin, alice, _bob, reward_token, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         // Alice stakes 500_000
@@ -415,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_proportional_split() {
-        let (env, contract_id, admin, alice, bob, _) = setup();
+        let (env, contract_id, admin, alice, bob, _, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         // Alice: 300_000, Bob: 700_000  →  30% / 70% split
@@ -431,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_rewards_accrue_correctly_after_late_stake() {
-        let (env, contract_id, admin, alice, bob, _) = setup();
+        let (env, contract_id, admin, alice, bob, _, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         // Alice stakes first, rewards deposited, then Bob joins
@@ -450,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_unstake_settles_rewards() {
-        let (env, contract_id, admin, alice, _bob, reward_token) = setup();
+        let (env, contract_id, admin, alice, _bob, reward_token, _stake_token) = setup();
         let client = YieldDistributionClient::new(&env, &contract_id);
 
         client.stake(&alice, &500_000);
@@ -464,5 +475,67 @@ mod tests {
         client.claim(&alice);
         let reward_client = TokenClient::new(&env, &reward_token);
         assert_eq!(reward_client.balance(&alice), 1_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be positive")]
+    fn test_deposit_limit() {
+        let (env, contract_id, _admin, alice, _bob, _, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        client.stake(&alice, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be positive")]
+    fn test_withdraw_limit_zero() {
+        let (env, contract_id, _admin, alice, _bob, _, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        client.stake(&alice, &100);
+        client.unstake(&alice, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "insufficient stake")]
+    fn test_withdraw_limit_insufficient() {
+        let (env, contract_id, _admin, alice, _bob, _, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        client.stake(&alice, &100);
+        client.unstake(&alice, &200);
+    }
+
+    #[test]
+    fn test_contract_invariants() {
+        let (env, contract_id, _admin, alice, bob, _reward_token, stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+        
+        let stake_client = TokenClient::new(&env, &stake_token);
+        
+        // Initial state
+        assert_eq!(client.total_staked(), 0);
+        assert_eq!(stake_client.balance(&contract_id), 0);
+        
+        // Alice stakes
+        client.stake(&alice, &300_000);
+        assert_eq!(client.total_staked(), 300_000);
+        assert_eq!(stake_client.balance(&contract_id), 300_000);
+        
+        // Bob stakes
+        client.stake(&bob, &700_000);
+        assert_eq!(client.total_staked(), 1_000_000);
+        assert_eq!(stake_client.balance(&contract_id), 1_000_000);
+        
+        // Total supply matches balance reserves invariant
+        assert_eq!(client.total_staked(), stake_client.balance(&contract_id));
+        
+        // Alice unstakes partially
+        client.unstake(&alice, &100_000);
+        assert_eq!(client.total_staked(), 900_000);
+        assert_eq!(stake_client.balance(&contract_id), 900_000);
+        
+        // Sum of all stakes equals total staked
+        assert_eq!(client.stake_of(&alice) + client.stake_of(&bob), client.total_staked());
     }
 }

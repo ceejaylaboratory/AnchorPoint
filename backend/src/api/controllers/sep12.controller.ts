@@ -16,8 +16,6 @@ const ALLOWED_CONTENT_TYPES = (process.env.UPLOAD_ALLOWED_CONTENT_TYPES ?? 'imag
 const UPLOAD_URL_EXPIRY_SECONDS = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
 const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
 
-type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
-
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
 
@@ -270,56 +268,89 @@ export class Sep12Controller {
       res.status(500).json({ error: 'Internal Server Error' });
     }
   }
-
   /**
-   * POST /sep12/customer/upload-url
-   * Issues a pre-signed PUT URL for direct client-to-storage upload.
-   * Validates file_size against SEP12_MAX_FILE_SIZE_MB (issue #549).
+   * GET /sep12/customer/upload-url
+   *
+   * Returns a short-lived pre-signed URL that the client can use to upload a
+   * KYC document directly.  This endpoint is protected by `authMiddleware` at
+   * the router level, so `req.user` is always populated when this method runs.
+   *
+   * The `field` query-param identifies which KYC field the upload is for
+   * (e.g. `id_photo_front`).
    */
   async getUploadUrl(req: AuthRequest, res: Response) {
-    try {
-      const { account, field_name, content_type, file_size } = req.body as Record<string, string>;
+    if (req.method === 'POST') {
+      try {
+        const { account, field_name, content_type, file_size } = req.body as Record<string, string>;
 
-      if (!account || !field_name || !content_type || !file_size) {
-        return res.status(400).json({ error: 'account, field_name, content_type, and file_size are required' });
-      }
+        if (!account || !field_name || !content_type || !file_size) {
+          return res.status(400).json({ error: 'account, field_name, content_type, and file_size are required' });
+        }
 
-      if (!ALLOWED_CONTENT_TYPES.includes(content_type)) {
-        return res.status(400).json({
-          error: `content_type not allowed. Accepted types: ${ALLOWED_CONTENT_TYPES.join(', ')}`,
+        if (!ALLOWED_CONTENT_TYPES.includes(content_type)) {
+          return res.status(400).json({
+            error: `content_type not allowed. Accepted types: ${ALLOWED_CONTENT_TYPES.join(', ')}`,
+          });
+        }
+
+        const maxBytes = config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024;
+        const fileSizeNum = Number(file_size);
+        if (fileSizeNum > maxBytes) {
+          return res.status(400).json({
+            error: `file_size exceeds maximum allowed size of ${config.SEP12_MAX_FILE_SIZE_MB} MB`,
+          });
+        }
+
+        const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
+        const record = uploadStore.create(account, field_name, '', content_type, expiresAt);
+        const storageKey = `${KEY_PREFIX}/${account}/${field_name}/${record.uploadId}`;
+        uploadStore.setStatus(record.uploadId, 'PENDING');
+        const storedRecord = uploadStore.get(record.uploadId)!;
+        (storedRecord as any).storageKey = storageKey;
+
+        const url = await storageProvider.generatePresignedPutUrl(storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
+
+        logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
+
+        return res.status(200).json({
+          upload_id: record.uploadId,
+          url,
+          expires_at: expiresAt.toISOString(),
         });
-      }
-
-      const maxBytes = config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024;
-      const fileSizeNum = Number(file_size);
-      if (fileSizeNum > maxBytes) {
-        return res.status(400).json({
-          error: `file_size exceeds maximum allowed size of ${config.SEP12_MAX_FILE_SIZE_MB} MB`,
+      } catch (error) {
+        logger.error('SEP-12 upload-url failed', {
+          error: error instanceof Error ? error.message : 'Unknown error',
         });
+        return res.status(500).json({ error: 'Internal Server Error' });
       }
+    } else {
+      try {
+        const field = req.query.field as string | undefined;
+        if (!field) {
+          return res.status(400).json({ error: 'field query parameter is required' });
+        }
 
-      const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
-      const record = uploadStore.create(account, field_name, '', content_type, expiresAt);
-      const storageKey = `${KEY_PREFIX}/${account}/${field_name}/${record.uploadId}`;
-      uploadStore.setStatus(record.uploadId, 'PENDING');
-      // Persist the computed storage key back onto the record via a second set
-      const storedRecord = uploadStore.get(record.uploadId)!;
-      (storedRecord as any).storageKey = storageKey;
+        const account = req.user!.publicKey;
+        const expiresAt = Date.now() + 15 * 60 * 1000;
+        const uploadToken = Buffer.from(
+          JSON.stringify({ account, field, expiresAt })
+        ).toString('base64url');
 
-      const url = await storageProvider.generatePresignedPutUrl(storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
+        const uploadUrl = `/sep12/customer/upload?token=${uploadToken}`;
 
-      logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
+        logger.info('SEP-12 upload-url issued', { account, field });
 
-      return res.status(200).json({
-        upload_id: record.uploadId,
-        url,
-        expires_at: expiresAt.toISOString(),
-      });
-    } catch (error) {
-      logger.error('SEP-12 upload-url failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      return res.status(500).json({ error: 'Internal Server Error' });
+        return res.status(200).json({
+          upload_url: uploadUrl,
+          expires_at: new Date(expiresAt).toISOString(),
+          field,
+        });
+      } catch (error) {
+        logger.error('SEP-12 upload-url GET failed', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        return res.status(500).json({ error: 'Internal Server Error' });
+      }
     }
   }
 
@@ -333,6 +364,10 @@ export class Sep12Controller {
 
       if (!upload_id || !account) {
         return res.status(400).json({ error: 'upload_id and account are required' });
+      }
+
+      if (req.user && req.user.publicKey !== account) {
+        return res.status(403).json({ error: 'Forbidden: session account does not match request account' });
       }
 
       const record = uploadStore.get(upload_id);

@@ -28,6 +28,7 @@ pub enum DataKey {
     Symbol,
     Decimals,
     NativeAsset,
+    Token,
     /// Tracks if an address is authorized to interact with AMM
     AMMAuthorized(Address),
     /// Tracks if an address is authorized to interact with Lending
@@ -48,8 +49,9 @@ impl XLMWrapper {
     /// * `admin` - Administrator address with special privileges
     /// * `name` - Token name (e.g., "Wrapped XLM")
     /// * `symbol` - Token symbol (e.g., "wXLM")
+    /// * `token` - Address of the wXLM token contract
     /// * `native_asset` - Address of the native XLM token contract
-    pub fn initialize(env: Env, admin: Address, name: String, symbol: String, native_asset: Address) {
+    pub fn initialize(env: Env, admin: Address, token: Address, name: String, symbol: String, native_asset: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
@@ -59,6 +61,7 @@ impl XLMWrapper {
         env.storage().instance().set(&DataKey::Name, &name);
         env.storage().instance().set(&DataKey::Symbol, &symbol);
         env.storage().instance().set(&DataKey::Decimals, &7u32); // XLM uses 7 decimals
+        env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::NativeAsset, &native_asset);
         
@@ -341,7 +344,7 @@ impl XLMWrapper {
         
         env.storage().instance().remove(&DataKey::AMMAuthorized(amm_address.clone()));
         env.events()
-            .publish((symbol_short!("amm_revok"), amm_address), true);
+            .publish((soroban_sdk::Symbol::new(&env, "amm_revoke"), amm_address), true);
     }
 
     /// Check if an address is authorized for AMM interactions
@@ -376,7 +379,7 @@ impl XLMWrapper {
         
         env.storage().instance().remove(&DataKey::LendingAuthorized(lending_address.clone()));
         env.events()
-            .publish((symbol_short!("lend_revk"), lending_address), true);
+            .publish((soroban_sdk::Symbol::new(&env, "lend_revoke"), lending_address.clone()), true);
     }
 
     /// Check if an address is authorized for Lending interactions
@@ -482,8 +485,10 @@ mod tests {
         let contract_id = env.register_contract(None, XLMWrapper);
         let client = XLMWrapperClient::new(&env, &contract_id);
         
+        let token = Address::generate(&env);
         client.initialize(
             &admin,
+            &token,
             &String::from_str(&env, "Wrapped XLM"),
             &String::from_str(&env, "wXLM"),
             &native_asset,
@@ -830,8 +835,10 @@ mod invariants {
         let sac = StellarAssetClient::new(&env, &native_asset);
         let contract_id = env.register_contract(None, XLMWrapper);
         let client = XLMWrapperClient::new(&env, &contract_id);
+        let token = Address::generate(&env);
         client.initialize(
             &admin,
+            &token,
             &String::from_str(&env, "Wrapped XLM"),
             &String::from_str(&env, "wXLM"),
             &native_asset,
@@ -1147,6 +1154,8 @@ mod invariants {
         verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
         client.withdraw(&alice, &100);
         verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone(), carol.clone()]);
+
+        // Verify final invariants
         let total_balance = client.balance_of(&alice) + client.balance_of(&bob) + client.balance_of(&carol);
         assert_eq!(client.total_supply(), total_balance, "PROPERTY VIOLATION: Supply invariant broken after operation sequence");
         assert!(client.balance_of(&alice) >= 0 && client.balance_of(&bob) >= 0 && client.balance_of(&carol) >= 0, "PROPERTY VIOLATION: Negative balance detected");
@@ -1179,19 +1188,32 @@ mod invariants {
         verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
         client.transfer(&bob, &alice, &300);
         verify_supply_conservation(&env, &client, &[alice.clone(), bob.clone()]);
-        assert_eq!(client.balance_of(&alice), alice_initial, "PROPERTY VIOLATION: Round-trip transfer didn't restore sender balance");
-        assert_eq!(client.balance_of(&bob), bob_initial, "PROPERTY VIOLATION: Round-trip transfer didn't restore receiver balance");
+        // After round-trip, balances should be back to original
+        assert_eq!(
+            client.balance_of(&alice),
+            alice_initial,
+            "PROPERTY VIOLATION: Round-trip transfer didn't restore sender balance"
+        );
+
+        assert_eq!(
+            client.balance_of(&bob),
+            bob_initial,
+            "PROPERTY VIOLATION: Round-trip transfer didn't restore receiver balance"
+        );
     }
 
     #[test]
     fn property_multi_user_supply_conservation() {
         let (env, client, sac, _) = setup_fresh();
         let mut users = std::vec::Vec::new();
-        for _ in 0..10 {
+        let mut total_deposited = 0_i128;
+        for i in 0..10 {
             let user = Address::generate(&env);
-            let amount = 100;
+            let amount = ((i + 1) * 100) as i128;
             fund_and_deposit(&env, &sac, &client, &user, amount);
+            total_deposited += amount;
             users.push(user);
+            verify_supply_conservation(&env, &client, &users);
         }
         let total_deposited = 1000;
         assert_eq!(client.total_supply(), total_deposited, "PROPERTY VIOLATION: Total supply doesn't match total deposited");

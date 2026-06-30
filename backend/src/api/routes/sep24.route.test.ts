@@ -36,6 +36,7 @@ describe('SEP-24 Routes', () => {
 
   afterEach(() => {
     delete process.env.INTERACTIVE_URL;
+    delete process.env.SEP24_ALLOWED_CALLBACK_DOMAINS;
   });
 
   describe('POST /transactions/deposit/interactive', () => {
@@ -110,6 +111,26 @@ describe('SEP-24 Routes', () => {
       const parsed = new URL(res.body.url);
       expect(parsed.searchParams.get('lang')).toBe('en');
     });
+
+    it('returns 400 when redirect_url is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/deposit/interactive')
+        .send({ asset_code: 'USDC', redirect_url: 'https://malicious.com/callback' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid redirect_url domain');
+    });
+
+    it('returns 400 when on_change_callback is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/deposit/interactive')
+        .send({ asset_code: 'USDC', on_change_callback: 'https://malicious.com/hook' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid on_change_callback domain');
+    });
   });
 
   describe('POST /transactions/withdraw/interactive', () => {
@@ -165,6 +186,26 @@ describe('SEP-24 Routes', () => {
       expect(res.statusCode).toBe(400);
       expect(res.body.error).toBe('account must be a valid Stellar public key');
       expect(res.body.error).not.toContain(account);
+    });
+
+    it('returns 400 when redirect_url is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/withdraw/interactive')
+        .send({ asset_code: 'USDC', redirect_url: 'https://malicious.com/callback' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid redirect_url domain');
+    });
+
+    it('returns 400 when on_change_callback is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/withdraw/interactive')
+        .send({ asset_code: 'USDC', on_change_callback: 'https://malicious.com/hook' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid on_change_callback domain');
     });
   });
 });

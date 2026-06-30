@@ -8,6 +8,13 @@ import { config } from '../../config/env';
 
 const router = Router();
 
+export const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+]);
+
 // Ensure upload directory exists
 const uploadDir = path.join(process.cwd(), 'uploads/kyc');
 if (!fs.existsSync(uploadDir)) {
@@ -25,7 +32,16 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({
+  storage,
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
+    }
+  },
+});
 
 /**
  * Middleware: validate file_size does not exceed SEP12_MAX_FILE_SIZE_MB.
@@ -75,6 +91,32 @@ router.delete('/customer/:account', sep12Controller.deleteCustomer.bind(sep12Con
 /**
  * @swagger
  * /sep12/customer/upload-url:
+ *   get:
+ *     summary: Get a pre-signed URL for uploading KYC documents
+ *     description: >
+ *       Returns a short-lived, pre-signed upload URL for a KYC document.
+ *       Requires a valid SEP-10 session JWT (Bearer token).
+ *     security:
+ *       - BearerAuth: []
+ *     tags: [SEP-12]
+ *     parameters:
+ *       - in: query
+ *         name: field
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The KYC field name the upload is intended for (e.g. id_photo_front)
+ *     responses:
+ *       200:
+ *         description: Pre-signed upload URL returned successfully
+ *       401:
+ *         description: Unauthorized – missing or invalid SEP-10 session token
+ */
+router.get('/customer/upload-url', authMiddleware, sep12Controller.getUploadUrl.bind(sep12Controller));
+
+/**
+ * @swagger
+ * /sep12/customer/upload-url:
  *   post:
  *     summary: Request a pre-signed URL for direct file upload
  *     tags: [SEP-12]
@@ -98,5 +140,14 @@ router.post('/customer/upload-confirm', authMiddleware, sep12Controller.confirmU
  *     tags: [SEP-12]
  */
 router.post('/webhook', sep12Controller.handleWebhook.bind(sep12Controller));
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+router.use((err: unknown, _req: import('express').Request, res: import('express').Response, _next: import('express').NextFunction) => {
+  if (err instanceof multer.MulterError && err.code === 'LIMIT_UNEXPECTED_FILE') {
+    const allowed = Array.from(ALLOWED_MIME_TYPES).join(', ');
+    return res.status(400).json({ error: `Unsupported file type. Allowed types: ${allowed}` });
+  }
+  _next(err);
+});
 
 export default router;
