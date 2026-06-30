@@ -37,11 +37,12 @@ export const createCallbackNotifier = (
     // Trigger automated payment update notification dispatches (SEP-31)
     try {
       await alertEmailService.sendSystemAlert('admin@example.com', {
+        severity: 'info',
         metric: 'sep31_status_change',
+        message: `Transaction ${transaction.id} status changed to ${transaction.status}`,
         value: 1,
         threshold: 0,
-        description: `Transaction ${transaction.id} status changed to ${transaction.status}`,
-        timestamp: new Date().toISOString()
+        detectedAt: new Date().toISOString(),
       });
       logger.info(`Transactional email dispatched for SEP-31 status change: ${transaction.id}`);
     } catch (err) {

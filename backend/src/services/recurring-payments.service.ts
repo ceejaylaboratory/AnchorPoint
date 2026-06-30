@@ -86,6 +86,63 @@ export class RecurringPaymentsService {
     });
   }
 
+  async getSchedule(scheduleId: string, userPublicKey: string) {
+    const schedule = await prisma.recurringPaymentSchedule.findFirst({
+      where: {
+        id: scheduleId,
+        user: {
+          publicKey: userPublicKey,
+        },
+      },
+    });
+
+    if (!schedule) {
+      throw new Error('Schedule not found');
+    }
+
+    return prisma.recurringPaymentSchedule.findUnique({
+      where: { id: scheduleId },
+      include: { runs: { orderBy: { startedAt: 'desc' } } },
+    });
+  }
+
+  async updateSchedule(scheduleId: string, userPublicKey: string, input: Partial<RecurringPaymentScheduleInput>) {
+    const schedule = await prisma.recurringPaymentSchedule.findFirst({
+      where: {
+        id: scheduleId,
+        user: {
+          publicKey: userPublicKey,
+        },
+      },
+    });
+
+    if (!schedule) {
+      throw new Error('Schedule not found');
+    }
+
+    const updatedInput = {
+      destination: input.destination ?? schedule.destination,
+      assetCode: input.assetCode ?? schedule.assetCode,
+      amount: input.amount ?? schedule.amount,
+      cron: input.cron ?? schedule.cron,
+    };
+
+    this.validateScheduleInput(updatedInput);
+
+    const data: Record<string, unknown> = {
+      ...input,
+    };
+
+    if (input.cron) {
+      data.nextRunAt = this.computeNextRunAt(input.cron);
+    }
+
+    return prisma.recurringPaymentSchedule.update({
+      where: { id: scheduleId },
+      data,
+    });
+  }
+
   async updateScheduleStatus(userPublicKey: string, scheduleId: string, status: 'ACTIVE' | 'PAUSED' | 'CANCELLED') {
     const schedule = await prisma.recurringPaymentSchedule.findFirst({
       where: {

@@ -23,7 +23,10 @@ jest.mock('../api/middleware/rate-limit.middleware', () => ({
   publicLimiter: (req: any, res: any, next: any) => next(),
 }));
 
-describe('SEP-31 Cross-Border Payment E2E Flow', () => {
+const hasPostgresDatasource = /^postgres(ql)?:\/\//i.test(process.env.DATABASE_URL || '');
+const e2eSuite = hasPostgresDatasource ? describe : describe.skip;
+
+e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
   const clientPublicKey = 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K';
   let transactionId = '';
   let callbackCount = 0;

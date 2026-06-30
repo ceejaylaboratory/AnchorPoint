@@ -154,14 +154,14 @@ export const WithdrawalForm = ({ fields, onSubmit }: WithdrawalFormProps) => {
                   Required
                 </span>
               ) : (
-                <span className="text-xs font-normal text-slate-500" aria-hidden="true">
+                <span className="text-xs font-normal text-slate-400" aria-hidden="true">
                   Optional
                 </span>
               )}
             </label>
 
             {field.helpText && (
-              <p id={hintId} className="text-xs text-slate-500">
+              <p id={hintId} className="text-xs text-slate-400">
                 {field.helpText}
               </p>
             )}
@@ -216,7 +216,7 @@ export const WithdrawalForm = ({ fields, onSubmit }: WithdrawalFormProps) => {
 
       <button
         type="submit"
-        className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+        className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
       >
         Continue to Verification
       </button>

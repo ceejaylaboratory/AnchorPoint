@@ -7,10 +7,20 @@ pub mod state_machine_tests;
 pub mod fuzz_tests;
 pub mod storage_verification;
 
-use soroban_sdk::{testutils::Address as _, Address, Env, BytesN};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 use crate::{GovernanceContract, GovernanceContractClient};
+use std::cell::RefCell;
+use std::thread_local;
 
-pub const CONTRACT_ID: BytesN<32> = BytesN::from_array(&soroban_sdk::Env::default(), &[0; 32]);
+thread_local! {
+    pub static DYNAMIC_CONTRACT_ID: RefCell<Option<Address>> = RefCell::new(None);
+}
+
+pub fn get_dynamic_contract_id() -> Address {
+    DYNAMIC_CONTRACT_ID.with(|id| {
+        id.borrow().clone().expect("Contract not registered in test env")
+    })
+}
 
 /// Returns a pre-initialised environment with 5 voter addresses funded and registered.
 pub fn setup_governance_env() -> (Env, GovernanceContractClient<'static>, std::vec::Vec<Address>) {
@@ -18,6 +28,9 @@ pub fn setup_governance_env() -> (Env, GovernanceContractClient<'static>, std::v
     
     // Register the contract natively
     let contract_id = env.register(GovernanceContract, ());
+    DYNAMIC_CONTRACT_ID.with(|id| {
+        *id.borrow_mut() = Some(contract_id.clone());
+    });
     let client = GovernanceContractClient::new(&env, &contract_id);
     
     // Initialize the governance contract parameters (Quorum: 200, Voting Duration: 100 ledgers)
@@ -30,4 +43,28 @@ pub fn setup_governance_env() -> (Env, GovernanceContractClient<'static>, std::v
     }
     
     (env, client, voters)
+}
+
+#[test]
+fn test_initialization() {
+    let env = Env::default();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+    
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_initialize_twice_fails() {
+    let env = Env::default();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+    client.initialize(&admin, &200, &100);
 }

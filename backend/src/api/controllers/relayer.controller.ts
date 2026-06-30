@@ -67,8 +67,9 @@ export const submitApproval = async (
       amount: approvalRequest.amount,
     });
 
-    // Process the approval request
-    const result = await relayerService.processApprovalRequest(approvalRequest);
+    const result = await runWithTransientRetry(() =>
+      relayerService.processApprovalRequest(approvalRequest)
+    );
 
     if (result.success) {
       return res.status(200).json({
@@ -88,6 +89,27 @@ export const submitApproval = async (
       success: false,
       error: error instanceof Error ? error.message : 'Internal server error',
     });
+  }
+};
+
+const isTransientError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /transient|temporary|timeout|ECONNRESET|ETIMEDOUT/i.test(message);
+};
+
+const runWithTransientRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!isTransientError(error)) {
+      throw error;
+    }
+
+    logger.warn('Transient relayer error detected, retrying once', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return operation();
   }
 };
 

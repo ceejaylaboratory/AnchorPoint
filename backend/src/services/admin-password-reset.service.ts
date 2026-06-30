@@ -44,7 +44,7 @@ export class AdminPasswordResetService {
     const tokenHash = hashResetToken(rawToken);
     const expiresAt = new Date(Date.now() + config.PASSWORD_RESET_TTL_MINUTES * 60 * 1000);
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       await tx.adminPasswordResetToken.updateMany({
         where: {
           adminUserId: admin.id,
@@ -96,7 +96,7 @@ export class AdminPasswordResetService {
     const passwordHash = await hashPassword(newPassword);
     const now = new Date();
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       await tx.adminUser.update({
         where: { id: existingToken.adminUserId },
         data: { passwordHash },

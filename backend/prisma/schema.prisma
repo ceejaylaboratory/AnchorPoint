@@ -231,6 +231,7 @@ model KycCustomer {
 
   @@index([provider, providerRef])
   @@index([userId])
+  @@index([status])
 }
 
 model Quote {

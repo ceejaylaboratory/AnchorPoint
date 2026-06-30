@@ -29,7 +29,7 @@ describe('KYC provider service', () => {
     const pending = await provider.submitCustomer(
       {
         account: 'GABC',
-        email: 'ok@example.com',
+        email: 'pending@example.com',
       },
       {}
     );

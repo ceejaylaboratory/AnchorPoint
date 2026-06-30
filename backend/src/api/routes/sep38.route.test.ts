@@ -2,6 +2,41 @@ import request from 'supertest';
 import express from 'express';
 import sep38Router from './sep38.route';
 
+jest.mock('../controllers/sep38.controller', () => ({
+  sep38Controller: {
+    getPriceQuote: jest.fn(async (sourceAsset: string, sourceAmount: number, destinationAsset: string, context?: string) => ({
+      ...(sourceAsset === 'INVALID' || destinationAsset === 'INVALID'
+        ? (() => { throw new Error('Unsupported asset'); })()
+        : {}),
+      source_asset: sourceAsset,
+      source_amount: sourceAmount,
+      destination_asset: destinationAsset,
+      destination_amount: sourceAsset.toUpperCase() === destinationAsset.toUpperCase() ? sourceAmount : sourceAsset === 'USDC' ? sourceAmount / 0.12 : sourceAmount * 0.12,
+      price: sourceAsset === 'USDC' && destinationAsset === 'XLM' ? 8.33 : 0.12,
+      expiration_time: Math.floor(Date.now() / 1000) + 60,
+      context,
+      cached: false,
+    })),
+    createQuote: jest.fn(async (sourceAsset: string, sourceAmount: number, destinationAsset: string, context?: string) => ({
+      ...(sourceAsset === 'INVALID' || destinationAsset === 'INVALID'
+        ? (() => { throw new Error('Unsupported asset'); })()
+        : {}),
+      id: 'quote-123',
+      source_asset: sourceAsset,
+      source_amount: sourceAmount,
+      destination_asset: destinationAsset,
+      destination_amount: sourceAmount / 0.12,
+      price: 8.33,
+      expiration_time: Math.floor(Date.now() / 1000) + 300,
+      context,
+    })),
+    getSupportedAssets: jest.fn(async () => ([
+      { code: 'XLM', asset_type: 'native', name: 'Stellar Lumens', decimals: 7 },
+      { code: 'USDC', asset_type: 'credit_alphanum4', issuer: 'issuer', name: 'USD Coin', decimals: 7 },
+    ])),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use('/sep38', sep38Router);

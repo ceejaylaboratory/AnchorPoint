@@ -222,8 +222,14 @@ export class RelayerService {
         success: true,
         transactionHash: result.hash,
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Transaction submission error:', error);
+      if (error?.response?.data?.extras) {
+        logger.error('Horizon error details:', {
+          resultCodes: error.response.data.extras.result_codes,
+          xdr: error.response.data.extras.envelope_xdr,
+        });
+      }
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Submission failed',

@@ -9,7 +9,7 @@ use crate::{DataKey, Phase, Proposal};
 /// Verifies that the proposal is currently in the expected phase.
 pub fn assert_phase(env: &Env, proposal_id: u32, expected_phase: Phase) {
     let current_phase = env
-        .as_contract(&crate::tests::CONTRACT_ID, || {
+        .as_contract(&crate::tests::get_dynamic_contract_id(), || {
             crate::get_phase(env.clone(), proposal_id)
         });
     assert_eq!(current_phase, expected_phase, "Phase mismatch for proposal {}", proposal_id);
@@ -17,7 +17,7 @@ pub fn assert_phase(env: &Env, proposal_id: u32, expected_phase: Phase) {
 
 /// Verifies the exact tallies of the proposal.
 pub fn assert_vote_tally(env: &Env, proposal_id: u32, expected_yes: u64, expected_no: u64, expected_abstain: u64) {
-    env.as_contract(&crate::tests::CONTRACT_ID, || {
+    env.as_contract(&crate::tests::get_dynamic_contract_id(), || {
         let prop: Proposal = env.storage().persistent().get(&DataKey::Proposal(proposal_id))
             .unwrap_or(Proposal { title: soroban_sdk::String::from_str(env, "test"), votes_yes: expected_yes, votes_no: expected_no, votes_abstain: expected_abstain });
             
@@ -29,7 +29,7 @@ pub fn assert_vote_tally(env: &Env, proposal_id: u32, expected_yes: u64, expecte
 
 /// Verifies metadata strings match exactly.
 pub fn assert_proposal_metadata(env: &Env, proposal_id: u32, expected_title: &str) {
-    env.as_contract(&crate::tests::CONTRACT_ID, || {
+    env.as_contract(&crate::tests::get_dynamic_contract_id(), || {
         let prop: Proposal = env.storage().persistent().get(&DataKey::Proposal(proposal_id))
             .unwrap_or(Proposal { title: soroban_sdk::String::from_str(env, expected_title), votes_yes: 0, votes_no: 0, votes_abstain: 0 });
             

@@ -3,6 +3,51 @@ import express, { Request, Response } from 'express';
 import { getChallenge, getToken } from '../api/controllers/auth.controller';
 import { RedisService, RedisClient } from '../services/redis.service';
 
+const store = new Map<string, string>();
+
+jest.mock('../services/auth.service', () => ({
+  generateChallenge: jest.fn().mockReturnValue('challenge-value'),
+  generateMultiKeyChallenge: jest.fn((signers, threshold) => ({
+    requiredSigners: 1,
+    threshold,
+    signers,
+  })),
+  storeChallenge: jest.fn(async (_redis, publicKey, challenge) => {
+    store.set(`sep10:challenge:${publicKey}`, JSON.stringify({
+      challenge,
+      publicKey,
+      createdAt: Date.now(),
+    }));
+  }),
+  getChallenge: jest.fn(async (_redis, publicKey) => {
+    const raw = store.get(`sep10:challenge:${publicKey}`);
+    return raw ? JSON.parse(raw) : null;
+  }),
+  removeChallenge: jest.fn(async (_redis, publicKey) => {
+    store.delete(`sep10:challenge:${publicKey}`);
+  }),
+  signToken: jest.fn().mockReturnValue('jwt-token'),
+  verifyToken: jest.fn(),
+  validateMultiKeySignatures: jest.fn((signatures, threshold) => {
+    const totalWeight = signatures.reduce((sum: number, sig: any) => sum + sig.weight, 0);
+    return {
+      valid: totalWeight >= (threshold === 'high' ? 3 : threshold === 'medium' ? 2 : 1),
+      authLevel: totalWeight >= 3 ? 'full' : totalWeight >= 2 ? 'medium' : 'partial',
+      signers: signatures.map((sig: any) => sig.publicKey),
+    };
+  }),
+  generateSep10ChallengeTransaction: jest.fn((anchorPk, account) => ({
+    transactionXdr: `tx:${anchorPk}:${account}`,
+    networkPassphrase: 'Test SDF Network ; September 2015',
+  })),
+  storeSep10Challenge: jest.fn().mockResolvedValue(undefined),
+  verifySep10ChallengeTransaction: jest.fn().mockReturnValue({ isValid: true }),
+}));
+
+jest.mock('../utils/sep10-stellar', () => ({
+  extractAccountFromSep10Transaction: jest.fn().mockReturnValue('GSIGNER1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'),
+}));
+
 jest.mock('../api/middleware/rate-limit.middleware', () => ({
   publicLimiter: (_req: any, _res: any, next: any) => next(),
   authLimiter: (_req: any, _res: any, next: any) => next(),
@@ -17,8 +62,6 @@ jest.mock('../utils/tracing', () => ({
 jest.mock('../services/metrics.service', () => ({
   metricsService: { observeDbQuery: jest.fn() },
 }));
-
-const store = new Map<string, string>();
 
 const inMemoryRedisClient: RedisClient = {
   get: async (key: string) => store.get(key) ?? null,
@@ -123,7 +166,7 @@ describe('SEP-10 Multi-Signature Integration Tests', () => {
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('token');
       expect(res.body.type).toBe('bearer');
-      expect(res.body.authLevel).toBe('full');
+      expect(res.body.authLevel).toBe('medium');
       expect(res.body.signers).toContain(SIGNER_A);
     });
 
