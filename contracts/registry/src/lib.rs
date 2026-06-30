@@ -5,7 +5,7 @@
 //! allowing for easy discovery and upgrades across the protocol.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes, Env, String, Vec,
 };
 
 /// Contract metadata stored in the registry
@@ -79,6 +79,8 @@ impl Registry {
         
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
+        
+        Self::check_not_zero_address(&env, &address);
         
         let contract_key = DataKey::Contract(contract_type.clone());
         let timestamp = env.ledger().timestamp();
@@ -395,6 +397,17 @@ impl Registry {
     fn check_not_paused(env: &Env) {
         assert!(!Self::is_paused(env.clone()), "registry is paused");
     }
+
+    fn check_not_zero_address(env: &Env, address: &Address) {
+        let xdr: Bytes = address.clone().to_xdr(env);
+        let start = if xdr.len() > 32 { xdr.len() - 32 } else { 0 };
+        for i in start..xdr.len() {
+            if xdr.get(i).unwrap() != 0 {
+                return;
+            }
+        }
+        panic!("cannot register zero address");
+    }
 }
 
 #[cfg(test)]
@@ -594,6 +607,21 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "cannot register zero address")]
+    fn test_register_with_zero_address() {
+        let (env, client, admin) = setup();
+        
+        use soroban_sdk::xdr::{Hash, ScAddress};
+        use soroban_sdk::TryFromVal;
+        
+        let contract_type = String::from_str(&env, "AMM");
+        let zero_address = Address::try_from_val(&env, &ScAddress::Contract(Hash([0u8; 32]))).unwrap();
+        let version = String::from_str(&env, "1.0.0");
+        
+        client.register_contract(&admin, &contract_type, &zero_address, &version);
+    }
+
+    #[test]
     #[should_panic(expected = "unauthorized")]
     fn test_unauthorized_register() {
         let (env, client, admin) = setup();
@@ -608,20 +636,14 @@ mod tests {
     fn test_multiple_contracts() {
         let (env, client, admin) = setup();
         
-        let contracts = [
-            ("AMM", "1.0.0"),
-            ("Lending", "1.0.0"),
-            ("Bridge", "1.0.0"),
-            ("XLMWrapper", "1.0.0"),
-            ("LiquidStaking", "1.0.0"),
-        ];
+        let contract_names = ["AMM", "Lending", "Bridge", "XLMWrapper", "LiquidStaking"];
         
-        for (name, version) in contracts.iter() {
+        for name in contract_names.iter() {
             client.register_contract(
                 &admin,
                 &String::from_str(&env, name),
                 &Address::generate(&env),
-                &String::from_str(&env, version),
+                &String::from_str(&env, "1.0.0"),
             );
         }
         
