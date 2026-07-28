@@ -1,0 +1,48 @@
+# SERVICE APPROACH: Option A — ClusterIP + Ingress
+# Rationale: ClusterIP with an Ingress controller allows for centralised TLS termination, 
+# host-based routing, and better cost efficiency by sharing a single cloud load balancer
+# across multiple services in the cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: dashboard
+    environment: testnet
+    version: v1
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    # Automatically provisions TLS certs using Let's Encrypt
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Proxy and timeout optimizations for UI requests
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "15"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    # Basic rate limiting: 20 requests per second per IP
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    # CORS setup for web client security
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, PUT, POST, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://dashboard.testnet.anchorpoint.xyz"
+spec:
+  tls:
+    - hosts:
+        # PRODUCTION OVERLAY INSTRUCTION:
+        # Override this host to `dashboard.anchorpoint.xyz` in your prod kustomize overlay
+        - dashboard.testnet.anchorpoint.xyz
+      secretName: dashboard-tls-secret
+  rules:
+    # PRODUCTION OVERLAY INSTRUCTION:
+    # Ensure this host matches the TLS host when patching for production
+    - host: dashboard.testnet.anchorpoint.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard
+                port:
+                  number: 80

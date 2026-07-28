@@ -1,8 +1,17 @@
 [workspace]
 members = [
-    "yield", "nft_metadata", "liquid_staking", "xlm_wrapper", 
-    "registry", "swap", "staking", "random_gen", "bridge_stub", 
-    "revenue_distributor", "anchorpoint", "governance"
+    "yield",
+    "nft_metadata",
+    "liquid_staking",
+    "xlm_wrapper",
+    "registry",
+    "swap",
+    "staking",
+    "random_gen",
+    "bridge_stub",
+    "revenue_distributor",
+    "anchorpoint",
+    "governance",
 ]
 resolver = "2"
 

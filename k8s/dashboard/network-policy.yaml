@@ -1,0 +1,66 @@
+# SERVICE APPROACH: Option A — ClusterIP + Ingress
+# Rationale: ClusterIP with an Ingress controller allows for centralised TLS termination, 
+# host-based routing, and better cost efficiency by sharing a single cloud load balancer
+# across multiple services in the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dashboard-network-policy
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: dashboard
+    environment: testnet
+    version: v1
+spec:
+  podSelector:
+    matchLabels:
+      app: anchorpoint
+      component: dashboard
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  # INGRESS RULE: Deny all by default, explicitly allow only NGINX ingress traffic
+  ingress:
+    # Limits inbound traffic securely to the ingress-nginx controller, 
+    # preventing internal sideways access from compromised pods in the testnet.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+
+  # EGRESS RULE: Deny all by default, explicitly allow only required API & DNS traffic
+  egress:
+    # 1. Allow outbound traffic to the backend API service (same namespace)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: anchorpoint
+              component: api
+              environment: testnet
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+          
+    # 2. Allow outbound traffic to Kubernetes DNS for service discovery
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

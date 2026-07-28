@@ -1,0 +1,31 @@
+# SERVICE APPROACH: Option A — ClusterIP + Ingress
+# Rationale: ClusterIP with an Ingress controller allows for centralised TLS termination, 
+# host-based routing, and better cost efficiency by sharing a single cloud load balancer
+# across multiple services in the cluster.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dashboard
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: dashboard
+    environment: testnet
+    version: v1
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dashboard
+  # Testnet allows modest scaling to test autoscaling mechanics without high cost.
+  # PRODUCTION OVERLAY INSTRUCTION:
+  # Patch these values in production to handle real load (e.g., minReplicas: 3, maxReplicas: 10)
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

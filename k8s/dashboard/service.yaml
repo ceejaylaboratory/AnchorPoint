@@ -1,0 +1,30 @@
+# SERVICE APPROACH: Option A — ClusterIP + Ingress
+# Rationale: ClusterIP with an Ingress controller allows for centralised TLS termination, 
+# host-based routing, and better cost efficiency by sharing a single cloud load balancer
+# across multiple services in the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: dashboard
+    environment: testnet
+    version: v1
+  annotations:
+    # Allows Prometheus to auto-discover and scrape metrics from this service
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+spec:
+  # Internal cluster networking only; Ingress handles external exposure
+  type: ClusterIP
+  selector:
+    app: anchorpoint
+    component: dashboard
+    environment: testnet
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP

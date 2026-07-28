@@ -13,7 +13,7 @@
  * 5. Tests migration reversibility
  */
 
-import { execSync } from 'child_process';
+import { execSync, ExecSyncOptions } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -45,32 +45,18 @@ class MigrationVerifier {
   }
 
   /**
-   * Execute a command and return the result
-   */
-  private run(command: string, options: any = {}): string {
-    try {
-      return execSync(command, {
-        stdio: 'pipe',
-        encoding: 'utf-8',
-        ...options,
-      });
-    } catch (error: any) {
-      throw new Error(`Command failed: ${command}\n${error.message}`);
-    }
-  }
-
-  /**
    * Execute a command silently (suppress output)
    */
-  private runSilent(command: string, options: any = {}): string {
+  private runSilent(command: string, options: ExecSyncOptions = {}): string {
     try {
       return execSync(command, {
         stdio: 'pipe',
         encoding: 'utf-8',
         ...options,
-      });
-    } catch (error: any) {
-      throw new Error(`Command failed: ${command}\n${error.message}`);
+      }).toString();
+    } catch (error: unknown) {
+      const err = error as Error;
+      throw new Error(`Command failed: ${command}\n${err.message}`);
     }
   }
 
@@ -187,8 +173,9 @@ class MigrationVerifier {
         );
         console.log('✅ No destructive changes detected');
         return true;
-      } catch (error: any) {
-        if (error.status === 1) {
+      } catch (error: unknown) {
+        const err = error as { status?: number };
+        if (err.status === 1) {
           console.error('❌ Destructive changes detected in migrations!');
           console.error('Please review your migration files for:');
           console.error('  - DROP TABLE operations');
@@ -211,11 +198,6 @@ class MigrationVerifier {
   private testMigrationReversibility(): boolean {
     try {
       console.log('🔙 Testing migration reversibility...');
-
-      const env = {
-        ...process.env,
-        DATABASE_URL: `file:${this.tempDbPath}`,
-      };
 
       // Get the list of migrations
       const migrationDirs = fs.readdirSync(this.migrationsPath)

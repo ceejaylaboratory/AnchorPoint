@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-const { execSync } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+/* eslint-disable @typescript-eslint/no-var-requires */
+const { execSync } = require('node:child_process');
+const path = require('node:path');
+const fs = require('node:fs');
 
 /**
  * Prisma Migration Integrity Checker
@@ -13,7 +14,6 @@ const fs = require('fs');
  */
 
 const PRISMA_BINARY = 'npx prisma';
-const SCHEMA_PATH = path.join(__dirname, '../prisma/schema.prisma');
 const SHADOW_DB_URL = process.env.SHADOW_DATABASE_URL || 'file:./shadow.db';
 
 function run(command, options = {}) {
@@ -21,6 +21,7 @@ function run(command, options = {}) {
         return execSync(command, { stdio: 'inherit', env: { ...process.env, ...options.env } });
     } catch (error) {
         console.error(`Error executing command: ${command}`);
+        console.error(error);
         process.exit(1);
     }
 }
@@ -92,6 +93,7 @@ function checkDrift() {
         console.log('✅ No drift detected.');
     } catch (error) {
         console.error('❌ Schema drift detected or migrations out of sync.');
+        console.error(error);
         process.exit(1);
     }
 }
@@ -110,6 +112,7 @@ async function main() {
         console.log('\n✨ All migration integrity checks passed!');
     } catch (error) {
         console.error('\n💥 Migration integrity check failed.');
+        console.error(error);
         process.exit(1);
     }
 }

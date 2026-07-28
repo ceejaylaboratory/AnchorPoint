@@ -1,0 +1,26 @@
+# SERVICE APPROACH: Option A — ClusterIP + Ingress
+# Rationale: ClusterIP with an Ingress controller allows for centralised TLS termination, 
+# host-based routing, and better cost efficiency by sharing a single cloud load balancer
+# across multiple services in the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-config
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: dashboard
+    environment: testnet
+    version: v1
+data:
+  # Base URL for the internal AnchorPoint API running on testnet
+  NEXT_PUBLIC_API_URL: "https://api.testnet.anchorpoint.xyz"
+  
+  # Environment identifier for feature flags, analytics, and context-aware UI elements
+  NEXT_PUBLIC_NETWORK: "testnet"
+  
+  # Stellar Horizon endpoint targeted for on-chain queries in the testnet
+  NEXT_PUBLIC_HORIZON_URL: "https://horizon-testnet.stellar.org"
+  
+  # Framework optimization flag indicating a deployed runtime state
+  NODE_ENV: "production"

@@ -1,0 +1,32 @@
+# SERVICE APPROACH: Option A — ClusterIP + Ingress
+# Rationale: ClusterIP with an Ingress controller allows for centralised TLS termination, 
+# host-based routing, and better cost efficiency by sharing a single cloud load balancer
+# across multiple services in the cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Explicit namespace targeting avoids reliance on local kubeconfig context defaults
+namespace: anchorpoint-testnet
+
+# Ensure uniform labels across all deployed resources for tracking and querying
+commonLabels:
+  app: anchorpoint
+  component: dashboard
+  environment: testnet
+
+resources:
+  - configmap.yaml
+  - service.yaml
+  - deployment.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - network-policy.yaml
+
+# PRODUCTION OVERLAY INSTRUCTION:
+# To promote to production, create `k8s/dashboard/overlays/production/kustomization.yaml`.
+# Reference this directory as a base, then use patches to update:
+# - `namespace: anchorpoint-production`
+# - Image tag in the Deployment
+# - Replicas in the HPA
+# - Hostnames in the Ingress
+# - URLs in the ConfigMap

@@ -1,0 +1,101 @@
+# SERVICE APPROACH: Option A — ClusterIP + Ingress
+# Rationale: ClusterIP with an Ingress controller allows for centralised TLS termination, 
+# host-based routing, and better cost efficiency by sharing a single cloud load balancer
+# across multiple services in the cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: anchorpoint-testnet
+  labels:
+    app: anchorpoint
+    component: dashboard
+    environment: testnet
+    version: v1
+spec:
+  # 2 replicas ensure basic high availability during testnet rollouts.
+  # For production, rely on the HPA config with higher min/max thresholds.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero downtime deployments: Ensure all desired pods are available before old ones terminate
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: anchorpoint
+      component: dashboard
+      environment: testnet
+  template:
+    metadata:
+      labels:
+        app: anchorpoint
+        component: dashboard
+        environment: testnet
+        version: v1
+    spec:
+      # Gives the Node.js/Next.js server enough time to gracefully drain active connections
+      terminationGracePeriodSeconds: 60
+      # Enforce secure pod execution limits
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: dashboard
+          image: gcr.io/anchorpoint/dashboard:testnet-latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          # Container-level security hardening
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          envFrom:
+            - configMapRef:
+                name: dashboard-config
+            # Sensitive keys (like NextAuth secret, API keys) must be injected via Secret
+            - secretRef:
+                name: dashboard-secrets
+                optional: false
+          # Strict resource bounds to prevent noisy neighbor problems
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Restarts the container if the app deadlocks
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Removes the pod from the Service endpoints if it can't serve traffic
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          volumeMounts:
+            # Required because readOnlyRootFilesystem is true; Next.js needs a writable /tmp
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

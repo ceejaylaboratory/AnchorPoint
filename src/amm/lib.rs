@@ -164,12 +164,14 @@ impl AMM {
         let mut reserve_a: i128 = env.storage().instance().get(&DataKey::ReserveA).unwrap();
         let mut reserve_b: i128 = env.storage().instance().get(&DataKey::ReserveB).unwrap();
 
+        if token_in != token_a && token_in != token_b {
+            panic!("invalid token for pool");
+        }
+
         let (reserve_in, reserve_out, token_out) = if token_in == token_a {
             (reserve_a, reserve_b, token_b.clone())
-        } else if token_in == token_b {
-            (reserve_b, reserve_a, token_a.clone())
         } else {
-            panic!("invalid token for pool");
+            (reserve_b, reserve_a, token_a.clone())
         };
 
         // Transfer token_in from user to contract

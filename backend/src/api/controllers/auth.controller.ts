@@ -99,6 +99,7 @@ export const getChallenge = async (
 
     return res.json(response);
   } catch (error) {
+    console.error('Failed to generate challenge:', error);
     return res.status(500).json({
       error: 'Failed to generate challenge'
     });
@@ -217,6 +218,7 @@ export const getToken = async (
 
     return res.json(response);
   } catch (error) {
+    console.error('Failed to verify challenge:', error);
     return res.status(500).json({
       error: 'Failed to verify challenge'
     });
