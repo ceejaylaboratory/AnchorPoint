@@ -315,8 +315,8 @@ e2eSuite('AnchorPoint E2E Tests - Cross-Border Payment Flow', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({
           status: 'completed',
-          stellar_transaction_id: 'stellar_settlement_tx_789',
-          external_transaction_id: 'bank_transfer_101112',
+          stellar_transaction_id: 'stellar_settlement_tx_789_e2e',
+          external_transaction_id: 'bank_transfer_101112_e2e',
           amount_out: '495.00',
           amount_fee: '5.00'
         });

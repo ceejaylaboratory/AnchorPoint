@@ -192,8 +192,8 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
         .patch(`/api/admin/transactions/${transactionId}`)
         .send({
           status: 'completed',
-          stellar_transaction_id: 'stellar_settlement_tx_789',
-          external_transaction_id: 'bank_transfer_101112',
+          stellar_transaction_id: 'stellar_settlement_tx_789_sep31',
+          external_transaction_id: 'bank_transfer_101112_sep31',
           amount_out: '495.00',
           amount_fee: '5.00'
         });
@@ -212,8 +212,8 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
       expect(res.body.transaction.amount_in).toBe('500.00');
       expect(res.body.transaction.amount_out).toBe('495.00');
       expect(res.body.transaction.amount_fee).toBe('5.00');
-      expect(res.body.transaction.stellar_transaction_id).toBe('stellar_settlement_tx_789');
-      expect(res.body.transaction.external_transaction_id).toBe('bank_transfer_101112');
+      expect(res.body.transaction.stellar_transaction_id).toBe('stellar_settlement_tx_789_sep31');
+      expect(res.body.transaction.external_transaction_id).toBe('bank_transfer_101112_sep31');
       expect(res.body.transaction).toHaveProperty('completed_at');
     });
   });

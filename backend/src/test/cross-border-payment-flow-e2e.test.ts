@@ -204,8 +204,8 @@ e2eSuite('AnchorPoint E2E - Cross-border payment flow (KYC → SEP-38 quote → 
       .set('Authorization', `Bearer ${authToken}`)
       .send({
         status: 'completed',
-        stellar_transaction_id: 'stellar_settlement_tx_789',
-        external_transaction_id: 'bank_transfer_101112',
+        stellar_transaction_id: 'stellar_settlement_tx_789_cb',
+        external_transaction_id: 'bank_transfer_101112_cb',
         amount_out: '495.00',
         amount_fee: '5.00',
       });
@@ -217,8 +217,8 @@ e2eSuite('AnchorPoint E2E - Cross-border payment flow (KYC → SEP-38 quote → 
 
     expect(final.status).toBe(200);
     expect(final.body.transaction.status).toBe('completed');
-    expect(final.body.transaction.stellar_transaction_id).toBe('stellar_settlement_tx_789');
-    expect(final.body.transaction.external_transaction_id).toBe('bank_transfer_101112');
+    expect(final.body.transaction.stellar_transaction_id).toBe('stellar_settlement_tx_789_cb');
+    expect(final.body.transaction.external_transaction_id).toBe('bank_transfer_101112_cb');
     expect(final.body.transaction.amount_out).toBe('495.00');
     expect(final.body.transaction.amount_fee).toBe('5.00');
     expect(final.body.transaction.completed_at).toBeTruthy();
