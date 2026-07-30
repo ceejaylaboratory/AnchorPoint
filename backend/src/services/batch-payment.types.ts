@@ -19,6 +19,8 @@ export interface PaymentOperation {
 }
 
 export interface BatchPaymentRequest {
+  /** Optional unique identifier for the batch (used for distributed locking) */
+  batchId?: string;
   /** Array of payment operations to batch (max 100) */
   payments: PaymentOperation[];
   /** Source account secret key for signing (deprecated - use encryptedKey or keyId) */

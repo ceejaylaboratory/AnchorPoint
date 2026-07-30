@@ -24,6 +24,7 @@ import { isValidStellarPublicKey } from '../utils/stellar-address';
 import { SequenceNumberManager } from './sequence-number.service';
 import { getKeyManagementService } from '../lib/key-management.service';
 import { KeyManagementError } from '../lib/key-management.types';
+import { redlock } from '../lib/redis';
 import {
   BatchPaymentRequest,
   BatchPaymentResult,
@@ -70,8 +71,24 @@ export class BatchPaymentService {
    * The key is held in memory only for the duration of the signing operation.
    */
   async executeBatch(request: BatchPaymentRequest): Promise<BatchPaymentResult> {
-    const batchId = uuidv4();
+    const batchId = request.batchId || uuidv4();
     logger.info(`[Batch ${batchId}] Starting batch payment with ${request.payments.length} operations`);
+
+    const lockKey = `${this.config.redisKeyPrefix}:lock:${batchId}`;
+    let lock: any = null;
+
+    try {
+      lock = await redlock.acquire([lockKey], this.config.lockTimeoutSeconds * 1000);
+      logger.info(`[Batch ${batchId}] Acquired distributed lock`);
+    } catch (error) {
+      logger.warn(`[Batch ${batchId}] Failed to acquire lock, batch may be processing already.`);
+      throw new BatchPaymentError(
+        BatchErrorType.TRANSACTION_FAILED,
+        `Concurrent processing detected for batch ${batchId}. Lock acquisition timeout.`
+      );
+    }
+
+    try {
 
     // Validate batch size
     if (request.payments.length > this.config.maxOperationsPerBatch) {
@@ -190,6 +207,16 @@ export class BatchPaymentService {
       `Batch payment failed after ${this.config.maxRetries} attempts: ${lastError?.message}`,
       { lastError }
     );
+    } finally {
+      if (lock) {
+        try {
+          await lock.release();
+          logger.info(`[Batch ${batchId}] Released distributed lock`);
+        } catch (error) {
+          logger.error(`[Batch ${batchId}] Failed to release lock: ${error}`);
+        }
+      }
+    }
   }
 
   /**

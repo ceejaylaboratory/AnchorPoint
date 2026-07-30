@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import Redlock from 'redlock';
 import logger from '../utils/logger';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -43,6 +44,17 @@ export const redis = isTest
       },
     });
 
+export const redlock = new Redlock(
+  [redis],
+  {
+    driftFactor: 0.01,
+    retryCount: 3,
+    retryDelay: 200,
+    retryJitter: 200,
+    automaticExtensionThreshold: 500, // time in ms before lock expiration to automatically extend it
+  }
+);
+
 if (!isTest) {
   redis.on('connect', () => {
     logger.info('Redis connected successfully');
@@ -50,6 +62,10 @@ if (!isTest) {
 
   redis.on('error', (err: Error) => {
     logger.error('Redis connection error:', err);
+  });
+  
+  redlock.on('error', (error) => {
+    logger.error('Redlock error:', error);
   });
 }
 
