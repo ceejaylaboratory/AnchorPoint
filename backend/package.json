@@ -39,6 +39,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1098.0",
     "@bull-board/api": "^5.21.0",
     "@bull-board/express": "^5.21.0",
+    "@google-cloud/storage": "^7.21.0",
     "@iarna/toml": "^2.2.5",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/context-async-hooks": "^2.8.0",

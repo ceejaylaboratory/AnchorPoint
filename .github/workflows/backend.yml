@@ -16,6 +16,11 @@ jobs:
   validate:
     name: Validate Migration Integrity
     runs-on: ubuntu-latest
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
 
     services:
       redis:
