@@ -61,7 +61,7 @@ describe('Config API Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.data.version).toBe(2);
-      expect(configService.updateConfig).toHaveBeenCalledWith(newConfig);
+      expect(configService.updateConfig).toHaveBeenCalledWith(newConfig, expect.any(Object));
     });
 
     it('should handle validation errors', async () => {
@@ -92,7 +92,7 @@ describe('Config API Routes', () => {
       expect(response.status).toBe(200);
       expect(response.body.data.version).toBe(4);
       expect(response.body.data.ui).toEqual(newUiConfig);
-      expect(configService.updateUiConfig).toHaveBeenCalledWith(newUiConfig);
+      expect(configService.updateUiConfig).toHaveBeenCalledWith(newUiConfig, expect.any(Object));
     });
   });
 
@@ -103,7 +103,7 @@ describe('Config API Routes', () => {
       const response = await request(app).post('/api/config/rollback/1');
       expect(response.status).toBe(200);
       expect(response.body.data.version).toBe(3);
-      expect(configService.rollbackToVersion).toHaveBeenCalledWith(1);
+      expect(configService.rollbackToVersion).toHaveBeenCalledWith(1, expect.any(Object));
     });
 
     it('should return 400 for invalid version format', async () => {

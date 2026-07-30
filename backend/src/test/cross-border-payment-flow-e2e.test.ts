@@ -10,7 +10,7 @@ import app from '../index';
 jest.mock('../api/middleware/auth.middleware', () => ({
   authMiddleware: (req: any, res: any, next: any) => {
     req.user = {
-      publicKey: req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
+      publicKey: req.headers['x-mock-account'] || req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
     };
     next();
   },
@@ -73,6 +73,7 @@ e2eSuite('AnchorPoint E2E - Cross-border payment flow (KYC → SEP-38 quote → 
     const senderRes = await request(app)
       .put('/sep12/customer')
       .set('Authorization', `Bearer ${authToken}`)
+      .set('x-mock-account', clientPublicKey)
       .field('account', clientPublicKey)
       .field('first_name', 'Alice')
       .field('last_name', 'Smith')
@@ -92,6 +93,7 @@ e2eSuite('AnchorPoint E2E - Cross-border payment flow (KYC → SEP-38 quote → 
     const receiverRes = await request(app)
       .put('/sep12/customer')
       .set('Authorization', `Bearer ${authToken}`)
+      .set('x-mock-account', receiverPublicKey)
       .field('account', receiverPublicKey)
       .field('first_name', 'Bob')
       .field('last_name', 'Johnson')

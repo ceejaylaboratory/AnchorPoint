@@ -7,7 +7,7 @@ import prisma from '../lib/prisma';
 jest.mock('../api/middleware/auth.middleware', () => ({
   authMiddleware: (req: any, res: any, next: any) => {
     req.user = {
-      publicKey: req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
+      publicKey: req.headers['x-mock-account'] || req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
     };
     next();
   },
@@ -70,6 +70,7 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
 
       const res = await request(app)
         .put('/sep12/customer')
+        .set('x-mock-account', clientPublicKey)
         .field('account', clientPublicKey)
         .field('first_name', 'Alice')
         .field('last_name', 'Smith')
@@ -94,6 +95,7 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
 
       const res = await request(app)
         .put('/sep12/customer')
+        .set('x-mock-account', receiverKey)
         .field('account', receiverKey)
         .field('first_name', 'Bob')
         .field('last_name', 'Johnson')

@@ -10,12 +10,13 @@ jest.mock('../lib/key-management.service', () => ({
   getKeyManagementService: jest.fn(),
 }));
 
-const mockCacheDel = jest.fn();
 jest.mock('../lib/redis', () => ({
   redis: {
-    del: mockCacheDel,
+    del: jest.fn(),
   },
 }));
+import { redis } from '../lib/redis';
+const mockCacheDel = redis.del as jest.Mock;
 
 jest.mock('../config/env', () => ({
   config: {
