@@ -428,3 +428,14 @@ model CrawlJobRecord {
   nonCompliantCount Int
   suspiciousCount   Int
 }
+
+model UploadRecord {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  contentType String
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+}
