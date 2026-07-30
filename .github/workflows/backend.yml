@@ -125,7 +125,8 @@ jobs:
 
       - name: Run Tests
         env:
-          DATABASE_URL: "file:./test.db"
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
+          SHADOW_DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5433/shadowdb"
         run: npm test
 
       - name: Cleanup test artifacts
