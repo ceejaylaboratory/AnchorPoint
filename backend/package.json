@@ -15,6 +15,7 @@
     "bench:sep6:deposit": "cross-env BENCH_ONLY=sep6_deposit ts-node -P tsconfig.perf.json perf/bench.ts",
     "bench:sep6:withdraw": "cross-env BENCH_ONLY=sep6_withdraw ts-node -P tsconfig.perf.json perf/bench.ts",
     "bench:sep10": "artillery run perf/sep10.yml",
+    "pretest": "npx prisma generate",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint \"src/**/*.ts\"",

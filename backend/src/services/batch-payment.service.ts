@@ -44,14 +44,16 @@ const DEFAULT_CONFIG: Partial<BatchPaymentConfig> = {
   retryDelayMs: 1000,
   networkPassphrase: Networks.TESTNET,
   horizonUrl: 'https://horizon-testnet.stellar.org',
+  useDistributedLocking: true,
 };
 
 export class BatchPaymentService {
   private config: BatchPaymentConfig;
   private server: Horizon.Server;
   private sequenceManager: SequenceNumberManager;
+  private lockClient: typeof redlock;
 
-  constructor(config?: Partial<BatchPaymentConfig>) {
+  constructor(config?: Partial<BatchPaymentConfig>, lockClient?: typeof redlock) {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
@@ -62,6 +64,7 @@ export class BatchPaymentService {
       this.config.redisKeyPrefix,
       this.config.lockTimeoutSeconds
     );
+    this.lockClient = lockClient ?? redlock;
   }
 
   /**
@@ -77,15 +80,15 @@ export class BatchPaymentService {
     const lockKey = `${this.config.redisKeyPrefix}:lock:${batchId}`;
     let lock: any = null;
 
-    try {
-      lock = await redlock.acquire([lockKey], this.config.lockTimeoutSeconds * 1000);
-      logger.info(`[Batch ${batchId}] Acquired distributed lock`);
-    } catch (error) {
-      logger.warn(`[Batch ${batchId}] Failed to acquire lock, batch may be processing already.`);
-      throw new BatchPaymentError(
-        BatchErrorType.TRANSACTION_FAILED,
-        `Concurrent processing detected for batch ${batchId}. Lock acquisition timeout.`
-      );
+    if (this.config.useDistributedLocking && this.lockClient) {
+      try {
+        lock = await this.lockClient.acquire([lockKey], this.config.lockTimeoutSeconds * 1000);
+        logger.info(`[Batch ${batchId}] Acquired distributed lock`);
+      } catch (error: any) {
+        logger.warn(`[Batch ${batchId}] Failed to acquire lock, proceeding without distributed lock. (${error?.message ?? error})`);
+      }
+    } else {
+      logger.debug(`[Batch ${batchId}] Distributed locking disabled or lock client not provided; running without distributed lock`);
     }
 
     try {
@@ -227,7 +230,8 @@ export class BatchPaymentService {
     sourceSecretKey?: string,
     chunkSize: number = 100,
     encryptedKey?: BatchPaymentRequest['encryptedKey'],
-    keyId?: string
+    keyId?: string,
+    baseBatchId?: string
   ): Promise<BatchPaymentResult[]> {
     const results: BatchPaymentResult[] = [];
     const chunks = this.chunkArray(payments, chunkSize);
@@ -236,9 +240,11 @@ export class BatchPaymentService {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
+      const perChunkBatchId = `${baseBatchId || uuidv4()}-${i+1}`;
       logger.info(`Processing batch ${i + 1}/${chunks.length} with ${chunk.length} payments`);
 
       const result = await this.executeBatch({
+        batchId: perChunkBatchId,
         payments: chunk,
         sourceSecretKey,
         encryptedKey,

@@ -134,4 +134,6 @@ export interface BatchPaymentConfig {
   networkPassphrase: string;
   /** Horizon server URL */
   horizonUrl: string;
+  /** Whether to use distributed locking (default: true) */
+  useDistributedLocking?: boolean;
 }

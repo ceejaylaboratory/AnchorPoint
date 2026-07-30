@@ -30,8 +30,8 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: prisma
-          POSTGRES_PASSWORD: prisma_password
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: cidb
         ports:
           - 5432:5432
@@ -43,8 +43,8 @@ jobs:
       postgres-shadow:
         image: postgres:15
         env:
-          POSTGRES_USER: prisma
-          POSTGRES_PASSWORD: prisma_password
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: shadowdb
         ports:
           - 5433:5432
@@ -76,7 +76,7 @@ jobs:
       # have the correct client bindings available.
       - name: Generate Prisma client
         env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: npx prisma generate
 
       # Fast environment check — fails immediately with a clear message if
@@ -84,18 +84,18 @@ jobs:
       # Prisma error several steps later.
       - name: Validate migration environment
         env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: node scripts/validate-migration-env.js
       - name: Verify Migrations Against Temporary Database
         env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
-          SHADOW_DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5433/shadowdb"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
+          SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
         run: npm run migrate:verify
 
       - name: Run Migration Integrity Checker
         env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
-          SHADOW_DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5433/shadowdb"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
+          SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
         run: node scripts/check-migrations.js
 
       # Emit migration status as an artefact so reviewers can see which
@@ -103,7 +103,7 @@ jobs:
       - name: Report migration status
         if: always()
         env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: |
           echo "## Migration Status" > migration-status.md
           npx prisma migrate status >> migration-status.md 2>&1 || true
@@ -120,13 +120,25 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 1
+          done
+
+      - name: Run DB migrations
+        env:
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
+        run: npx prisma migrate deploy || npx prisma db push
+
       - name: Run Lint
         run: npm run lint
 
       - name: Run Tests
         env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
-          SHADOW_DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5433/shadowdb"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
+          SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
         run: npm test
 
       - name: Cleanup test artifacts
