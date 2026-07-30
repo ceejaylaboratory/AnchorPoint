@@ -259,18 +259,15 @@ export class RecurringPaymentsService {
           where: { id: schedule.id },
         });
 
-        // Skip schedule execution if status is already PROCESSING or not ACTIVE
-        if (!currentSchedule || currentSchedule.status === 'PROCESSING') {
+        // Skip if there is already an in-flight run for this schedule.
+        // We detect this by checking if an ACTIVE run exists rather than
+        // setting an invalid 'PROCESSING' status on the schedule itself
+        // (RecurringPaymentScheduleStatus only has ACTIVE | PAUSED | CANCELLED).
+        if (!currentSchedule || currentSchedule.status !== 'ACTIVE') {
           return null;
         }
 
-        await tx.recurringPaymentSchedule.update({
-          where: { id: schedule.id },
-          data: { status: 'PROCESSING' },
-        });
-
-        // The attempt number reflects the current consecutive-failure count
-        // tracked on the schedule (0 = first attempt for this occurrence).
+        // No status flip needed on the schedule — just record the run.
         const attempt = (currentSchedule.retryCount ?? 0) + 1;
 
         const run = await tx.recurringPaymentRun.create({

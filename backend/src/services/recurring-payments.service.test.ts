@@ -45,7 +45,16 @@ jest.mock('../utils/logger', () => ({
 
 // Mock config
 jest.mock('../config/env', () => ({
-  STELLAR_DISTRIBUTION_SECRET: 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  config: {
+    STELLAR_DISTRIBUTION_SECRET: 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
+    STELLAR_NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
+    RECURRING_PAYMENTS_BACKOFF_BASE_MS: 1000,
+    RECURRING_PAYMENTS_BACKOFF_MULTIPLIER: 2,
+    RECURRING_PAYMENTS_BACKOFF_MAX_MS: 60000,
+    RECURRING_PAYMENTS_BACKOFF_JITTER: 0,
+    RECURRING_PAYMENTS_MAX_RETRIES: 3,
+  },
 }));
 
 jest.mock('../utils/stellar-address', () => ({
@@ -250,6 +259,8 @@ describe('RecurringPaymentsService', () => {
       prisma.recurringPaymentSchedule.findUnique.mockResolvedValue({
         id: 'schedule_1',
         status: 'ACTIVE',
+        retryCount: 0,
+        cron: '0 0 * * *',
       });
 
       prisma.recurringPaymentRun.create.mockResolvedValue({
@@ -291,6 +302,8 @@ describe('RecurringPaymentsService', () => {
       prisma.recurringPaymentSchedule.findUnique.mockResolvedValue({
         id: 'schedule_1',
         status: 'ACTIVE',
+        retryCount: 0,
+        cron: '0 0 * * *',
       });
 
       prisma.recurringPaymentRun.create.mockResolvedValue({
@@ -333,7 +346,9 @@ describe('RecurringPaymentsService', () => {
 
       prisma.recurringPaymentSchedule.findUnique.mockResolvedValue({
         id: 'schedule_1',
-        status: 'PROCESSING',
+        // PAUSED is a valid RecurringPaymentScheduleStatus and causes the service to skip execution
+        status: 'PAUSED',
+        retryCount: 0,
       });
 
       prisma.$transaction.mockImplementation(async (arg: any) => {
