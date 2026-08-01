@@ -5,9 +5,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "dev": "nodemon src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "dev": "node api.js && nodemon src/index.ts",
+    "build": "node api.js && tsc",
+    "start": "node api.js && node dist/index.js",
     "start:worker:recurring-payments": "node dist/workers/recurring-payments.worker.js",
     "start:worker:key-rotation": "node dist/workers/key-rotation.worker.js",
     "start:worker:fee-report": "node dist/workers/fee-report.worker.js",
