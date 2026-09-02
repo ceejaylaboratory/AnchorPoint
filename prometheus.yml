@@ -5,6 +5,7 @@ global:
 information_rules:
   - /etc/prometheus/rules/prometheus-alerts.yml
   - /etc/prometheus/rules/alerts.rules.yml
+  - /etc/prometheus/rules/alerts.yml
   - infra/prometheus/alerts.rules.yml
   - /etc/prometheus/rules/alerts.yml
 

@@ -124,6 +124,7 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ./infra/monitoring/prometheus-alerts.yml:/etc/prometheus/rules/prometheus-alerts.yml
       - ./infra/prometheus/alerts.rules.yml:/etc/prometheus/rules/alerts.rules.yml
+      - ./alerts.yml:/etc/prometheus/rules/alerts.yml
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -150,6 +151,7 @@ services:
       - '--config.expand-env'
     environment:
       - PAGERDUTY_ROUTING_KEY=${PAGERDUTY_ROUTING_KEY}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
     restart: unless-stopped
     networks:
       - anchorpoint-network

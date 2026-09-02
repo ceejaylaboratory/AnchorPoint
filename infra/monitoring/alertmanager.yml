@@ -2,7 +2,8 @@ global:
   resolve_timeout: 5m
 
 # Alertmanager can expand environment variables when started with
-# --config.expand-env=true. We use that to keep PagerDuty routing keys out of git.
+# --config.expand-env=true. We use that to keep PagerDuty routing keys and
+# Slack webhook URLs out of git.
 route:
   receiver: pagerduty-critical
   group_by: ['alertname', 'service', 'severity']
@@ -24,6 +25,10 @@ route:
     - matchers:
         - severity="critical"
       receiver: pagerduty-critical
+    - matchers:
+        - alertname="DatabaseConnectionExhausted"
+      receiver: slack-ops
+      continue: true
 
 receivers:
   - name: pagerduty-critical
@@ -55,6 +60,20 @@ receivers:
 
           {{ .CommonAnnotations.description }}
         source: AnchorPoint Prometheus
+        send_resolved: true
+
+  - name: slack-ops
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: '#ops-alerts'
+        title: '{{ .CommonAnnotations.summary }}'
+        text: |-
+          {{ range .Alerts }}
+            *Alert:* {{ .Labels.alertname }}
+            *Service:* {{ .Labels.service }}
+            *Severity:* {{ .Labels.severity }}
+            *Description:* {{ .Annotations.description }}
+          {{ end }}
         send_resolved: true
 
   # Dedicated channel for automated TLS certificate renewal notifications.

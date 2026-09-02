@@ -80,6 +80,26 @@ describe('MetricsService', () => {
     expect(metrics).toContain('anchorpoint_api_version_info');
   });
 
+  it('should expose database connection pool gauges (#1008)', async () => {
+    metricsService.setDbConnectionsLimit(20);
+    metricsService.setDbConnectionsActive(12);
+
+    const metrics = await metricsService.getMetrics();
+    expect(metrics).toContain('db_connections_limit');
+    expect(metrics).toContain('db_connections_active');
+    expect(metrics).toContain('pool="default"');
+  });
+
+  it('should expose the configured pool limit even before sampling (#1008)', async () => {
+    metricsService.setDbConnectionsLimit(20);
+    const metrics = await metricsService.getMetrics();
+    const limitLine = metrics
+      .split('\n')
+      .find((line) => line.startsWith('db_connections_limit'));
+    expect(limitLine).toBeDefined();
+    expect(limitLine).toMatch(/20$/);
+  });
+
   it('should reset all metrics', async () => {
     metricsService.incrementRequestCount('GET', '/test');
     metricsService.reset();

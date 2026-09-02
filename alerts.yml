@@ -1,11 +1,47 @@
 groups:
-  - name: api-alerts
+  - name: anchorpoint-api-errors
+    interval: 30s
     rules:
+      # HighErrorRate (#1008): fire when HTTP 5xx errors exceed 5% of total
+      # HTTP traffic measured over a 5m sliding window. Uses the ratio of the
+      # 5xx rate to the total request rate so traffic spikes don't trip it.
       - alert: HighErrorRate
-        expr: 'sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05'
+        expr: |
+          (
+            sum by (service, team) (rate(http_requests_total{status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum by (service, team) (rate(http_requests_total[5m])), 1e-9)
+          ) > 0.05
+        for: 5m
         labels:
           severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: AnchorPoint API 5xx error rate exceeds 5%
+          description: >-
+            The API has returned 5xx responses for more than 5% of total HTTP
+            traffic over the last 5 minutes (current: {{ $value | humanizePercentage }}).
+            Check for upstream failures, database issues, or a recent deploy.
+
+  - name: anchorpoint-database
+    interval: 30s
+    rules:
+      # DatabaseConnectionExhausted (#1008): fire when the active database
+      # connection pool reaches 90% of its configured maximum, warning before
+      # connection timeouts start surfacing as 5xx errors.
       - alert: DatabaseConnectionExhausted
-        expr: 'database_connections_active / database_connections_max > 0.9'
+        expr: |
+          db_connections_active / clamp_min(db_connections_limit, 1) >= 0.9
+        for: 5m
         labels:
-          severity: critical
+          severity: warning
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: AnchorPoint database connection pool near exhaustion
+          description: >-
+            Active database connections have reached {{ $value | humanizePercentage }}
+            of the pool limit ({{ $labels.pool }}). Pool exhaustion will
+            surface as 5xx errors and slow queries; check for leaked
+            connections or increased load.

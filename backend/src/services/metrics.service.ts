@@ -11,6 +11,8 @@ export class MetricsService {
   private apiVersionGauge: Gauge<string>;
   private sep38QuoteRequests: Counter<string>;
   private sep38QuoteDuration: Histogram<string>;
+  private dbConnectionsActive: Gauge<string>;
+  private dbConnectionsLimit: Gauge<string>;
   private sepTransactionsTotal: Counter<string>;
   private sepTransactionDuration: Histogram<string>;
   private kycVerificationTotal: Counter<string>;
@@ -100,6 +102,22 @@ export class MetricsService {
       help: 'Duration of SEP-38 quote requests in seconds',
       labelNames: ['status'] as const,
       buckets: [0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10],
+      registers: [this.registry],
+    });
+
+    // #1008: Database connection pool gauges. Consumed by the
+    // `DatabaseConnectionExhausted` Prometheus alert rule.
+    this.dbConnectionsActive = new promClient.Gauge({
+      name: 'db_connections_active',
+      help: 'Number of active database connections',
+      labelNames: ['pool'] as const,
+      registers: [this.registry],
+    });
+
+    this.dbConnectionsLimit = new promClient.Gauge({
+      name: 'db_connections_limit',
+      help: 'Maximum number of database connections in the pool',
+      labelNames: ['pool'] as const,
       registers: [this.registry],
     });
 
@@ -206,6 +224,20 @@ export class MetricsService {
    */
   observeSep38QuoteDuration(status: string, durationSeconds: number): void {
     this.sep38QuoteDuration.observe({ status }, durationSeconds);
+  }
+
+  /**
+   * #1008: Set the number of active database connections for the given pool.
+   */
+  setDbConnectionsActive(count: number, pool = 'default'): void {
+    this.dbConnectionsActive.set({ pool }, count);
+  }
+
+  /**
+   * #1008: Set the configured maximum size of the database connection pool.
+   */
+  setDbConnectionsLimit(limit: number, pool = 'default'): void {
+    this.dbConnectionsLimit.set({ pool }, limit);
   }
 
   /**
