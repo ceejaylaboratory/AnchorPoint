@@ -7,6 +7,7 @@ if (!process.env.DATABASE_URL) {
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
 import { config } from '../config/env';
+import { softDeleteExtension } from './soft-delete';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -124,6 +125,15 @@ if (typeof prismaAny.$use === 'function') {
   });
 }
 
+// ── Soft-delete filtering (#1197) ─────────────────────────────────────
+// Query extensions leave the client's model types unchanged, so the extended
+// client is exposed under the plain PrismaClient type.
+const prismaExtendable = prisma as unknown as { $extends?: (ext: unknown) => unknown };
+const client: PrismaClient =
+  typeof prismaExtendable.$extends === 'function'
+    ? (prismaExtendable.$extends(softDeleteExtension) as PrismaClient)
+    : prisma;
+
 // ── Startup connection retry (production only) ────────────────────────
 // Eagerly verify the database connection on startup so the process fails
 // fast rather than throwing on the first HTTP request.
@@ -134,4 +144,4 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-export default prisma;
+export default client;

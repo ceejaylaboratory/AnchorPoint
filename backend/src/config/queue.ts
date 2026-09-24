@@ -1,4 +1,4 @@
-import { QueueOptions, WorkerOptions, JobsOptions } from 'bullmq';
+import { Queue, Job, QueueOptions, WorkerOptions, JobsOptions } from 'bullmq';
 
 // Redis connection for BullMQ with resiliency settings (#361)
 export const queueConnection = {
@@ -107,8 +107,8 @@ export const jobTypeConfigs: Record<string, Partial<JobsOptions>> = {
   NOTIFICATION: {
     attempts: 3,
     backoff: {
-      type: 'fixed',
-      delay: 5000,
+      type: 'exponential',
+      delay: 1000,
     },
     priority: JobPriority.LOW,
   },
@@ -199,6 +199,7 @@ export const QUEUE_NAMES = {
   NOTIFICATIONS: 'notifications',
   WEBHOOK_DELIVERY: 'webhook-delivery',
   DEAD_LETTER_QUEUE: 'dead-letter-queue',
+  NOTIFICATION_DLQ: 'notification-dlq',
   FEE_REPORTS: 'fee-reports',
 } as const;
 
@@ -216,4 +217,94 @@ export function getEffectiveWorkerOptions(): WorkerOptions {
   return process.env.STELLAR_NETWORK === 'testnet'
     ? testnetWorkerOptions
     : defaultWorkerOptions;
+}
+
+
+// ── Notification dead-letter queue (#1199) ────────────────────────────
+
+// Notification queue options: 3 attempts with exponential backoff before a job is dead-lettered.
+export const notificationQueueOptions: QueueOptions = {
+  ...defaultQueueOptions,
+  defaultJobOptions: {
+    ...defaultQueueOptions.defaultJobOptions,
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+  },
+};
+
+export interface NotificationDeadLetterData {
+  originalJobId?: string;
+  name: string;
+  data: unknown;
+  failedReason: string;
+  attemptsMade: number;
+  failedAt: string;
+}
+
+let notificationQueue: Queue | null = null;
+let notificationDlq: Queue | null = null;
+
+// Lazily created so importing this module does not open Redis connections.
+export function getNotificationQueue(): Queue {
+  notificationQueue ??= new Queue(QUEUE_NAMES.NOTIFICATIONS, notificationQueueOptions);
+  return notificationQueue;
+}
+
+export function getNotificationDlq(): Queue {
+  notificationDlq ??= new Queue(QUEUE_NAMES.NOTIFICATION_DLQ, { connection: queueConnection });
+  return notificationDlq;
+}
+
+/**
+ * Worker `failed` handler: moves a notification job to the DLQ once it has
+ * exhausted its retries. Returns true when the job was dead-lettered.
+ */
+export async function routeFailedNotificationToDlq(
+  job: Job | undefined,
+  err: Error,
+  dlq: Pick<Queue, 'add'> = getNotificationDlq()
+): Promise<boolean> {
+  if (!job) return false;
+  const maxAttempts = job.opts.attempts ?? 1;
+  if (job.attemptsMade < maxAttempts) return false;
+
+  const deadLetter: NotificationDeadLetterData = {
+    originalJobId: job.id,
+    name: job.name,
+    data: job.data,
+    failedReason: err.message,
+    attemptsMade: job.attemptsMade,
+    failedAt: new Date().toISOString(),
+  };
+  await dlq.add(job.name, deadLetter, { removeOnComplete: true, removeOnFail: false });
+  return true;
+}
+
+/** Lists dead-lettered notification jobs for operator inspection. */
+export async function listNotificationDlqJobs(
+  start = 0,
+  end = 49,
+  dlq: Pick<Queue, 'getJobs'> = getNotificationDlq()
+): Promise<Job<NotificationDeadLetterData>[]> {
+  return dlq.getJobs(['waiting', 'delayed', 'paused'], start, end);
+}
+
+/**
+ * Re-enqueues a dead-lettered notification on the notification queue and removes it
+ * from the DLQ. Returns the new job, or null when the DLQ job does not exist.
+ */
+export async function retryNotificationDlqJob(
+  dlqJobId: string,
+  dlq: Pick<Queue, 'getJob'> = getNotificationDlq(),
+  queue: Pick<Queue, 'add'> = getNotificationQueue()
+): Promise<Job | null> {
+  const deadLetter: Job<NotificationDeadLetterData> | undefined = await dlq.getJob(dlqJobId);
+  if (!deadLetter) return null;
+
+  const retried = await queue.add(deadLetter.data.name, deadLetter.data.data);
+  await deadLetter.remove();
+  return retried;
 }

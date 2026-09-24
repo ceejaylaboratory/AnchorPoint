@@ -20,6 +20,7 @@ const prismaMock = {
     findFirst: jest.fn(),
     delete: jest.fn(),
     findUnique: jest.fn(),
+    updateMany: jest.fn(),
   },
 };
 
@@ -290,6 +291,49 @@ describe('Sep12Controller', () => {
       await sep12Controller.confirmUpload(req, res);
 
       expect(res.status).toHaveBeenCalledWith(422);
+    });
+  });
+
+  describe('soft delete (#1197)', () => {
+    it('soft-deletes the customer instead of removing the row', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'user-1', publicKey: VALID_ACCOUNT });
+      prismaMock.kycCustomer.updateMany.mockResolvedValue({ count: 1 });
+      const req = { params: { account: VALID_ACCOUNT } } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.deleteCustomer(req, res);
+
+      expect(prismaMock.kycCustomer.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', deletedAt: null },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(prismaMock.kycCustomer.delete).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('returns 404 when there is no live customer record', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'user-1', publicKey: VALID_ACCOUNT });
+      prismaMock.kycCustomer.updateMany.mockResolvedValue({ count: 0 });
+      const req = { params: { account: VALID_ACCOUNT } } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.deleteCustomer(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('treats a soft-deleted customer as not found on GET', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        publicKey: VALID_ACCOUNT,
+        kycCustomer: { status: 'ACCEPTED', deletedAt: new Date() },
+      });
+      const req = { query: { account: VALID_ACCOUNT } } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getCustomer(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
     });
   });
 

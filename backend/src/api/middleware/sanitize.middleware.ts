@@ -2,21 +2,39 @@ import { Request, Response, NextFunction } from 'express';
 import xss from 'xss';
 
 /**
- * Middleware to sanitize incoming request bodies against XSS and SQL-injection
- * payloads before they reach route handlers, database queries, or log output.
+ * Middleware to sanitize incoming request input against XSS and SQL-injection
+ * payloads before it reaches route handlers, database queries, or log output.
  *
- * Sanitization is applied recursively to every string value in the JSON/URL-encoded
- * request body:
+ * Sanitization is applied recursively to every string value in the request
+ * body, query string, and route params:
  *   - HTML/script tags and dangerous markup are stripped via the `xss` filter.
  *   - Surrounding whitespace is trimmed from string values.
  *
  * Non-string values (numbers, booleans, arrays, nested objects) are preserved;
  * arrays are sanitized element-wise, and nested objects are sanitized recursively.
+ *
+ * Route params are only populated once a router matches, after global middleware
+ * has run, so `req.params` is wrapped in an accessor that sanitizes every value
+ * Express assigns to it.
  */
-export const sanitizeBodyMiddleware = (req: Request, _res: Response, next: NextFunction) => {
+export const sanitizeRequestMiddleware = (req: Request, _res: Response, next: NextFunction) => {
   if (req.body && typeof req.body === 'object') {
     req.body = sanitizeValue(req.body);
   }
+  if (req.query && typeof req.query === 'object') {
+    req.query = sanitizeValue(req.query) as Request['query'];
+  }
+
+  let params = sanitizeValue(req.params ?? {}) as Request['params'];
+  Object.defineProperty(req, 'params', {
+    configurable: true,
+    enumerable: true,
+    get: () => params,
+    set: (value: Request['params']) => {
+      params = sanitizeValue(value) as Request['params'];
+    },
+  });
+
   next();
 };
 

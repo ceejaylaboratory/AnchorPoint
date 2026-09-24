@@ -155,6 +155,9 @@ jobs:
       - name: Run Lint
         run: npm run lint
 
+      - name: Validate OpenAPI spec
+        run: npm run swagger:validate
+
       - name: Run Tests
         env:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"

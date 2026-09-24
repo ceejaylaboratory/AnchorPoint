@@ -1,17 +1,27 @@
 import request from 'supertest';
 import express, { Request, Response } from 'express';
-import { sanitizeBodyMiddleware, sanitizeValue } from './sanitize.middleware';
+import { sanitizeRequestMiddleware, sanitizeValue } from './sanitize.middleware';
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(sanitizeBodyMiddleware);
+app.use(sanitizeRequestMiddleware);
 
 app.post('/echo', (req: Request, res: Response) => {
   res.json(req.body);
 });
 
-describe('Sanitize Body Middleware', () => {
+app.get('/echo', (req: Request, res: Response) => {
+  res.json(req.query);
+});
+
+const nested = express.Router();
+nested.get('/:id', (req: Request, res: Response) => {
+  res.json(req.params);
+});
+app.use('/items', nested);
+
+describe('Sanitize Request Middleware', () => {
   it('strips HTML and script tags from string input values', async () => {
     const res = await request(app).post('/echo').send({
       name: '<script>alert("xss")</script>Alice',
@@ -76,6 +86,25 @@ describe('Sanitize Body Middleware', () => {
     expect(res.status).toEqual(200);
     expect(res.body.name).toEqual('Bold');
     expect(res.body.city).toEqual('Lagos');
+  });
+
+  it('strips script tags from query string values', async () => {
+    const res = await request(app)
+      .get('/echo')
+      .query({ search: '<script>alert(1)</script>books', tags: ['<b>a</b>', ' b '] });
+
+    expect(res.status).toEqual(200);
+    expect(res.body.search).toEqual('books');
+    expect(res.body.tags).toEqual(['a', 'b']);
+  });
+
+  it('strips script tags from route params populated by nested routers', async () => {
+    const res = await request(app).get(
+      `/items/${encodeURIComponent('<script>alert(1)</script>abc')}`,
+    );
+
+    expect(res.status).toEqual(200);
+    expect(res.body.id).toEqual('abc');
   });
 
   it('sanitizeValue strips tags and trims standalone strings', () => {
