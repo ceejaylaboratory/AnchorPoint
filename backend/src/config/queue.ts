@@ -200,9 +200,19 @@ export const QUEUE_NAMES = {
   WEBHOOK_DELIVERY: 'webhook-delivery',
   DEAD_LETTER_QUEUE: 'dead-letter-queue',
   FEE_REPORTS: 'fee-reports',
+  EMAIL_QUEUE: 'email-queue',
+  STELLAR_TX_QUEUE: 'stellar-tx-queue',
+  WEBHOOK_QUEUE: 'webhook-queue',
 } as const;
 
 export type QueueName = typeof QUEUE_NAMES[keyof typeof QUEUE_NAMES];
+
+// Worker Concurrency Tuning Configurations
+export const workerConcurrencyConfig = {
+  [QUEUE_NAMES.EMAIL_QUEUE]: parseInt(process.env.EMAIL_QUEUE_CONCURRENCY || '5', 10),
+  [QUEUE_NAMES.STELLAR_TX_QUEUE]: parseInt(process.env.STELLAR_TX_QUEUE_CONCURRENCY || '1', 10), // often 1 for nonce sequentiality
+  [QUEUE_NAMES.WEBHOOK_QUEUE]: parseInt(process.env.WEBHOOK_QUEUE_CONCURRENCY || '10', 10),
+};
 
 // Returns effective job options for a given type, adjusted for STELLAR_NETWORK
 export function getEffectiveJobOptions(jobType: string): Partial<JobsOptions> {

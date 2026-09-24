@@ -27,12 +27,43 @@ const getLogLevel = () => {
   return process.env.NODE_ENV === "production" ? "info" : "debug";
 };
 
+const SENSITIVE_KEYS = /secret|token|password|tax_id|email/i;
+
+export const maskPIIFormat = winston.format((info) => {
+  const redact = (obj: any): any => {
+    if (obj === null || typeof obj !== "object") return obj;
+    if (Array.isArray(obj)) return obj.map(redact);
+
+    const redactedObj: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (SENSITIVE_KEYS.test(key)) {
+        redactedObj[key] = "***REDACTED***";
+      } else {
+        redactedObj[key] = redact(value);
+      }
+    }
+    return redactedObj;
+  };
+
+  for (const key of Object.keys(info)) {
+    if (typeof key === "string" && SENSITIVE_KEYS.test(key)) {
+      info[key] = "***REDACTED***";
+    } else if (typeof key === "string" && typeof info[key] === "object") {
+      info[key] = redact(info[key]);
+    }
+  }
+
+  return info;
+});
+
 // Structured JSON format chain: trace context first, then structured JSON
 const logFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   traceContextFormat(),
   correlationIdFormat(),
   structuredJsonFormat(),
+  maskPIIFormat(),
+  winston.format.json()
 );
 
 // Create logger instance with structured JSON format in all environments
