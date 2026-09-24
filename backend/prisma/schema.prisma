@@ -238,10 +238,12 @@ model KycCustomer {
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   @@index([provider, providerRef])
   @@index([userId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model Quote {
@@ -706,10 +708,12 @@ model KycCustomer {
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   @@index([provider, providerRef])
   @@index([userId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model Quote {
@@ -1154,10 +1158,12 @@ model KycCustomer {
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   @@index([provider, providerRef])
   @@index([userId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model Quote {

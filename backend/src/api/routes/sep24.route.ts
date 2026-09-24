@@ -87,33 +87,45 @@ const toEpochSeconds = (date: Date | null | undefined): number | null => {
 /**
  * @swagger
  * /sep24/transactions/deposit/interactive:
- * post:
- * summary: Interactive Deposit
- * description: SEP-24 Interactive Deposit Endpoint. Returns a URL for the user to complete KYC/Deposit.
- * tags: [SEP-24]
- * requestBody:
- *   required: true
- *   content:
- *     application/json:
- *       schema:
- *         type: object
- *         required:
- *           - asset_code
- *         properties:
- *           asset_code:
- *             type: string
- *             description: Asset code to deposit (e.g., USDC, USD, BTC, ETH)
- *             example: USDC
- *           account:
- *             type: string
- *             description: Stellar Ed25519 public key (G...)
- *           amount:
- *             type: string
- *             description: Amount to deposit
- *           lang:
- *             type: string
- *             description: Language preference for the UI
- *             default: en
+ *   post:
+ *     summary: Interactive Deposit
+ *     description: SEP-24 Interactive Deposit Endpoint. Returns a URL for the user to complete KYC/Deposit.
+ *     tags: [SEP-24]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - asset_code
+ *             properties:
+ *               asset_code:
+ *                 type: string
+ *                 description: Asset code to deposit (e.g., USDC, USD, BTC, ETH)
+ *                 example: USDC
+ *               account:
+ *                 type: string
+ *                 description: Stellar Ed25519 public key (G...)
+ *               amount:
+ *                 type: string
+ *                 description: Amount to deposit
+ *               lang:
+ *                 type: string
+ *                 description: Language preference for the UI
+ *                 default: en
+ *               quote_id:
+ *                 type: string
+ *                 description: SEP-38 firm quote ID
+ *               memo:
+ *                 type: string
+ *               memo_type:
+ *                 type: string
+ *                 enum: [text, id, hash]
+ *               callback:
+ *                 type: string
+ *                 format: uri
+ *                 description: HTTPS URL for status callbacks
  *     responses:
  *       200:
  *         description: Interactive deposit URL generated
@@ -133,6 +145,10 @@ const toEpochSeconds = (date: Date | null | undefined): number | null => {
  *                   description: Unique transaction identifier
  *       400:
  *         description: Invalid request parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SepError'
  */
 router.post('/transactions/deposit/interactive', async (req: Request, res: Response) => {
   const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback, callback, memo, memo_type }: InteractiveRequest = req.body;
@@ -215,33 +231,45 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
 /**
  * @swagger
  * /sep24/transactions/withdraw/interactive:
- * post:
- * summary: Interactive Withdrawal
- * description: SEP-24 Interactive Withdraw Endpoint. Returns a URL for the user to complete KYC/Withdraw.
- * tags: [SEP-24]
- * requestBody:
- *   required: true
- *   content:
- *     application/json:
- *       schema:
- *         type: object
- *         required:
- *           - asset_code
- *         properties:
- *           asset_code:
- *             type: string
- *             description: Asset code to withdraw (e.g., USDC, USD, BTC, ETH)
- *               example: USDC
- *           account:
- *             type: string
- *             description: Destination Stellar Ed25519 public key (G...)
- *           amount:
- *             type: string
- *             description: Amount to withdraw
- *           lang:
- *             type: string
- *             description: Language preference for the UI
- *             default: en
+ *   post:
+ *     summary: Interactive Withdrawal
+ *     description: SEP-24 Interactive Withdraw Endpoint. Returns a URL for the user to complete KYC/Withdraw.
+ *     tags: [SEP-24]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - asset_code
+ *             properties:
+ *               asset_code:
+ *                 type: string
+ *                 description: Asset code to withdraw (e.g., USDC, USD, BTC, ETH)
+ *                 example: USDC
+ *               account:
+ *                 type: string
+ *                 description: Destination Stellar Ed25519 public key (G...)
+ *               amount:
+ *                 type: string
+ *                 description: Amount to withdraw
+ *               lang:
+ *                 type: string
+ *                 description: Language preference for the UI
+ *                 default: en
+ *               quote_id:
+ *                 type: string
+ *                 description: SEP-38 firm quote ID
+ *               memo:
+ *                 type: string
+ *               memo_type:
+ *                 type: string
+ *                 enum: [text, id, hash]
+ *               callback:
+ *                 type: string
+ *                 format: uri
+ *                 description: HTTPS URL for status callbacks
  *     responses:
  *       200:
  *         description: Interactive withdrawal URL generated
@@ -261,6 +289,10 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
  *                   description: Unique transaction identifier
  *       400:
  *         description: Invalid request parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SepError'
  */
 router.post('/transactions/withdraw/interactive', async (req: Request, res: Response) => {
   const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback, callback, memo, memo_type }: InteractiveRequest = req.body;
@@ -343,33 +375,41 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
 /**
  * @swagger
  * /sep24/transaction:
- * get:
- * summary: SEP-24 Transaction Status
- * description: SEP-24 Transaction Status Endpoint. Returns details of a specific transaction by id, stellar_transaction_id, or external_transaction_id.
- * tags: [SEP-24]
- * parameters:
- *   - in: query
- *     name: id
- *     schema:
- *       type: string
- *     description: Anchor transaction ID
- *   - in: query
- *     name: stellar_transaction_id
- *     schema:
- *       type: string
- *     description: Stellar transaction hash
- *   - in: query
- *     name: external_transaction_id
- *     schema:
- *       type: string
- *       description: External transaction ID
+ *   get:
+ *     summary: SEP-24 Transaction Status
+ *     description: SEP-24 Transaction Status Endpoint. Returns details of a specific transaction by id, stellar_transaction_id, or external_transaction_id.
+ *     tags: [SEP-24]
+ *     parameters:
+ *       - in: query
+ *         name: id
+ *         schema:
+ *           type: string
+ *         description: Anchor transaction ID
+ *       - in: query
+ *         name: stellar_transaction_id
+ *         schema:
+ *           type: string
+ *         description: Stellar transaction hash
+ *       - in: query
+ *         name: external_transaction_id
+ *         schema:
+ *           type: string
+ *         description: External transaction ID
  *     responses:
  *       200:
  *         description: Transaction details
  *       400:
  *         description: Missing query parameter or missing stellar transaction hash
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SepError'
  *       404:
  *         description: Transaction not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SepError'
  */
 router.get('/transaction', async (req: Request, res: Response) => {
   const { id, stellar_transaction_id, external_transaction_id } = req.query as Record<string, string>;

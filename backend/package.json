@@ -34,6 +34,7 @@
     "migrate:status": "prisma migrate status",
     "migrate:validate-env": "node scripts/validate-migration-env.js",
     "migrate:bootstrap": "bash scripts/bootstrap-db.sh",
+    "swagger:validate": "ts-node -P scripts/tsconfig.json scripts/validate-swagger.ts",
     "clean": "node -e \"const fs=require('fs'),path=require('path');function walk(dir){if(!fs.existsSync(dir))return;for(const f of fs.readdirSync(dir)){const fp=path.join(dir,f);if(fs.statSync(fp).isDirectory())walk(fp);else if(['.db-journal','.db-wal','.db-shm'].some(e=>f.endsWith(e))){fs.unlinkSync(fp);console.log('Removed:',fp)}}};walk('.');['logs','coverage'].forEach(d=>{if(fs.existsSync(d)){fs.rmSync(d,{recursive:true,force:true});console.log('Removed:',d)}});console.log('Clean complete');\""
   },
   "dependencies": {
@@ -86,6 +87,7 @@
     "xss": "^1.0.15"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^10.0.3",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.25",
     "@types/iarna__toml": "^2.0.5",
