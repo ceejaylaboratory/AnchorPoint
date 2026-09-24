@@ -75,6 +75,23 @@ describe('Backend API', () => {
     expect(res.text).toContain('AnchorPoint Backend API is running.');
   });
 
+  it('should set Helmet security headers (CSP, HSTS, frame-guard)', async () => {
+    const res = await request(app).get('/');
+
+    expect(res.headers['content-security-policy']).toEqual(
+      "default-src 'self';frame-ancestors 'none';object-src 'none'"
+    );
+    expect(res.headers['strict-transport-security']).toEqual('max-age=31536000; includeSubDomains; preload');
+    expect(res.headers['x-frame-options']).toEqual('DENY');
+    expect(res.headers['x-content-type-options']).toEqual('nosniff');
+    expect(res.headers['referrer-policy']).toEqual('no-referrer');
+    expect(res.headers['x-xss-protection']).toEqual('0');
+    expect(res.headers['x-download-options']).toEqual('noopen');
+    expect(res.headers['x-permitted-cross-domain-policies']).toEqual('none');
+    expect(res.headers['permissions-policy']).toContain('camera=()');
+    expect(res.headers['x-powered-by']).toBeUndefined();
+  });
+
   it('should include CORS header for allowed origin', async () => {
     const res = await request(app)
       .get('/')
