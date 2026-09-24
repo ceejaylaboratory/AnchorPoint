@@ -455,3 +455,27 @@ model UploadRecord {
   @@index([status])
   @@index([isTemporary, status, createdAt])
 }
+
+/// Historical FX rate snapshot recorded by the FX analytics service.
+/// Each row represents the mid-market rate (and optional spread) for an
+/// asset pair at a specific point in time.
+model FxRateHistory {
+  id               String   @id @default(uuid())
+  /// Source (sell-side) asset code, e.g. "USDC".
+  sourceAsset      String
+  /// Destination (buy-side) asset code, e.g. "XLM".
+  destinationAsset String
+  /// Mid-market exchange rate (sourceAsset → destinationAsset).
+  rate             Float
+  /// Bid price at snapshot time (optional).
+  bid              Float?
+  /// Ask price at snapshot time (optional).
+  ask              Float?
+  /// Spread = ask − bid in destination-asset units (optional).
+  spread           Float?
+  /// Wall-clock time when the snapshot was captured.
+  recordedAt       DateTime @default(now())
+
+  @@index([sourceAsset, destinationAsset, recordedAt])
+  @@index([recordedAt])
+}

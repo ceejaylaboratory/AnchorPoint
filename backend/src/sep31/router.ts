@@ -98,6 +98,19 @@ router.post(
 
       return res.status(201).json(result);
     } catch (err) {
+      // Surface receiver KYC and invalid memo errors as 400 responses
+      if (
+        err instanceof Error &&
+        (err as Error & { code?: string }).code === "receiver_kyc_required"
+      ) {
+        return sep31Error(res, 400, "receiver_kyc_required");
+      }
+      if (
+        err instanceof Error &&
+        (err as Error & { code?: string }).code === "invalid_field"
+      ) {
+        return sep31Error(res, 400, err.message);
+      }
       next(err);
     }
   }
