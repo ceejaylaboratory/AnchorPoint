@@ -7,6 +7,7 @@ if (!process.env.DATABASE_URL) {
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
 import { config } from '../config/env';
+import { withTracingExtension } from '../tracing/prisma.extension';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -124,6 +125,14 @@ if (typeof prismaAny.$use === 'function') {
   });
 }
 
+// ── Tracing (#1201) ───────────────────────────────────────────────────
+// Wrap every query in a `prisma:<Model>.<operation>` span. Query extensions
+// leave model types unchanged, so the client keeps the PrismaClient type.
+const client: PrismaClient =
+  typeof (prisma as { $extends?: unknown }).$extends === 'function'
+    ? (withTracingExtension(prisma) as unknown as PrismaClient)
+    : prisma;
+
 // ── Startup connection retry (production only) ────────────────────────
 // Eagerly verify the database connection on startup so the process fails
 // fast rather than throwing on the first HTTP request.
@@ -134,4 +143,4 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-export default prisma;
+export default client;

@@ -1,5 +1,56 @@
 import { trace, context, Span, SpanStatusCode, SpanKind, Context } from '@opentelemetry/api';
 import { AsyncLocalStorage } from 'async_hooks';
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
+import { IORedisInstrumentation } from '@opentelemetry/instrumentation-ioredis';
+import { BatchSpanProcessor, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-base';
+
+// ── SDK initialization (#1201) ────────────────────────────────────────
+
+let sdk: NodeSDK | null = null;
+
+/**
+ * OTLP/HTTP trace exporter. Honors the standard OTEL_EXPORTER_OTLP_ENDPOINT /
+ * OTEL_EXPORTER_OTLP_TRACES_ENDPOINT env vars (default http://localhost:4318/v1/traces),
+ * which Jaeger (>= 1.35) and the OpenTelemetry Collector both accept.
+ */
+export function createTraceExporter(): SpanExporter {
+  return new OTLPTraceExporter();
+}
+
+/**
+ * Starts the OpenTelemetry NodeSDK with HTTP, Express and ioredis auto-instrumentation.
+ * Prisma queries are traced via the client extension applied in lib/prisma.ts.
+ * Disabled when OTEL_ENABLED=false. Must run before `http`/`express` are loaded.
+ */
+export function initTracing(options: { spanProcessors?: SpanProcessor[] } = {}): NodeSDK | null {
+  if (sdk || process.env.OTEL_ENABLED === 'false') {
+    return sdk;
+  }
+
+  sdk = new NodeSDK({
+    serviceName: process.env.OTEL_SERVICE_NAME ?? 'anchorpoint-backend',
+    spanProcessors: options.spanProcessors ?? [new BatchSpanProcessor(createTraceExporter())],
+    instrumentations: [
+      new HttpInstrumentation(),
+      new ExpressInstrumentation(),
+      new IORedisInstrumentation(),
+    ],
+  });
+  sdk.start();
+  return sdk;
+}
+
+/** Flushes pending spans and stops the SDK. */
+export async function shutdownTracing(): Promise<void> {
+  if (sdk) {
+    const current = sdk;
+    sdk = null;
+    await current.shutdown();
+  }
+}
 
 const tracer = trace.getTracer('anchorpoint-backend');
 
@@ -170,3 +221,9 @@ export const setTraceAttribute = (key: string, value: any) =>
   tracingManager.setAttribute(key, value);
 
 export { SpanKind };
+
+// Start the SDK as soon as this module loads so instrumentation is registered
+// before `http`/`express`/`ioredis` are required (index.ts imports this first).
+if (process.env.NODE_ENV !== 'test') {
+  initTracing();
+}

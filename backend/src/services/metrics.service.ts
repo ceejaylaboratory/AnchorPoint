@@ -6,6 +6,7 @@ export class MetricsService {
   private httpRequestDuration: Histogram<string>;
   private httpRequestsTotal: Counter<string>;
   private activeConnections: Gauge<string>;
+  private activeWebSockets: Gauge<string>;
   private errorCounter: Counter<string>;
   private dbQueryDuration: Histogram<string>;
   private apiVersionGauge: Gauge<string>;
@@ -58,6 +59,13 @@ export class MetricsService {
     this.activeConnections = new promClient.Gauge({
       name: 'http_active_connections',
       help: 'Number of active HTTP connections',
+      registers: [this.registry],
+    });
+
+    // Gauge for active WebSocket (socket.io) connections
+    this.activeWebSockets = new promClient.Gauge({
+      name: 'websocket_active_connections',
+      help: 'Number of active WebSocket connections',
       registers: [this.registry],
     });
 
@@ -182,6 +190,9 @@ export class MetricsService {
     statusCode: number
   ): void {
     this.httpRequestsTotal.inc({ method, path, status_code: statusCode });
+    if (statusCode >= 400) {
+      this.incrementError(statusCode >= 500 ? 'http_5xx' : 'http_4xx', path);
+    }
   }
 
   /**
@@ -196,6 +207,17 @@ export class MetricsService {
    */
   setActiveConnections(count: number): void {
     this.activeConnections.set(count);
+  }
+
+  /**
+   * Track a WebSocket connection opening (+1) or closing (-1)
+   */
+  incrementWebSocketConnections(): void {
+    this.activeWebSockets.inc();
+  }
+
+  decrementWebSocketConnections(): void {
+    this.activeWebSockets.dec();
   }
 
   /**
