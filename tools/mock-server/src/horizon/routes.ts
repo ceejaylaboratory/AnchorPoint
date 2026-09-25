@@ -3,10 +3,12 @@
 
 import { Router, Request, Response } from 'express';
 import { getActiveScenario, ScenarioName, handleScenarioDelay } from '../scenarios';
+import { applyFault } from '../faults';
 
 export const horizonRouter = Router();
 
 horizonRouter.get('/accounts/:account_id', async (req: Request, res: Response): Promise<void> => {
+  if (await applyFault(res)) return;
   await handleScenarioDelay();
   const scenario = getActiveScenario();
 
@@ -34,6 +36,7 @@ horizonRouter.get('/accounts/:account_id', async (req: Request, res: Response): 
 });
 
 horizonRouter.post('/transactions', async (req: Request, res: Response): Promise<void> => {
+  if (await applyFault(res)) return;
   await handleScenarioDelay();
   const scenario = getActiveScenario();
 
@@ -55,6 +58,7 @@ horizonRouter.post('/transactions', async (req: Request, res: Response): Promise
 });
 
 horizonRouter.get('/fee_stats', async (req: Request, res: Response): Promise<void> => {
+  if (await applyFault(res)) return;
   await handleScenarioDelay();
   const scenario = getActiveScenario();
   
@@ -70,6 +74,7 @@ horizonRouter.get('/fee_stats', async (req: Request, res: Response): Promise<voi
 });
 
 horizonRouter.get('/ledgers/latest', async (req: Request, res: Response): Promise<void> => {
+  if (await applyFault(res)) return;
   await handleScenarioDelay();
   res.status(200).json({
     id: 'mock_ledger_hash',

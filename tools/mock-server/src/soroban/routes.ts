@@ -4,6 +4,7 @@
 import { Router, Request, Response } from 'express';
 import { getActiveScenario, ScenarioName, handleScenarioDelay } from '../scenarios';
 import { getLedgerEntry } from '../ledger-state';
+import { applyFault, getActiveFault } from '../faults';
 
 export const sorobanRouter = Router();
 
@@ -23,6 +24,7 @@ const sendJsonRpcError = (res: Response, id: string | number, code: number, mess
 };
 
 sorobanRouter.post('/', async (req: Request, res: Response): Promise<void> => {
+  if (await applyFault(res)) return;
   await handleScenarioDelay();
   const { jsonrpc, id, method, params } = req.body as JsonRpcRequest;
 
@@ -52,7 +54,11 @@ sorobanRouter.post('/', async (req: Request, res: Response): Promise<void> => {
       if (scenario === ScenarioName.TRANSACTION_FAILED) {
         sendJsonRpcResult(res, id, { status: 'ERROR', hash: 'mock_hash', errorResultXdr: 'error_xdr' });
       } else {
-        sendJsonRpcResult(res, id, { status: 'PENDING', hash: 'mock_hash', latestLedger: 1000 });
+        // INVALID_HASH fault: return a deliberately malformed transaction hash
+        const hash = getActiveFault().errorType === 'INVALID_HASH'
+          ? 'INVALID_HASH_0000000000000000000000000000000000000000000000000000000000000000'
+          : 'mock_hash';
+        sendJsonRpcResult(res, id, { status: 'PENDING', hash, latestLedger: 1000 });
       }
       break;
 

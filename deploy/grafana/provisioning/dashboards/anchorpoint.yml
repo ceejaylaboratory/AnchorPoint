@@ -1,0 +1,21 @@
+# deploy/grafana/provisioning/dashboards/anchorpoint.yml
+# ---------------------------------------------------------------------------
+# Grafana auto-provisioning: Dashboard provider
+# Grafana watches the path below and automatically loads / reloads any JSON
+# dashboard files it finds there.  New dashboards are picked up within the
+# updateIntervalSeconds window without requiring a restart.
+# ---------------------------------------------------------------------------
+apiVersion: 1
+
+providers:
+  - name: AnchorPoint
+    orgId: 1
+    folder: AnchorPoint
+    folderUid: anchorpoint
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -5,6 +5,7 @@ import express, { Express, Request, Response, NextFunction } from 'express';
 import { horizonRouter } from './horizon/routes';
 import { sorobanRouter } from './soroban/routes';
 import { scenarioRouter } from './scenarios';
+import { faultRouter } from './faults';
 
 const HORIZON_PORT = process.env.HORIZON_PORT || 8000;
 const SOROBAN_PORT = process.env.SOROBAN_PORT || 8001;
@@ -26,6 +27,7 @@ export const createServer = (): Express => {
 
   // Mount routes
   app.use('/mock/scenario', scenarioRouter);
+  app.use('/mock/faults', faultRouter);
   app.use('/soroban/rpc', sorobanRouter);
   // Horizon REST routes sit at the root
   app.use('/', horizonRouter);
