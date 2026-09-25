@@ -375,7 +375,7 @@ class MigrationIntegrityChecker {
    * Check if there are any errors
    */
   private hasErrors(): boolean {
-    return !this.results.some(r => r.severity === 'error' && !r.passed);
+    return this.results.some(r => r.severity === 'error' && !r.passed);
   }
 
   /**
