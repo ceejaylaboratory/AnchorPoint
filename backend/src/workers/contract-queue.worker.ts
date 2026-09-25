@@ -6,6 +6,7 @@ import logger from '../utils/logger';
 import { defaultWorkerOptions, QUEUE_NAMES, retryStrategies } from '../config/queue';
 import { ContractJobData, JobResult } from '../services/contract-queue.service';
 import sorobanErrorService from '../services/soroban-error.service';
+import { setupWorkerGracefulShutdown } from './graceful-shutdown';
 
 /**
  * Contract Queue Worker
@@ -440,33 +441,19 @@ function startWorker() {
   logger.info(`   Queue: ${QUEUE_NAMES.CONTRACT_INTERACTIONS}`);
   logger.info(`   Concurrency: ${defaultWorkerOptions.concurrency}`);
 
-  // Graceful shutdown
-  let isShuttingDown = false;
-  const gracefulShutdown = async (signal: string) => {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    
-    logger.info(`${signal} received, closing worker gracefully...`);
-    try {
-      // Close the worker, which waits for active jobs to finish
-      await worker.close();
-      
-      // Close the DLQ connection
-      await dlq.close();
-      
-      // Disconnect from Redis
-      await worker.disconnect();
-      
-      logger.info('Worker closed and disconnected successfully');
-      process.exit(0);
-    } catch (error) {
-      logger.error('Error during worker shutdown:', error);
-      process.exit(1);
-    }
-  };
-
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  // Graceful shutdown with 15-second grace window
+  setupWorkerGracefulShutdown(worker, {
+    workerName: 'Contract queue worker',
+    timeoutMs: 15000,
+    onShutdown: async () => {
+      try {
+        await dlq.close();
+        logger.info('DLQ closed successfully');
+      } catch (dlqErr) {
+        logger.warn('Error closing DLQ during shutdown:', dlqErr);
+      }
+    },
+  });
 
   return worker;
 }

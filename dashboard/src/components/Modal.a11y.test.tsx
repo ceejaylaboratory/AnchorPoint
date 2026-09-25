@@ -179,6 +179,19 @@ describe('ConfirmModal accessibility', () => {
 });
 
 describe('WalletModal accessibility', () => {
+  beforeEach(() => {
+    (window as any).freighterApi = {
+      isConnected: async () => true,
+      getPublicKey: async () => 'GB...',
+      getNetwork: async () => 'PUBLIC',
+      signTransaction: async () => '',
+    };
+  });
+
+  afterEach(() => {
+    delete (window as any).freighterApi;
+  });
+
   it('renders as a labelled modal dialog', () => {
     render(<WalletModal isOpen onClose={() => {}} onSelect={() => {}} />);
 
@@ -207,11 +220,12 @@ describe('WalletModal accessibility', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('reports the chosen provider', () => {
+  it('reports the chosen provider', async () => {
     const onSelect = vi.fn();
     render(<WalletModal isOpen onClose={() => {}} onSelect={onSelect} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Freighter/ }));
+    const button = await screen.findByRole('button', { name: /Freighter/ });
+    fireEvent.click(button);
     expect(onSelect).toHaveBeenCalledWith('freighter');
   });
 

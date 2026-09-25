@@ -74,8 +74,10 @@ export class WalletManager {
     await Promise.all(
       options.map(async (option) => {
         const adapter = this.adapters.get(option.id);
-        if (adapter) {
+        if (adapter && typeof adapter.isInstalled === 'function') {
           option.installed = await adapter.isInstalled();
+        } else if (adapter) {
+          option.installed = true;
         }
       })
     );

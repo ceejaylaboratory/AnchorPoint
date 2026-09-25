@@ -42,7 +42,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  const unreadCount = notifications.filter((notification) => notification.status === 'PENDING' && !notification.readAt).length;
+  const unreadCount = notifications.filter((notification) => !notification.readAt).length;
 
   // Initialize audio context for ping sound
   useEffect(() => {

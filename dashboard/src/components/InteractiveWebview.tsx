@@ -17,11 +17,18 @@ interface InteractiveWebviewProps {
   title?: string;
 }
 
-const SIMULATED_STEPS = [
-  { label: 'Establishing secure channel…', duration: 800 },
-  { label: 'Loading anchor KYC flow…', duration: 900 },
-  { label: 'Rendering interactive form…', duration: 700 },
-];
+const SIMULATED_STEPS =
+  process.env.NODE_ENV === 'test'
+    ? [
+        { label: 'Establishing secure channel…', duration: 50 },
+        { label: 'Loading anchor KYC flow…', duration: 50 },
+        { label: 'Rendering interactive form…', duration: 50 },
+      ]
+    : [
+        { label: 'Establishing secure channel…', duration: 800 },
+        { label: 'Loading anchor KYC flow…', duration: 900 },
+        { label: 'Rendering interactive form…', duration: 700 },
+      ];
 
 export const InteractiveWebview = ({
   anchorName,
@@ -235,7 +242,10 @@ export const InteractiveWebview = ({
               </div>
 
               <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">
-                <p className="text-sm font-semibold text-slate-200">{anchorName} - Identity Verification</p>
+                <p className="text-sm font-semibold text-slate-200">
+                  <span className="text-slate-400">{anchorName} - </span>
+                  <span>Identity Verification</span>
+                </p>
                 <div className="w-full max-w-xs space-y-3">
                   <div>
                     <label htmlFor="webview-fullname" className="mb-1 block text-xs text-slate-400">

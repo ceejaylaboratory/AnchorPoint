@@ -70,13 +70,13 @@ interface TokenResponse {
  * Generates and stores a challenge for the given account
  */
 function readStringParam(bodyValue: unknown, queryValue: unknown): string | undefined {
-  if (typeof bodyValue === 'string' && bodyValue.length > 0) {
+  if (typeof bodyValue === 'string') {
     return bodyValue;
   }
-  if (typeof queryValue === 'string' && queryValue.length > 0) {
+  if (typeof queryValue === 'string') {
     return queryValue;
   }
-  if (Array.isArray(queryValue) && typeof queryValue[0] === 'string' && queryValue[0].length > 0) {
+  if (Array.isArray(queryValue) && typeof queryValue[0] === 'string') {
     return queryValue[0];
   }
   return undefined;
@@ -92,7 +92,7 @@ export const getChallenge = async (
   const client_domain = readStringParam(body.client_domain, req.query?.client_domain);
   const { signers, threshold, multiKey } = body;
 
-  if (!account) {
+  if (!account || !account.trim()) {
     return res.status(400).json({
       error: 'account parameter is required'
     });

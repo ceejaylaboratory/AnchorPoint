@@ -301,8 +301,8 @@ export class Sep38Controller {
     const intervalMs = Math.floor((safeHours * 60 * 60 * 1000) / safeHours);
     const seed = (source + dest).split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
 
-    const quote = await this.getPriceQuote(source, 1, dest, 'preview-chart', true);
-    const currentPrice = quote.price;
+    const quote = await this.getPriceQuote(source, '1', dest, 'preview-chart', true);
+    const currentPrice = parseFloat(quote.price);
 
     const points: PriceHistoryPoint[] = [];
 

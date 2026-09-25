@@ -28,15 +28,6 @@ function generateMemo(): { memo: string; memo_type: "text" } {
   return { memo, memo_type: "text" };
 }
 
-function calculateAmountOut(amountIn: string): string {
-  const raw = toDecimal(amountIn);
-  const fee = raw.times(FEE_PERCENT).plus(FEE_FIXED);
-  return formatDecimal(raw.minus(fee));
-}
-
-function calculateFee(amountIn: string): string {
-  const raw = toDecimal(amountIn);
-  return formatDecimal(raw.times(FEE_PERCENT).plus(FEE_FIXED));
 /** Resolves fee parameters from config or falls back to hardcoded defaults. */
 function resolveFeeParams(
   assetCode: string,

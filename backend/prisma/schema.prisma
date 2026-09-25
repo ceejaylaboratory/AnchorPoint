@@ -178,8 +178,6 @@ model FeeReport {
   @@index([endDate])
 }
 
-
-
 model NotificationPreference {
   id           String  @id @default(uuid())
   userId       String  @unique

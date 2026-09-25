@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom';
 import { render, screen } from '@testing-library/react';
 import PriceChart, { PricePoint } from './PriceChart';
 
@@ -12,21 +13,21 @@ describe('PriceChart', () => {
     render(
       <PriceChart data={null} loading sourceAsset="USDC" destinationAsset="XLM" error={null} />
     );
-    expect(screen.getByText(/Loading price chart.../i)).toBeIntheDocument();
+    expect(screen.getByText(/Loading price chart.../i)).toBeInTheDocument();
   });
 
   test('renders error state', () => {
     render(
       <PriceChart data={null} loading={false} sourceAsset="USDC" destinationAsset="XLM" error="Network error" />
     );
-    expect(screen.getByText(/Error: Network error/i)).toBeIntheDocument();
+    expect(screen.getByText(/Error: Network error/i)).toBeInTheDocument();
   });
 
   test('renders empty state', () => {
     render(
       <PriceChart data={null} loading={false} sourceAsset="USDC" destinationAsset="XLM" error={null} />
     );
-    expect(screen.getByText(/No price history available/i)).toBeIntheDocument();
+    expect(screen.getByText(/No price history available/i)).toBeInTheDocument();
   });
 
   test('renders high and low values', () => {
