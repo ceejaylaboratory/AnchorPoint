@@ -1,5 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import { submissionLimiterOptions, TIER_LIMITS, TIER_AUTH_LIMITS, TIER_SENSITIVE_LIMITS } from './rate-limit.middleware';
+import {
+  submissionLimiterOptions,
+  TIER_LIMITS,
+  TIER_AUTH_LIMITS,
+  TIER_SENSITIVE_LIMITS,
+  RedisWithMemoryFallbackStore,
+} from './rate-limit.middleware';
 import * as StellarSdk from '@stellar/stellar-sdk';
 
 jest.mock('@stellar/stellar-sdk', () => {
@@ -168,6 +174,78 @@ describe('Rate Limit Middleware', () => {
     it('should export a tiered sensitive limiter', () => {
       const { tieredSensitiveLimiter } = require('./rate-limit.middleware');
       expect(tieredSensitiveLimiter).toBeDefined();
+    });
+  });
+
+  describe('RedisWithMemoryFallbackStore', () => {
+    function makeStores() {
+      const redisStore = {
+        init: jest.fn(),
+        increment: jest.fn(),
+        decrement: jest.fn(),
+        resetKey: jest.fn(),
+      };
+      const memoryStore = {
+        init: jest.fn(),
+        increment: jest.fn(),
+        decrement: jest.fn(),
+        resetKey: jest.fn(),
+      };
+      return { redisStore, memoryStore };
+    }
+
+    it('delegates increment to the Redis store when it succeeds', async () => {
+      const { redisStore, memoryStore } = makeStores();
+      redisStore.increment.mockResolvedValue({ totalHits: 5, resetTime: undefined });
+      const store = new RedisWithMemoryFallbackStore(redisStore as any, memoryStore as any);
+
+      const result = await store.increment('key1');
+
+      expect(result).toEqual({ totalHits: 5, resetTime: undefined });
+      expect(memoryStore.increment).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the in-memory store when Redis throws on increment', async () => {
+      const { redisStore, memoryStore } = makeStores();
+      redisStore.increment.mockRejectedValue(new Error('connection refused'));
+      memoryStore.increment.mockResolvedValue({ totalHits: 1, resetTime: undefined });
+      const store = new RedisWithMemoryFallbackStore(redisStore as any, memoryStore as any);
+
+      const result = await store.increment('key1');
+
+      expect(result).toEqual({ totalHits: 1, resetTime: undefined });
+      expect(memoryStore.increment).toHaveBeenCalledWith('key1');
+    });
+
+    it('falls back to the in-memory store when Redis throws on decrement', async () => {
+      const { redisStore, memoryStore } = makeStores();
+      redisStore.decrement.mockRejectedValue(new Error('connection refused'));
+      const store = new RedisWithMemoryFallbackStore(redisStore as any, memoryStore as any);
+
+      await store.decrement('key1');
+
+      expect(memoryStore.decrement).toHaveBeenCalledWith('key1');
+    });
+
+    it('falls back to the in-memory store when Redis throws on resetKey', async () => {
+      const { redisStore, memoryStore } = makeStores();
+      redisStore.resetKey.mockRejectedValue(new Error('connection refused'));
+      const store = new RedisWithMemoryFallbackStore(redisStore as any, memoryStore as any);
+
+      await store.resetKey('key1');
+
+      expect(memoryStore.resetKey).toHaveBeenCalledWith('key1');
+    });
+
+    it('initializes both the Redis and memory stores', () => {
+      const { redisStore, memoryStore } = makeStores();
+      const store = new RedisWithMemoryFallbackStore(redisStore as any, memoryStore as any);
+      const options = {} as any;
+
+      store.init(options);
+
+      expect(redisStore.init).toHaveBeenCalledWith(options);
+      expect(memoryStore.init).toHaveBeenCalledWith(options);
     });
   });
 });
