@@ -151,6 +151,13 @@ model Transaction {
   completedAt         DateTime?
   refunded            Boolean        @default(false)
 
+  // SEP-38 quote binding (rate locked at submission)
+  quoteId             String?
+  quotePrice          String?
+
+  // SEP-24 claimable balance deposits to unfunded / no-trustline accounts
+  claimableBalanceId  String?
+
    @@index([userId])
    @@index([type])
    @@index([status])

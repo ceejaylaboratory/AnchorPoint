@@ -223,4 +223,86 @@ export class FeeService {
       feeMinimum: asset.feeMinimum,
     };
   }
+
+  /**
+   * Calculates an itemized SEP-24 fee breakdown for a given asset, operation,
+   * and amount. Applies tiered percentage rules on top of any asset-level fixed
+   * fee:
+   *
+   *  - amount  < 1 000  → 1.00 % percentage tier
+   *  - amount >= 1 000  → 0.50 % percentage tier
+   *
+   * Returns individual line items (fixed_fee, percentage_fee) so wallets can
+   * display a transparent cost breakdown to the user.
+   */
+  calculateSep24Fee(
+    assetCode: string,
+    operation: 'deposit' | 'withdrawal',
+    amount: number | string,
+  ): Sep24FeeResult {
+    const asset = getAsset(assetCode);
+    if (!asset) {
+      throw new Error(`Unknown asset: ${assetCode}`);
+    }
+
+    const amountValue = Number(formatDecimal(toDecimal(amount)));
+
+    // Tiered percentage: 1 % below $1 000, 0.5 % at or above $1 000
+    const tierPercent = amountValue < 1_000 ? 0.01 : 0.005;
+
+    const fixedFee = Number(formatDecimal(toDecimal(asset.feeFixed)));
+    const percentageFee = Number(
+      formatDecimal(toDecimal(amountValue).times(tierPercent), DECIMAL_PRECISION),
+    );
+    const totalFee = Number(
+      formatDecimal(toDecimal(fixedFee).plus(percentageFee), DECIMAL_PRECISION),
+    );
+
+    const feeDetails: Sep24FeeDetail[] = [];
+
+    if (fixedFee > 0) {
+      feeDetails.push({
+        name: 'Flat fee',
+        amount: String(fixedFee),
+        description: `Flat processing fee for ${operation}`,
+      });
+    }
+
+    feeDetails.push({
+      name: 'Variable fee',
+      amount: String(percentageFee),
+      description: `${(tierPercent * 100).toFixed(2)}% fee (${amountValue < 1_000 ? 'standard tier' : 'reduced tier for amounts ≥ 1 000'})`,
+    });
+
+    return {
+      assetCode: asset.code,
+      operation,
+      inputAmount: amountValue,
+      totalFee,
+      feeFixed: fixedFee,
+      feePercent: tierPercent,
+      feeDetails,
+    };
+  }
+}
+
+// ─── SEP-24 itemized fee types ────────────────────────────────────────────────
+
+export interface Sep24FeeDetail {
+  /** Human-readable name of the fee component. */
+  name: string;
+  /** Fee amount as a string for precision. */
+  amount: string;
+  /** Optional explanation shown to the end user. */
+  description?: string;
+}
+
+export interface Sep24FeeResult {
+  assetCode: string;
+  operation: 'deposit' | 'withdrawal';
+  inputAmount: number;
+  totalFee: number;
+  feeFixed: number;
+  feePercent: number;
+  feeDetails: Sep24FeeDetail[];
 }
