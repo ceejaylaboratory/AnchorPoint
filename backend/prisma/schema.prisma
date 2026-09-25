@@ -158,6 +158,7 @@ model Transaction {
    @@index([status, createdAt])
    @@index([userId, createdAt])
    @@index([status, updatedAt])
+   @@index([userId, status, createdAt])
 }
 
 model FeeReport {
@@ -242,6 +243,7 @@ model KycCustomer {
   @@index([provider, providerRef])
   @@index([userId])
   @@index([status])
+  @@index([userId, status, createdAt])
 }
 
 model Quote {
