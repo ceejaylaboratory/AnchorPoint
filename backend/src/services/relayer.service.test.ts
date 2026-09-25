@@ -168,6 +168,8 @@ describe('RelayerService', () => {
       const expected = 'approve|GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC|GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB|100|USDC|GDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD|test-nonce|1234567890';
       expect(message).toBe(expected);
     });
+  });
+
   describe('getFeeEstimate', () => {
     it('should compute dynamic fee with surge multiplier and max fee cap', async () => {
       const mockFeeStats = {

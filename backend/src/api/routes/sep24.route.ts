@@ -400,8 +400,8 @@ router.get('/transaction', async (req: Request, res: Response) => {
     const stored = await Sep24Service.getCallback(transaction.id);
     const validHash: string = stellarTxHash;
 
-    const startedAt = toEpochSeconds(transaction.startedAt);
-    const completedAt = toEpochSeconds(transaction.completedAt);
+    const startedAt = toEpochSeconds((transaction as any).startedAt ?? transaction.createdAt);
+    const completedAt = toEpochSeconds((transaction as any).completedAt ?? transaction.updatedAt);
 
     return res.json({
       transaction: {

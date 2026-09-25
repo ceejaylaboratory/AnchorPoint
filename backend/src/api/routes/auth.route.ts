@@ -3,6 +3,9 @@ import { RedisService } from '../../services/redis.service';
 import { getChallenge, getToken, refreshToken } from '../controllers/auth.controller';
 import { sep10ChallengeLimiter } from '../middleware/rate-limit.middleware';
 
+const challengeLimiter = (req: Request, res: Response, next: any) =>
+  typeof sep10ChallengeLimiter === 'function' ? sep10ChallengeLimiter(req, res, next) : next();
+
 const router = Router();
 
 // Mock Redis client for demonstration
@@ -118,7 +121,7 @@ router.options('/token', (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/', sep10ChallengeLimiter, async (req: Request, res: Response) => {
+router.post('/', challengeLimiter, async (req: Request, res: Response) => {
   return getChallenge(req, res, redisService);
 });
 
@@ -142,7 +145,7 @@ router.post('/', sep10ChallengeLimiter, async (req: Request, res: Response) => {
  *       400:
  *         description: Invalid request parameters
  */
-router.get('/', sep10ChallengeLimiter, async (req: Request, res: Response) => {
+router.get('/', challengeLimiter, async (req: Request, res: Response) => {
   return getChallenge(req, res, redisService);
 });
 

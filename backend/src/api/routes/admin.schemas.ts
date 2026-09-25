@@ -10,7 +10,7 @@ import { z } from 'zod';
 
 export const switchNetworkSchema = z.object({
   network: z.enum(['testnet', 'mainnet'], {
-    errorMap: () => ({ message: 'network must be "testnet" or "mainnet"' }),
+    message: 'network must be "testnet" or "mainnet"',
   }),
 });
 
@@ -40,7 +40,7 @@ export const passwordResetConfirmSchema = z.object({
 export const purgeCacheSchema = z.object({
   cacheType: z
     .enum(['toml', 'all'], {
-      errorMap: () => ({ message: 'cacheType must be "toml" or "all"' }),
+      message: 'cacheType must be "toml" or "all"',
     })
     .optional()
     .default('toml'),

@@ -18,7 +18,7 @@ vi.mock('recharts', () => ({
 describe('ServiceStatusPanel', () => {
   beforeEach(() => {
     mockFetch.mockClear();
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
   afterEach(() => {

@@ -24,7 +24,7 @@ export class UserPasswordResetService {
   async requestPasswordReset(email: string): Promise<string> {
     const normalizedEmail = normalizeEmail(email);
 
-    const user = await prisma.user.findUnique({
+    const user = await (prisma as any).user.findUnique({
       where: { email: normalizedEmail },
       select: { id: true, email: true },
     });
@@ -38,7 +38,7 @@ export class UserPasswordResetService {
     const tokenHash = hashResetToken(rawToken);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
 
-    await prisma.$transaction(async (tx: any) => {
+    await (prisma as any).$transaction(async (tx: any) => {
       await tx.userPasswordResetToken.updateMany({
         where: {
           userId: user.id,
@@ -64,7 +64,7 @@ export class UserPasswordResetService {
   async confirmPasswordReset(token: string, newPassword: string): Promise<void> {
     const tokenHash = hashResetToken(token);
 
-    const existingToken = await prisma.userPasswordResetToken.findUnique({
+    const existingToken = await (prisma as any).userPasswordResetToken.findUnique({
       where: { tokenHash },
       include: { user: true },
     });

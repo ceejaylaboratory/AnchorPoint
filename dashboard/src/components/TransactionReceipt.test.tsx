@@ -54,21 +54,21 @@ describe('TransactionReceipt', () => {
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(revokeMock);
     const originalCreateElement = document.createElement.bind(document);
     let capturedLink: HTMLAnchorElement | null = null;
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
       const element = originalCreateElement(tag);
       if (tag === 'a') {
         capturedLink = element as HTMLAnchorElement;
         element.click = clickMock;
       }
       return element;
-    });
+    }) as any);
 
     render(<TransactionReceipt transaction={baseTransaction} />);
     fireEvent.click(screen.getByRole('button', { name: /save receipt/i }));
 
     expect(urlMock).toHaveBeenCalledTimes(1);
     expect(clickMock).toHaveBeenCalledTimes(1);
-    expect(capturedLink?.download).toBe('AnchorPoint_Receipt_tx-042.html');
+    expect((capturedLink as any)?.download).toBe('AnchorPoint_Receipt_tx-042.html');
     expect(revokeMock).toHaveBeenCalledTimes(1);
   });
 });

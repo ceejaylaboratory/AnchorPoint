@@ -64,7 +64,7 @@ export interface AuditLogQuery {
  */
 export function getAuditActor(req: Request): AuditActor {
   const authed = req as Request & {
-    admin?: { id?: string; email?: string };
+    admin?: { id?: string; email?: string; publicKey?: string };
     user?: { id?: string; email?: string; publicKey?: string };
     apiKey?: { id?: string; label?: string };
   };

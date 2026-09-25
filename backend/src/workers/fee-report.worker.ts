@@ -2,6 +2,7 @@ import { Worker, Job } from 'bullmq';
 import { FeeReportService, FeeReportJobData } from '../services/fee-report.service';
 import { defaultWorkerOptions, QUEUE_NAMES } from '../config/queue';
 import logger from '../utils/logger';
+import { setupWorkerGracefulShutdown } from './graceful-shutdown';
 
 const feeReportService = new FeeReportService();
 
@@ -68,11 +69,8 @@ feeReportWorker.on('error', (err) => {
 // If executed directly as worker process
 if (require.main === module) {
   logger.info('Fee report worker process started');
-  const shutdown = async () => {
-    logger.info('Shutting down fee report worker process...');
-    await feeReportWorker.close();
-    process.exit(0);
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  setupWorkerGracefulShutdown(feeReportWorker, {
+    workerName: 'Fee report worker',
+    timeoutMs: 15000,
+  });
 }
