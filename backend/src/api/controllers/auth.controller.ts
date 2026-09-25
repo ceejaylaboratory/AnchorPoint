@@ -89,6 +89,9 @@ export const getChallenge = async (
 ): Promise<Response> => {
   const body = (req.body ?? {}) as ChallengeRequest;
   const account = readStringParam(body.account, req.query?.account);
+  // Capture the raw body value before readStringParam trims empty strings so
+  // we can detect an explicitly supplied but empty/invalid client_domain.
+  const rawClientDomain = body.client_domain as unknown;
   const client_domain = readStringParam(body.client_domain, req.query?.client_domain);
   const { signers, threshold, multiKey } = body;
 
@@ -98,8 +101,15 @@ export const getChallenge = async (
     });
   }
 
-  if (client_domain !== undefined) {
-    if (!validateClientDomain(client_domain)) {
+  // If client_domain was explicitly provided (including as an empty string or
+  // whitespace-only value), validate it. readStringParam returns undefined for
+  // empty strings, so we check the raw value to catch that case.
+  const clientDomainSupplied =
+    client_domain !== undefined ||
+    (typeof rawClientDomain === 'string' && rawClientDomain.trim() === '');
+
+  if (clientDomainSupplied) {
+    if (!client_domain || !validateClientDomain(client_domain)) {
       return res.status(400).json({
         error: 'invalid_client_domain',
         message: 'client_domain must be a valid hostname without scheme'
@@ -123,11 +133,12 @@ export const getChallenge = async (
     const anchorPublicKey = config.ANCHOR_PUBLIC_KEY || 'GBAD_PUBLIC_KEY'; // Default for demo
     const networkType = config.STELLAR_NETWORK === 'public' ? NetworkType.PUBLIC : NetworkType.TESTNET;
 
-    // Generate a SEP-10 challenge transaction
+    // Generate a SEP-10 challenge transaction, embedding client_domain when provided
     const sep10Challenge = generateSep10ChallengeTransaction(
       anchorPublicKey,
       account,
-      networkType
+      networkType,
+      client_domain
     );
 
     // Store the challenge in Redis
