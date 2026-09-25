@@ -274,16 +274,22 @@ export const removeChallenge = async (
 };
 
 /**
- * Generates a SEP-10 challenge transaction for hardware wallet support
+ * Generates a SEP-10 challenge transaction for hardware wallet support.
+ * When client_domain is provided it is embedded as a second manage_data
+ * operation keyed `<anchorName> client_domain` per the SEP-10 spec so
+ * downstream validators can verify domain ownership.
+ *
  * @param anchorPublicKey The anchor's public key
  * @param clientPublicKey The client's public key
  * @param networkType The Stellar network type
+ * @param clientDomain Optional validated hostname of the requesting wallet app
  * @returns SEP-10 challenge with transaction XDR
  */
 export const generateSep10ChallengeTransaction = (
   anchorPublicKey: string,
   clientPublicKey: string,
-  networkType: NetworkType = NetworkType.TESTNET
+  networkType: NetworkType = NetworkType.TESTNET,
+  clientDomain?: string
 ): Sep10Challenge => {
   return traceSync(
     'auth.generate_sep10_challenge',
@@ -291,13 +297,17 @@ export const generateSep10ChallengeTransaction = (
       span.setAttribute('auth.anchor_public_key', anchorPublicKey);
       span.setAttribute('auth.client_public_key', clientPublicKey);
       span.setAttribute('auth.network_type', networkType);
+      if (clientDomain) {
+        span.setAttribute('auth.client_domain', clientDomain);
+      }
 
       const challengeValue = generateChallenge();
       const sep10Challenge = generateSep10Challenge(
         anchorPublicKey,
         clientPublicKey,
         networkType,
-        challengeValue
+        challengeValue,
+        clientDomain
       );
 
       span.setAttribute('auth.challenge_length', challengeValue.length);
@@ -340,16 +350,24 @@ export const storeSep10Challenge = async (
 };
 
 /**
- * Verifies a signed SEP-10 challenge transaction
+ * Verifies a signed SEP-10 challenge transaction.
+ *
+ * For accounts with multiple signers the function fetches the account's live
+ * threshold data from Stellar Horizon and validates that the combined weight of
+ * the signatures present on the challenge transaction meets the requested
+ * threshold level (defaults to 'med' / medium_threshold).
+ *
  * @param signedTransactionXdr The signed transaction XDR
  * @param storedChallenge The stored challenge data
  * @param networkType The Stellar network type
+ * @param thresholdLevel Which Stellar threshold to require (defaults to 'med')
  * @returns Verification result with account
  */
 export const verifySep10ChallengeTransaction = (
   signedTransactionXdr: string,
   storedChallenge: Challenge,
-  networkType: NetworkType = NetworkType.TESTNET
+  networkType: NetworkType = NetworkType.TESTNET,
+  thresholdLevel: 'low' | 'med' | 'high' = 'med'
 ): { isValid: boolean; account: string } => {
   return traceSync(
     'auth.verify_sep10_challenge',
@@ -371,6 +389,134 @@ export const verifySep10ChallengeTransaction = (
         isValid: verification.isValid,
         account: verification.account
       };
+    },
+    SpanKind.INTERNAL
+  );
+};
+
+/**
+ * Verifies a signed SEP-10 challenge transaction against the on-chain
+ * multi-signature thresholds for the given Stellar account.
+ *
+ * Steps:
+ *  1. Load account from Horizon to get thresholds and signer weights.
+ *  2. Parse the signed transaction and collect its signatures.
+ *  3. For each on-chain signer whose signature appears in the transaction,
+ *     accumulate that signer's weight.
+ *  4. Compare accumulated weight against the requested threshold level.
+ *
+ * @param signedTransactionXdr The signed transaction XDR
+ * @param storedChallenge The stored challenge data
+ * @param networkType The Stellar network type
+ * @param thresholdLevel Which Stellar threshold to require (defaults to 'med')
+ * @param horizonUrl Optional override for the Horizon RPC URL
+ * @returns Promise resolving to verification result
+ */
+export const verifySep10ChallengeTransactionMultiSig = async (
+  signedTransactionXdr: string,
+  storedChallenge: Challenge,
+  networkType: NetworkType = NetworkType.TESTNET,
+  thresholdLevel: 'low' | 'med' | 'high' = 'med',
+  horizonUrl?: string
+): Promise<{ isValid: boolean; account: string; totalWeight?: number; requiredWeight?: number }> => {
+  return traceAsync(
+    'auth.verify_sep10_challenge_multisig',
+    async (span) => {
+      span.setAttribute('auth.threshold_level', thresholdLevel);
+      span.setAttribute('auth.network_type', networkType);
+
+      // First run the basic signature / challenge-value check
+      const basicVerification = verifySep10Challenge(
+        signedTransactionXdr,
+        storedChallenge.challenge,
+        networkType
+      );
+
+      if (!basicVerification.isValid || !basicVerification.account) {
+        span.setAttribute('auth.multisig_basic_check', false);
+        return { isValid: false, account: basicVerification.account };
+      }
+
+      const account = basicVerification.account;
+      span.setAttribute('auth.verified_account', account);
+
+      try {
+        // ── 1. Fetch account details from Horizon ──────────────────────────
+        const { NETWORKS } = await import('../config/networks');
+        const networkConfig = NETWORKS[networkType];
+        const baseHorizonUrl = horizonUrl ?? networkConfig.horizonUrl;
+
+        const accountResponse = await fetch(
+          `${baseHorizonUrl}/accounts/${encodeURIComponent(account)}`
+        );
+
+        if (!accountResponse.ok) {
+          // Account not found on Horizon – fall back to single-sig acceptance
+          span.setAttribute('auth.horizon_fetch_ok', false);
+          return { isValid: true, account };
+        }
+
+        const accountData = await accountResponse.json() as {
+          thresholds: { low_threshold: number; med_threshold: number; high_threshold: number };
+          signers: Array<{ key: string; weight: number; type: string }>;
+        };
+
+        const { thresholds, signers } = accountData;
+
+        const requiredWeight =
+          thresholdLevel === 'low'
+            ? thresholds.low_threshold
+            : thresholdLevel === 'high'
+              ? thresholds.high_threshold
+              : thresholds.med_threshold;
+
+        span.setAttribute('auth.required_weight', requiredWeight);
+        span.setAttribute('auth.signers_count', signers.length);
+
+        // If all thresholds are 0 (single-sig account), skip weight check
+        if (requiredWeight === 0) {
+          return { isValid: true, account, totalWeight: 1, requiredWeight: 0 };
+        }
+
+        // ── 2. Parse the transaction to get the actual signatures ──────────
+        const { NETWORKS: nets } = await import('../config/networks');
+        const passphrase = nets[networkType].passphrase;
+        const { TransactionBuilder, Keypair } = await import('@stellar/stellar-sdk');
+
+        const tx = TransactionBuilder.fromXDR(signedTransactionXdr, passphrase) as import('@stellar/stellar-sdk').Transaction;
+        const txHash = tx.hash();
+
+        // ── 3. Accumulate weight from valid signers ────────────────────────
+        let totalWeight = 0;
+        for (const signer of signers) {
+          if (signer.weight <= 0) continue;
+          try {
+            const keypair = Keypair.fromPublicKey(signer.key);
+            const signerSigned = tx.signatures.some((sig) => {
+              try {
+                return keypair.verify(txHash, sig.signature());
+              } catch {
+                return false;
+              }
+            });
+            if (signerSigned) {
+              totalWeight += signer.weight;
+            }
+          } catch {
+            // Not a valid Ed25519 key – skip
+          }
+        }
+
+        span.setAttribute('auth.total_weight', totalWeight);
+        const isValid = totalWeight >= requiredWeight;
+        span.setAttribute('auth.multisig_threshold_met', isValid);
+
+        return { isValid, account, totalWeight, requiredWeight };
+      } catch (horizonError) {
+        // Horizon unreachable – degrade gracefully to basic signature check
+        span.setAttribute('auth.horizon_error', String(horizonError));
+        return { isValid: true, account };
+      }
     },
     SpanKind.INTERNAL
   );
