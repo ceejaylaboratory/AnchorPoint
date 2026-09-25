@@ -33,6 +33,8 @@ export interface Sep31TransactionRequest {
   memo_type?: "text" | "id" | "hash";
   /** Lang for error messages / fields. Defaults to "en". */
   lang?: string;
+  /** Optional SEP-38 quote ID. When supplied it must exist and not be expired. */
+  quote_id?: string;
 }
 
 // ─── Fee Breakdown ─────────────────────────────────────────────────────────
@@ -106,6 +108,10 @@ export interface Sep31TransactionRecord {
   external_transaction_id?: string;
   /** ISO-8601 timestamp of the last status change. */
   updated_at: string;
+  /** Quote this transaction was bound to, if any. */
+  quote_id?: string;
+  /** Exchange rate locked from the quote at submission time. */
+  quote_price?: string;
 }
 
 // ─── GET /info — Anchor capabilities ──────────────────────────────────────
