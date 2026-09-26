@@ -32,7 +32,8 @@
     "recharts": "^3.10.1",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^3.6.0",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.2.1",
