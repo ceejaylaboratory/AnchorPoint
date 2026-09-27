@@ -97,3 +97,53 @@ secrets:
     - STELLAR_PASSPHRASE
     - STELLAR_DEPLOYER_SECRET
     - JWT_SECRET
+
+# -- Datastores and dashboard ------------------------------------------------
+# Production keeps Redis and Postgres external (managed instances with
+# replication and PITR). The chart's Redis/Postgres templates are
+# single-replica and are therefore left disabled here — see the warning in
+# values.yaml before turning either on.
+redis:
+  enabled: false
+  auth:
+    existingSecret: "anchorpoint-prod-redis"
+    secretKey: redis-password
+
+postgres:
+  enabled: false
+  auth:
+    existingSecret: "anchorpoint-prod-postgres"
+    userKey: postgres-user
+    passwordKey: postgres-password
+
+dashboard:
+  enabled: true
+  replicaCount: 3
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "80"
+    prometheus.io/path: "/nginx_status"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: "anchorpoint-prod-issuer"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/hsts: "true"
+      nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    hosts:
+      - host: dashboard.anchorpoint.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: anchorpoint-dashboard-prod-tls
+        hosts:
+          - dashboard.anchorpoint.example.com
