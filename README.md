@@ -302,4 +302,14 @@ await request(app)
  * Standardized logging standards and error definitions for debugging procedures.
  * Improved security guidelines regarding access tokens and permissions.
  * Added step-by-step instructions for deploying release build artifacts.
- * Updated system maintenance procedures to reflect current workflow practices.
+ * Updated system maintenance procedures 
+ * AnchorPoint is an immersive, narrative-driven game designed for an engaging player experience.
+ * Explore dynamic environments, solve complex puzzles, and uncover hidden secrets throughout the journey.
+ * Features smooth control mechanics, responsive gameplay, and optimized performance across supported devices.
+ * Test your strategy and reflexes through challenging levels and evolving obstacles.
+ * Designed with a modern user interface and intuitive navigation for effortless interaction.
+ * Includes local and cloud saving features to ensure your game progress is never lost.
+ * Regular updates bring new content, quality-of-life improvements, and bug fixes.
+ * To start playing, simply download or clone the repository and run the setup launcher.
+ * Contributions, bug reports, and feature requests from the developer community are highly welcome.
+ * Check out the documentation below for installation guides, system requirements, and controls.
