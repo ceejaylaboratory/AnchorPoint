@@ -1,11 +1,8 @@
 #![cfg(test)]
 
-use super::{BatchExecutor, BatchExecutorClient, Call, CallWithRetry, OpStatus, RetryConfig, TransferOp};
+use super::{BatchExecutor, BatchExecutorClient, BatchResult, Call, CallWithRetry, OpStatus, RetryConfig, TransferOp};
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, testutils::Address as _, Env, IntoVal, Vec,
-    contract, contractimpl, symbol_short,
-    testutils::Address as _,
-    token::StellarAssetClient,
+    contract, contractimpl, symbol_short, testutils::Address as _, token::StellarAssetClient,
     Env, IntoVal, Vec,
 };
 
@@ -44,6 +41,22 @@ pub struct BrokenContract;
 impl BrokenContract {
     pub fn broken(_env: Env) {
         panic!("always fails");
+    }
+}
+
+#[contract]
+pub struct CounterContract;
+
+#[contractimpl]
+impl CounterContract {
+    pub fn increment(env: Env) {
+        let key = symbol_short!("count");
+        let count: u32 = env.storage().instance().get(&key).unwrap_or(0);
+        env.storage().instance().set(&key, &(count + 1));
+    }
+
+    pub fn get_count(env: Env) -> u32 {
+        env.storage().instance().get(&symbol_short!("count")).unwrap_or(0)
     }
 }
 
@@ -226,37 +239,32 @@ fn test_failed_call_does_not_abort_batch() {
 }
 
 #[test]
-fn test_abort_on_failure_skips_remaining() {
+fn test_abort_on_failure_reverts_prior_operations() {
     let env = Env::default();
     env.mock_all_auths();
-    let client = setup(&env);
+    let batch_id = env.register(BatchExecutor, ());
+    let client = BatchExecutorClient::new(&env, &batch_id);
+    let admin = soroban_sdk::Address::generate(&env);
+    client.initialize(&admin);
+    let counter_id = env.register(CounterContract, ());
     let broken_id = env.register(BrokenContract, ());
-    let mock_id = env.register(MockContract, ());
 
     let calls = Vec::from_array(
         &env,
         [
             CallWithRetry {
                 call: Call {
-                    contract: broken_id.clone(),
-                    function: symbol_short!("broken"),
+                    contract: counter_id.clone(),
+                    function: symbol_short!("increment"),
                     args: Vec::new(&env),
                 },
                 retry: default_retry(1),
             },
             CallWithRetry {
                 call: Call {
-                    contract: mock_id.clone(),
-                    function: symbol_short!("echo"),
-                    args: (7u32,).into_val(&env),
-                },
-                retry: default_retry(1),
-            },
-            CallWithRetry {
-                call: Call {
-                    contract: mock_id.clone(),
-                    function: symbol_short!("echo"),
-                    args: (8u32,).into_val(&env),
+                    contract: broken_id,
+                    function: symbol_short!("broken"),
+                    args: Vec::new(&env),
                 },
                 retry: default_retry(1),
             },
@@ -264,14 +272,16 @@ fn test_abort_on_failure_skips_remaining() {
     );
 
     let caller = soroban_sdk::Address::generate(&env);
-    let batch = client.execute_batch_with_retry(&caller, &calls, &true);
+    let args = (&caller, &calls, &true).into_val(&env);
+    let result = env.try_invoke_contract::<BatchResult, soroban_sdk::Val>(
+        &batch_id,
+        &soroban_sdk::Symbol::new(&env, "execute_batch_with_retry"),
+        args,
+    );
 
-    assert_eq!(batch.succeeded, 0);
-    assert_eq!(batch.failed, 1);
-    assert_eq!(batch.skipped, 2);
-    assert_eq!(batch.results.get_unchecked(0).status, OpStatus::Failed);
-    assert_eq!(batch.results.get_unchecked(1).status, OpStatus::Skipped);
-    assert_eq!(batch.results.get_unchecked(2).status, OpStatus::Skipped);
+    assert!(result.is_err());
+    assert_eq!(CounterContractClient::new(&env, &counter_id).get_count(), 0);
+    assert_eq!(client.get_nonce(&caller), 0);
 }
 
 #[test]
