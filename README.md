@@ -313,3 +313,12 @@ await request(app)
  * To start playing, simply download or clone the repository and run the setup launcher.
  * Contributions, bug reports, and feature requests from the developer community are highly welcome.
  * Check out the documentation below for installation guides, system requirements, and controls.
+Master intuitive gameplay controls designed for both casual players and experienced gamers.
+​Navigate through carefully crafted environments filled with unique challenges and secrets.
+​Immerse yourself in rich audio soundscapes and dynamic visual effects that bring the world to life.
+​Customize your character abilities and equipment to adapt to various gameplay scenarios.
+​Compete on global leaderboards and showcase your high scores to players worldwide.
+​Built with performance optimization in mind to ensure smooth framerates on all hardware.
+​Experience an expanding storyline with meaningful player choices and multiple endings.
+​Follow step-by-step setup instructions to configure local build dependencies effortlessly.
+​Join our official community channels on Discord and Matrix to share feedback directly.
