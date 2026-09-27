@@ -72,6 +72,7 @@ impl ProxyContract {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
+        Self::validate_implementation(&env, &implementation);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
@@ -106,6 +107,8 @@ impl ProxyContract {
             .instance()
             .get(&DataKey::Implementation)
             .expect("not initialized");
+
+        Self::validate_implementation(&env, &new_implementation);
 
         env.storage()
             .instance()
@@ -437,6 +440,15 @@ impl ProxyContract {
             .expect("admin not configured");
         assert!(*caller == admin, "caller is not admin");
     }
+
+    fn validate_implementation(env: &Env, implementation: &Address) {
+        let version: u32 = env.invoke_contract(
+            implementation,
+            &symbol_short!("if_ver"),
+            soroban_sdk::vec![env],
+        );
+        assert!(version == 1, "incompatible implementation interface");
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -455,6 +467,10 @@ mod tests {
 
     #[contractimpl]
     impl MockImpl {
+        pub fn if_ver(_env: Env) -> u32 {
+            1
+        }
+
         pub fn ping(_env: Env) -> u32 {
             42
         }
