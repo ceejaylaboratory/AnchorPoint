@@ -321,4 +321,14 @@ Master intuitive gameplay controls designed for both casual players and experien
 ​Built with performance optimization in mind to ensure smooth framerates on all hardware.
 ​Experience an expanding storyline with meaningful player choices and multiple endings.
 ​Follow step-by-step setup instructions to configure local build dependencies effortlessly.
-​Join our official community channels on Discord and Matrix to share feedback directly.
+​Join our official community channels on Discord and Matrix to share feedback directl
+ * Experience fluid combat and movement mechanics crafted for precise player control.
+ * Discover hidden pathways, rare loot, and secrets tucked away in every level.
+ * Enjoy an adaptive soundtrack that seamlessly shifts based on in-game action.
+ * Tailor your playstyle with customizable skill trees and gear upgrade options.
+ * Track your personal records and achievements through the integrated statistics dashboard.
+ * Optimized for low resource usage to ensure fast load times and stable performance.
+ * Unravel a rich, branching narrative where choices carry distinct consequences.
+ * Follow simple command-line instructions to set up and run the project locally.
+ * Join the community forum to share strategies, speedruns, and custom mods.
+ * Report issues or suggest features directly via our public GitHub tracker.
