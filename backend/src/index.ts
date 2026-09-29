@@ -46,6 +46,7 @@ import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { dbMetricsScheduler } from './workers/db-metrics.scheduler';
 import { initSocket } from './lib/socket';
 import { kycExpiryScheduler } from './workers/kyc-expiry.scheduler';
+import { kycDocumentExpiryScheduler } from './workers/kyc_document_expiry_scheduler';
 import { cleanupWorker } from './workers/cleanup.worker';
 import { feeReportWorker } from './workers/fee-report.worker';
 import contractQueueService from './services/contract-queue.service';
@@ -72,6 +73,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   feeReportScheduler.stop();
   uploadExpiryScheduler.stop();
   kycExpiryScheduler.stop();
+  kycDocumentExpiryScheduler.stop();
   cleanupWorker.stop();
   dbMetricsScheduler.stop();
 
@@ -443,6 +445,7 @@ if (process.env.NODE_ENV !== 'test') {
           feeReportScheduler.start();
           uploadExpiryScheduler.start();
           kycExpiryScheduler.start();
+          kycDocumentExpiryScheduler.start();
           dbMetricsScheduler.start();
           cleanupWorker.start();
         });
