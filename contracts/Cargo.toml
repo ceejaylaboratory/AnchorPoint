@@ -17,3 +17,13 @@ soroban-sdk = "22.0.0"
 # longer satisfies the `CryptoRng` bound). The workspace Cargo.lock is not
 # committed, so this keeps CI resolution deterministic.
 ed25519-dalek = "2.2"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = false
+debug = 0
+strip = true
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

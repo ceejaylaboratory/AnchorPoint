@@ -6,6 +6,8 @@
 //! - Timelocked unpausing to prevent abuse
 //! - Autonomous triggers based on oracle price volatility
 //! - Governance and authorized-bot trigger support
+//! - Automatic 2-hour cooldown when rolling 1-hour volume spikes above a
+//!   configured multiple (default 300%) of the baseline hourly volume
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Vec};
 
@@ -25,6 +27,12 @@ const DEFAULT_VOLUME_THRESHOLD: i128 = 1_000_000;
 
 /// Rolling window duration in seconds (1 hour).
 const WINDOW_DURATION_SECONDS: u64 = 3_600;
+
+/// Default spike multiplier in basis points (300% of baseline = 30,000 bps).
+const DEFAULT_SPIKE_MULTIPLIER_BPS: i128 = 30_000;
+
+/// Duration of the automatic cooldown triggered by a volume spike (2 hours).
+const SPIKE_COOLDOWN_SECONDS: u64 = 7_200;
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -50,6 +58,12 @@ pub enum DataKey {
     /// Kept in sync with `PauseTier` on every state transition so integrators
     /// can read a single cheap flag instead of matching on the tier enum.
     IsPaused,
+    /// Expected (normal) volume per rolling hour; 0 disables spike detection.
+    VolumeBaseline,
+    /// Spike threshold as a multiple of the baseline, in basis points.
+    SpikeMultiplierBps,
+    /// Timestamp until which a spike-triggered cooldown halts all operations.
+    CooldownUntil,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -372,6 +386,41 @@ impl CircuitBreaker {
                 (total, threshold),
             );
         }
+
+        Self::check_volume_spike(&env, now, total);
+    }
+
+    /// Set the expected volume per rolling hour used for spike detection
+    /// (admin only). Pass 0 to disable spike detection.
+    pub fn set_volume_baseline(env: Env, caller: Address, baseline: i128) {
+        caller.require_auth();
+        Self::assert_admin(&env, &caller);
+        assert!(baseline >= 0, "baseline must not be negative");
+        env.storage()
+            .instance()
+            .set(&DataKey::VolumeBaseline, &baseline);
+        env.events().publish(
+            (symbol_short!("cb"), symbol_short!("base_set")),
+            (caller, baseline),
+        );
+    }
+
+    /// Set the spike multiplier in basis points (admin only).
+    ///
+    /// A cooldown triggers when window volume exceeds
+    /// `baseline * multiplier_bps / 10_000`. Must be above 10,000 (100%) so
+    /// that ordinary baseline activity can never trigger it.
+    pub fn set_spike_multiplier_bps(env: Env, caller: Address, multiplier_bps: i128) {
+        caller.require_auth();
+        Self::assert_admin(&env, &caller);
+        assert!(multiplier_bps > 10_000, "multiplier must exceed 10000 bps");
+        env.storage()
+            .instance()
+            .set(&DataKey::SpikeMultiplierBps, &multiplier_bps);
+        env.events().publish(
+            (symbol_short!("cb"), symbol_short!("spk_set")),
+            (caller, multiplier_bps),
+        );
     }
 
     /// Update the volume threshold (admin only).
@@ -478,7 +527,8 @@ impl CircuitBreaker {
     /// timelock would itself be the outage.
     ///
     /// Clears any pending unpause so a stale scheduled transition cannot fire
-    /// afterwards and re-pause or re-tier the protocol unexpectedly.
+    /// afterwards and re-pause or re-tier the protocol unexpectedly. Also lifts
+    /// an active volume-spike cooldown.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         Self::assert_admin(&env, &admin);
@@ -489,12 +539,16 @@ impl CircuitBreaker {
             .get(&DataKey::PauseTier)
             .unwrap_or(PauseTier::None);
 
-        assert!(current != PauseTier::None, "protocol is not paused");
+        assert!(
+            current != PauseTier::None || Self::is_in_cooldown(env.clone()),
+            "protocol is not paused"
+        );
 
         env.storage()
             .instance()
             .set(&DataKey::PauseTier, &PauseTier::None);
         env.storage().instance().set(&DataKey::IsPaused, &false);
+        env.storage().instance().set(&DataKey::CooldownUntil, &0u64);
 
         // Drop any scheduled unpause so it cannot execute against stale state.
         env.storage()
@@ -567,8 +621,14 @@ impl CircuitBreaker {
 
     // ── Read-only helpers ─────────────────────────────────────────────────────
 
-    /// Returns the current pause tier.
+    /// Returns the effective pause tier.
+    ///
+    /// Reports `PauseTier::All` while a volume-spike cooldown is active,
+    /// otherwise the tier set by governance, bots or the oracle.
     pub fn get_pause_tier(env: Env) -> PauseTier {
+        if Self::is_in_cooldown(env.clone()) {
+            return PauseTier::All;
+        }
         env.storage()
             .instance()
             .get(&DataKey::PauseTier)
@@ -596,12 +656,43 @@ impl CircuitBreaker {
         Self::get_pause_tier(env) == PauseTier::All
     }
 
-    /// Returns true if the breaker is engaged at any tier.
+    /// Returns true if the breaker is engaged at any tier or a volume-spike
+    /// cooldown is active.
     pub fn is_paused(env: Env) -> bool {
         env.storage()
             .instance()
             .get(&DataKey::IsPaused)
             .unwrap_or(false)
+            || Self::is_in_cooldown(env)
+    }
+
+    /// Returns true while a volume-spike cooldown is in effect.
+    pub fn is_in_cooldown(env: Env) -> bool {
+        env.ledger().timestamp() < Self::get_cooldown_until(env)
+    }
+
+    /// Returns the timestamp the current cooldown ends at (0 = never triggered).
+    pub fn get_cooldown_until(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::CooldownUntil)
+            .unwrap_or(0)
+    }
+
+    /// Returns the baseline hourly volume used for spike detection.
+    pub fn get_volume_baseline(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::VolumeBaseline)
+            .unwrap_or(0)
+    }
+
+    /// Returns the spike multiplier in basis points.
+    pub fn get_spike_multiplier_bps(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SpikeMultiplierBps)
+            .unwrap_or(DEFAULT_SPIKE_MULTIPLIER_BPS)
     }
 
     /// Returns the timestamp when the pending unpause unlocks (0 = none pending).
@@ -705,6 +796,51 @@ impl CircuitBreaker {
             }
         }
         false
+    }
+
+    /// Start or extend the 2-hour cooldown if `window_total` exceeds the
+    /// configured multiple of the baseline. No-op when no baseline is set.
+    fn check_volume_spike(env: &Env, now: u64, window_total: i128) {
+        let baseline = Self::get_volume_baseline(env.clone());
+        if baseline == 0 {
+            return;
+        }
+        let multiplier_bps = Self::get_spike_multiplier_bps(env.clone());
+        let spike_threshold = baseline
+            .checked_mul(multiplier_bps)
+            .expect("overflow in spike threshold")
+            / 10_000;
+
+        if window_total <= spike_threshold {
+            return;
+        }
+
+        let was_cooling_down = Self::is_in_cooldown(env.clone());
+        // Sustained spikes keep pushing the cooldown out; it never shrinks.
+        let until = now
+            .checked_add(SPIKE_COOLDOWN_SECONDS)
+            .expect("cooldown overflow")
+            .max(Self::get_cooldown_until(env.clone()));
+        env.storage()
+            .instance()
+            .set(&DataKey::CooldownUntil, &until);
+
+        if !was_cooling_down {
+            let count: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TripCount)
+                .unwrap_or(0);
+            env.storage().instance().set(
+                &DataKey::TripCount,
+                &count.checked_add(1).expect("trip count overflow"),
+            );
+        }
+
+        env.events().publish(
+            (symbol_short!("cb"), symbol_short!("cooldown")),
+            (window_total, spike_threshold, until),
+        );
     }
 
     /// Core trip logic shared by all trigger paths.
@@ -1436,5 +1572,207 @@ mod tests {
                 )
             ]
         );
+    }
+
+    // ── Volume spike detection & dynamic cooldown ─────────────────────────────
+
+    /// Circuit breaker with a 100,000 baseline, so the default 300% spike
+    /// threshold is 300,000 (well below the 1,000,000 absolute threshold).
+    fn setup_spike(env: &Env) -> (Address, CircuitBreakerClient<'static>) {
+        env.mock_all_auths();
+        let (admin, c) = setup_cb(env);
+        c.set_volume_baseline(&admin, &100_000i128);
+        env.ledger().with_mut(|l| l.timestamp = 10_000);
+        (admin, c)
+    }
+
+    #[test]
+    fn test_spike_defaults() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, c) = setup_cb(&env);
+
+        assert_eq!(c.get_volume_baseline(), 0);
+        assert_eq!(c.get_spike_multiplier_bps(), DEFAULT_SPIKE_MULTIPLIER_BPS);
+        assert_eq!(c.get_cooldown_until(), 0);
+        assert!(!c.is_in_cooldown());
+    }
+
+    #[test]
+    fn test_no_cooldown_without_baseline() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, c) = setup_cb(&env);
+
+        c.record_volume(&900_000i128);
+        assert!(!c.is_in_cooldown());
+        assert!(!c.is_paused());
+    }
+
+    #[test]
+    fn test_volume_at_spike_threshold_does_not_trigger_cooldown() {
+        let env = Env::default();
+        let (_, c) = setup_spike(&env);
+
+        c.record_volume(&300_000i128);
+        assert!(!c.is_in_cooldown());
+        assert!(!c.is_paused());
+        assert_eq!(c.get_pause_tier(), PauseTier::None);
+    }
+
+    #[test]
+    fn test_volume_spike_triggers_two_hour_cooldown() {
+        let env = Env::default();
+        let (_, c) = setup_spike(&env);
+
+        c.record_volume(&200_000i128);
+        assert!(!c.is_in_cooldown());
+
+        // Window total 300,001 > 300% of baseline.
+        c.record_volume(&100_001i128);
+        assert!(c.is_in_cooldown());
+        assert_eq!(c.get_cooldown_until(), 10_000 + SPIKE_COOLDOWN_SECONDS);
+        assert!(c.is_paused());
+        assert!(c.is_all_paused());
+        assert!(c.is_swap_paused());
+        assert!(c.is_withdraw_paused());
+        assert_eq!(c.get_pause_tier(), PauseTier::All);
+        assert_eq!(c.get_trip_count(), 1);
+    }
+
+    #[test]
+    fn test_cooldown_expires_automatically() {
+        let env = Env::default();
+        let (_, c) = setup_spike(&env);
+
+        c.record_volume(&400_000i128);
+        assert!(c.is_paused());
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 10_000 + SPIKE_COOLDOWN_SECONDS - 1);
+        assert!(c.is_paused());
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 10_000 + SPIKE_COOLDOWN_SECONDS);
+        assert!(!c.is_in_cooldown());
+        assert!(!c.is_paused());
+        assert_eq!(c.get_pause_tier(), PauseTier::None);
+    }
+
+    #[test]
+    fn test_sustained_spike_extends_cooldown() {
+        let env = Env::default();
+        let (_, c) = setup_spike(&env);
+
+        c.record_volume(&400_000i128);
+        assert_eq!(c.get_cooldown_until(), 10_000 + SPIKE_COOLDOWN_SECONDS);
+
+        // Still inside the same hourly window, volume keeps flowing.
+        env.ledger().with_mut(|l| l.timestamp = 11_000);
+        c.record_volume(&1i128);
+        assert_eq!(c.get_cooldown_until(), 11_000 + SPIKE_COOLDOWN_SECONDS);
+        // Extending an active cooldown is not a new trip.
+        assert_eq!(c.get_trip_count(), 1);
+    }
+
+    #[test]
+    fn test_spike_ages_out_of_window() {
+        let env = Env::default();
+        let (_, c) = setup_spike(&env);
+
+        c.record_volume(&250_000i128);
+        // An hour later the old entry is pruned, so no spike is detected.
+        env.ledger()
+            .with_mut(|l| l.timestamp = 10_000 + WINDOW_DURATION_SECONDS);
+        c.record_volume(&250_000i128);
+        assert_eq!(c.get_window_volume(), 250_000);
+        assert!(!c.is_in_cooldown());
+    }
+
+    #[test]
+    fn test_custom_spike_multiplier() {
+        let env = Env::default();
+        let (admin, c) = setup_spike(&env);
+
+        // 150% of baseline.
+        c.set_spike_multiplier_bps(&admin, &15_000i128);
+        assert_eq!(c.get_spike_multiplier_bps(), 15_000);
+
+        c.record_volume(&150_000i128);
+        assert!(!c.is_in_cooldown());
+        c.record_volume(&1i128);
+        assert!(c.is_in_cooldown());
+    }
+
+    #[test]
+    fn test_emergency_unpause_lifts_cooldown() {
+        let env = Env::default();
+        let (admin, c) = setup_spike(&env);
+
+        c.record_volume(&400_000i128);
+        assert!(c.is_paused());
+
+        c.unpause(&admin);
+        assert!(!c.is_in_cooldown());
+        assert!(!c.is_paused());
+        assert_eq!(c.get_cooldown_until(), 0);
+    }
+
+    #[test]
+    fn test_cooldown_does_not_clear_governance_trip() {
+        let env = Env::default();
+        let (admin, c) = setup_spike(&env);
+
+        c.trip(&admin, &PauseTier::SwapOnly);
+        c.record_volume(&400_000i128);
+        assert_eq!(c.get_pause_tier(), PauseTier::All);
+
+        env.ledger()
+            .with_mut(|l| l.timestamp = 10_000 + SPIKE_COOLDOWN_SECONDS);
+        // Governance tier remains once the cooldown lapses.
+        assert_eq!(c.get_pause_tier(), PauseTier::SwapOnly);
+        assert!(c.is_paused());
+    }
+
+    #[test]
+    fn test_disabling_baseline_stops_spike_detection() {
+        let env = Env::default();
+        let (admin, c) = setup_spike(&env);
+
+        c.set_volume_baseline(&admin, &0i128);
+        c.record_volume(&400_000i128);
+        assert!(!c.is_in_cooldown());
+    }
+
+    #[test]
+    #[should_panic(expected = "multiplier must exceed 10000 bps")]
+    fn test_spike_multiplier_at_or_below_baseline_panics() {
+        let env = Env::default();
+        let (admin, c) = setup_spike(&env);
+        c.set_spike_multiplier_bps(&admin, &10_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "baseline must not be negative")]
+    fn test_negative_baseline_panics() {
+        let env = Env::default();
+        let (admin, c) = setup_spike(&env);
+        c.set_volume_baseline(&admin, &-1i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "caller is not admin")]
+    fn test_set_volume_baseline_non_admin_panics() {
+        let env = Env::default();
+        let (_, c) = setup_spike(&env);
+        c.set_volume_baseline(&Address::generate(&env), &1i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "caller is not admin")]
+    fn test_set_spike_multiplier_non_admin_panics() {
+        let env = Env::default();
+        let (_, c) = setup_spike(&env);
+        c.set_spike_multiplier_bps(&Address::generate(&env), &20_000i128);
     }
 }

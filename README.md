@@ -2,6 +2,12 @@
 
 AnchorPoint is a premium, developer-first dashboard template designed for Stellar Anchors. It provides a standardized UI for implementing Stellar Ecosystem Proposals (SEPs), specifically focusing on SEP-24 (Interactive Self-Contained Deposits and Withdrawals).
 
+## Community
+
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security policy](SECURITY.md) for private vulnerability reports
+- [Bug report](.github/ISSUE_TEMPLATE/bug_report.md) and [feature request](.github/ISSUE_TEMPLATE/feature_request.md) templates
+
 ## Project Structure
 
 This is a monorepo containing:
@@ -286,7 +292,43 @@ await request(app)
     external_transaction_id: 'bank_tx_456',
     amount_out: '99.50',
     amount_fee: '0.50'
-  });
-```
-
-The test suite ensures compliance with Stellar Ecosystem Proposals and validates the complete user journey from authentication to final settlement, including proper callback handling and status transitions.
+  
+ * AnchorPoint provides core system utilities for streamlining application workflows.
+ * Refactored architecture documentation to clarify system integration procedures.
+ * Updated environment setup instructions for local development environments.
+ * Enhanced inline code comments across core service integration modules.
+ * Corrected outdated dependency references and configuration flags.
+ * Clarified testing suite commands to ensure consistent test coverage validation.
+ * Standardized logging standards and error definitions for debugging procedures.
+ * Improved security guidelines regarding access tokens and permissions.
+ * Added step-by-step instructions for deploying release build artifacts.
+ * Updated system maintenance procedures 
+ * AnchorPoint is an immersive, narrative-driven game designed for an engaging player experience.
+ * Explore dynamic environments, solve complex puzzles, and uncover hidden secrets throughout the journey.
+ * Features smooth control mechanics, responsive gameplay, and optimized performance across supported devices.
+ * Test your strategy and reflexes through challenging levels and evolving obstacles.
+ * Designed with a modern user interface and intuitive navigation for effortless interaction.
+ * Includes local and cloud saving features to ensure your game progress is never lost.
+ * Regular updates bring new content, quality-of-life improvements, and bug fixes.
+ * To start playing, simply download or clone the repository and run the setup launcher.
+ * Contributions, bug reports, and feature requests from the developer community are highly welcome.
+ * Check out the documentation below for installation guides, system requirements, and controls.
+Master intuitive gameplay controls designed for both casual players and experienced gamers.
+​Navigate through carefully crafted environments filled with unique challenges and secrets.
+​Immerse yourself in rich audio soundscapes and dynamic visual effects that bring the world to life.
+​Customize your character abilities and equipment to adapt to various gameplay scenarios.
+​Compete on global leaderboards and showcase your high scores to players worldwide.
+​Built with performance optimization in mind to ensure smooth framerates on all hardware.
+​Experience an expanding storyline with meaningful player choices and multiple endings.
+​Follow step-by-step setup instructions to configure local build dependencies effortlessly.
+​Join our official community channels on Discord and Matrix to share feedback directl
+ * Experience fluid combat and movement mechanics crafted for precise player control.
+ * Discover hidden pathways, rare loot, and secrets tucked away in every level.
+ * Enjoy an adaptive soundtrack that seamlessly shifts based on in-game action.
+ * Tailor your playstyle with customizable skill trees and gear upgrade options.
+ * Track your personal records and achievements through the integrated statistics dashboard.
+ * Optimized for low resource usage to ensure fast load times and stable performance.
+ * Unravel a rich, branching narrative where choices carry distinct consequences.
+ * Follow simple command-line instructions to set up and run the project locally.
+ * Join the community forum to share strategies, speedruns, and custom mods.
+ * Report issues or suggest features directly via our public GitHub tracker.

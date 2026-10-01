@@ -25,6 +25,46 @@ const markReadSchema = z.object({
  *     tags: [Notifications]
  *     security:
  *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Notification preferences
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     emailEnabled:
+ *                       type: boolean
+ *                     smsEnabled:
+ *                       type: boolean
+ *                     pushEnabled:
+ *                       type: boolean
+ *                     phone:
+ *                       type: string
+ *       401:
+ *         description: Missing or invalid JWT
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch preferences
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get(
   "/preferences",
@@ -69,6 +109,48 @@ router.get(
  *     tags: [Notifications]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               emailEnabled:
+ *                 type: boolean
+ *               smsEnabled:
+ *                 type: boolean
+ *               pushEnabled:
+ *                 type: boolean
+ *               phone:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Preferences updated
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Missing or invalid JWT
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to update preferences
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.patch(
   "/preferences",
@@ -116,9 +198,43 @@ router.patch(
  * /api/notifications/history:
  *   get:
  *     summary: Get notification history
+ *     description: Returns the 50 most recent notifications for the authenticated user.
  *     tags: [Notifications]
  *     security:
  *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Notification history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Missing or invalid JWT
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get(
   "/history",
@@ -149,6 +265,55 @@ router.get(
   },
 );
 
+/**
+ * @swagger
+ * /api/notifications/history:
+ *   patch:
+ *     summary: Mark notifications as read
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [notificationIds]
+ *             properties:
+ *               notificationIds:
+ *                 type: array
+ *                 minItems: 1
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Notifications marked as read
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Missing or invalid JWT
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to mark notifications as read
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.patch(
   "/history",
   authMiddleware,

@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCcw, Copy, Check } from 'lucide-react';
 
 interface Props {
   children?: ReactNode;
+  compact?: boolean;
 }
 
 interface State {
@@ -50,6 +51,15 @@ export class GlobalErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      if (this.props.compact) {
+        return (
+          <div className="glass-card p-6 text-center" role="alert">
+            <p className="font-semibold text-red-300">This section could not be displayed.</p>
+            <p className="mt-2 text-sm text-slate-400">Try another section.</p>
+          </div>
+        );
+      }
+
       return (
         <div className="min-h-screen flex items-center justify-center bg-background text-slate-50 p-6">
           <div className="glass-card max-w-lg w-full p-8 flex flex-col items-center text-center space-y-6">

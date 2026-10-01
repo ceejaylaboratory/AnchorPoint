@@ -83,7 +83,7 @@ export class RelayerService {
 
       const baseFee = feeStats?.fee_charged?.min
         ? parseInt(feeStats.fee_charged.min, 10)
-        : (feeStats?.min_accepted_fee ? parseInt(feeStats.min_accepted_fee, 10) : fallbackBaseFee);
+        : ((feeStats as any)?.min_accepted_fee ? parseInt((feeStats as any).min_accepted_fee, 10) : fallbackBaseFee);
 
       const modeFee = feeStats?.fee_charged?.mode
         ? parseInt(feeStats.fee_charged.mode, 10)

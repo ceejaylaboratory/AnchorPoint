@@ -76,5 +76,28 @@ describe('Logger', () => {
 
     expect((result as any).correlationId).toBe('corr-xyz-123');
   });
+
+  it('masks sensitive PII keys (secret, token, password, tax_id, email)', async () => {
+    const { maskPIIFormat } = await import('./logger');
+    const format = maskPIIFormat();
+
+    const result = format.transform({
+      level: 'info',
+      message: 'User logged in',
+      password: 'my-super-secret-password',
+      email: 'user@example.com',
+      nested: {
+        token: 'jwt-token',
+        tax_id: '123-456-789',
+        safeKey: 'hello'
+      }
+    }, {});
+
+    expect((result as any).password).toBe('***REDACTED***');
+    expect((result as any).email).toBe('***REDACTED***');
+    expect((result as any).nested.token).toBe('***REDACTED***');
+    expect((result as any).nested.tax_id).toBe('***REDACTED***');
+    expect((result as any).nested.safeKey).toBe('hello');
+  });
 });
 

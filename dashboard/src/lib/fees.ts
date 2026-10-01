@@ -23,12 +23,14 @@ const round = (value: number, precision = 7): number =>
 
 /**
  * Computes the net payout for a withdrawal amount given the anchor's fee
- * configuration. The breakdown follows `Amount - Fixed Fee - % Fee = You Receive`.
+ * configuration. The breakdown follows `Amount - Fixed Fee - % Fee = You Receive`,
+ * floored by the anchor's configured `feeMinimum` so the preview never understates
+ * what the anchor will actually charge.
  */
 export function computePayoutBreakdown(amount: number, fee: FeeEstimate): PayoutBreakdown {
   const fixedFee = round(fee.feeFixed);
   const percentFee = round(amount * fee.feePercent);
-  const totalFee = round(fixedFee + percentFee);
+  const totalFee = round(Math.max(fixedFee + percentFee, fee.feeMinimum));
   const netPayout = round(amount - totalFee);
 
   return {

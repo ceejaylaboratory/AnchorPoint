@@ -19,18 +19,24 @@ export interface Sep10Verification {
 }
 
 /**
- * Generates a SEP-10 compliant challenge transaction
+ * Generates a SEP-10 compliant challenge transaction.
+ * When clientDomain is provided an additional manage_data operation keyed
+ * `client_domain` (source = anchor) is appended to the transaction so
+ * wallet apps and validators can verify the requesting domain.
+ *
  * @param anchorPublicKey The anchor's public key (source account)
  * @param clientPublicKey The client's public key (for manage_data operation)
  * @param networkType The Stellar network type
  * @param challengeValue Random challenge string
+ * @param clientDomain Optional validated hostname of the requesting wallet
  * @returns SEP-10 challenge object
  */
 export function generateSep10Challenge(
   anchorPublicKey: string,
   clientPublicKey: string,
   networkType: NetworkType,
-  challengeValue: string
+  challengeValue: string,
+  clientDomain?: string
 ): Sep10Challenge {
   const networkPassphrase = NETWORKS[networkType].passphrase;
 
@@ -51,14 +57,25 @@ export function generateSep10Challenge(
     maxTime: now + 300 // 5 minutes
   };
 
-  // Build the transaction
-  const transaction = new StellarSdk.TransactionBuilder(account, {
+  const builder = new StellarSdk.TransactionBuilder(account, {
     fee: StellarSdk.BASE_FEE,
     networkPassphrase,
     timebounds: timeBounds
-  })
-    .addOperation(manageDataOp)
-    .build();
+  }).addOperation(manageDataOp);
+
+  // Per SEP-10 §3.3: embed client_domain so wallets and validators can bind
+  // the challenge to the requesting application's domain. The value is stored
+  // as a UTF-8 buffer; the source of this operation is the anchor itself.
+  if (clientDomain) {
+    const clientDomainOp = StellarSdk.Operation.manageData({
+      name: 'client_domain',
+      value: clientDomain,
+      source: anchorPublicKey
+    });
+    builder.addOperation(clientDomainOp);
+  }
+
+  const transaction = builder.build();
 
   return {
     transactionXdr: transaction.toXDR(),

@@ -26,7 +26,8 @@ export class AlbedoAdapter implements WalletAdapter {
   async connect(): Promise<{ publicKey: string; network: string }> {
     try {
       // Import dynamically to avoid SSR issues
-      const { Intent } = await import('@albedo-link/intent');
+      const albedoModule = await import('@albedo-link/intent');
+      const Intent = (albedoModule as any).Intent || (albedoModule as any).default?.Intent || (albedoModule as any).default;
       
       const result = await Intent.Prompt({
         action: 'connect',
@@ -52,7 +53,8 @@ export class AlbedoAdapter implements WalletAdapter {
 
   async signTransaction(xdr: string, network: string): Promise<string> {
     try {
-      const { Intent } = await import('@albedo-link/intent');
+      const albedoModule = await import('@albedo-link/intent');
+      const Intent = (albedoModule as any).Intent || (albedoModule as any).default?.Intent || (albedoModule as any).default;
       
       const result = await Intent.Prompt({
         action: 'sign_tx',
@@ -66,7 +68,11 @@ export class AlbedoAdapter implements WalletAdapter {
 
       return result.signed_xdr;
     } catch (error) {
-      throw new Error(`Failed to sign transaction: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Failed to sign transaction with Albedo: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  async getNetwork(): Promise<string> {
+    return 'PUBLIC';
   }
 }
