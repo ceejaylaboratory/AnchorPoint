@@ -447,10 +447,11 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
             {/* Contract & Method Pickers */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                <label htmlFor="contract-select" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
                   Target Contract
                 </label>
                 <select
+                  id="contract-select"
                   value={selectedContractId}
                   onChange={e => handleContractChange(e.target.value)}
                   className="input-field w-full text-sm font-medium text-slate-200"
@@ -465,10 +466,11 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                <label htmlFor="method-select" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
                   Contract Method
                 </label>
                 <select
+                  id="method-select"
                   value={selectedMethodName}
                   onChange={e => handleMethodChange(e.target.value)}
                   className="input-field w-full text-sm font-mono text-primary font-bold"
@@ -539,7 +541,7 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
                     return (
                       <div key={param.name} className="space-y-1.5" data-testid={`param-group-${param.name}`}>
                         <div className="flex items-center justify-between">
-                          <label className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                          <label htmlFor={`param-${param.name}`} className="text-xs font-medium text-slate-300 flex items-center gap-2">
                             <span className="font-mono font-bold text-slate-100">{param.name}</span>
                             <span
                               data-testid={`param-type-${param.name}`}
@@ -574,10 +576,13 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
                         {/* Typed Form Controls */}
                         {param.type === 'bool' ? (
                           <select
+                            id={`param-${param.name}`}
                             value={value}
                             onChange={e => handleInputChange(param.name, param.type, e.target.value)}
                             className="input-field w-full text-sm"
                             data-testid={`param-input-${param.name}`}
+                            aria-invalid={error ? 'true' : 'false'}
+                            aria-describedby={error ? `param-error-${param.name}` : undefined}
                           >
                             <option value="">Select Boolean...</option>
                             <option value="true">true</option>
@@ -586,6 +591,7 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
                         ) : (
                           <div className="relative">
                             <input
+                              id={`param-${param.name}`}
                               type={param.type === 'u32' || param.type === 'u64' ? 'number' : 'text'}
                               value={value}
                               onChange={e => handleInputChange(param.name, param.type, e.target.value)}
@@ -600,6 +606,8 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
                                 error ? 'border-rose-500 focus:ring-rose-500/50' : ''
                               }`}
                               data-testid={`param-input-${param.name}`}
+                              aria-invalid={error ? 'true' : 'false'}
+                              aria-describedby={error ? `param-error-${param.name}` : undefined}
                             />
                             {param.type === 'Bytes' && value && (
                               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-mono">
@@ -610,8 +618,8 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
                         )}
 
                         {error && (
-                          <p className="text-xs text-rose-400 flex items-center gap-1 mt-1">
-                            <AlertCircle size={12} /> {error}
+                          <p id={`param-error-${param.name}`} role="alert" className="text-xs text-rose-400 flex items-center gap-1 mt-1">
+                            <AlertCircle size={12} aria-hidden="true" /> {error}
                           </p>
                         )}
                       </div>

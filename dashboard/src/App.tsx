@@ -15,16 +15,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 // Dummy components for sections
 const DashboardOverview = () => (
   <div className="space-y-6">
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    {/* Responsive grid: 1 column on mobile (<640px), 3 columns on md (>=768px) */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {[
         { label: 'Total Volume', value: '$128,430.00', change: '+12.5%' },
         { label: 'Active Deposits', value: '42', change: '+3' },
         { label: 'Pending Withdrawals', value: '18', change: '-2' },
       ].map((stat, i) => (
-        <div key={i} className="glass-card p-6">
+        <div key={i} className="glass-card p-4 sm:p-6">
           <p className="text-slate-400 text-sm">{stat.label}</p>
           <div className="flex items-end justify-between mt-2">
-            <h3 className="text-2xl font-bold font-display">{stat.value}</h3>
+            <h3 className="text-xl sm:text-2xl font-bold font-display">{stat.value}</h3>
             <span className={`text-xs ${stat.change.startsWith('+') ? 'text-emerald-400' : 'text-rose-400'}`}>
               {stat.change}
             </span>
@@ -225,12 +226,12 @@ const App = () => {
       <SessionTimeoutModal />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-background/80 px-3 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+        <header className="sticky top-0 z-30 flex min-h-16 flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-background/80 px-2 py-3 backdrop-blur-md sm:px-6 lg:px-8">
           <button
             aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={sidebarOpen}
             aria-controls="main-sidebar"
-            className="relative z-20 -ml-2 rounded bg-background p-2 md:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="relative z-20 -ml-2 rounded bg-background p-2 sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             {sidebarOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
@@ -239,7 +240,7 @@ const App = () => {
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-4">
             <div
               data-testid="backend-status"
-              className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex"
+              className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 sm:flex"
               role="status"
               aria-live="polite"
               aria-label={
@@ -267,7 +268,7 @@ const App = () => {
               {wallet ? (
                 <div className="flex items-center gap-2">
                   <CopyablePublicKey publicKey={wallet.publicKey} label={`${wallet.network} public key`} />
-                  <span className="hidden rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 md:inline">
+                  <span className="hidden rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 sm:inline">
                     0.00 XLM
                   </span>
                 </div>
@@ -285,7 +286,7 @@ const App = () => {
                 </button>
               )}
               {walletStatus === 'error' && !wallet ? (
-                <span className="hidden max-w-48 truncate text-xs text-rose-300 md:inline" role="alert">
+                <span className="hidden max-w-48 truncate text-xs text-rose-300 sm:inline" role="alert">
                   {walletError}
                 </span>
               ) : null}

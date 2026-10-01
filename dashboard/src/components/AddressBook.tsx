@@ -71,18 +71,24 @@ export const AddressBook = () => {
       </p>
 
       <form onSubmit={handleSubmit} className="mb-6 grid gap-3">
-        <label className="grid gap-1 text-sm text-slate-300">
-          Name
+        <div className="grid gap-1">
+          <label htmlFor="contact-name" className="text-sm text-slate-300">
+            Name
+          </label>
           <input
+            id="contact-name"
             aria-label="Contact name"
             value={draft.name}
             onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
             className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
           />
-        </label>
-        <label className="grid gap-1 text-sm text-slate-300">
-          Public key
+        </div>
+        <div className="grid gap-1">
+          <label htmlFor="contact-public-key" className="text-sm text-slate-300">
+            Public key
+          </label>
           <input
+            id="contact-public-key"
             aria-label="Stellar public key"
             value={draft.publicKey}
             onChange={(event) =>
@@ -91,7 +97,7 @@ export const AddressBook = () => {
             placeholder="G..."
             className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100"
           />
-        </label>
+        </div>
         {error ? (
           <p role="alert" className="text-sm text-rose-400">
             {error}
