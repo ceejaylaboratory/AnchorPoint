@@ -268,10 +268,9 @@ impl OracleMedianizer {
 
     /// Calculate and store the median price for an asset with outlier detection
     ///
-    /// Uses Interquartile Range (IQR) filtering to reject extreme outlier data points.
-    /// A price is considered an outlier if it falls outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR].
-    /// After filtering, at least 3 valid non-outlier price feeds are required to
-    /// compute the median, ensuring robustness against compromised feeds.
+    /// Collects price inputs from N registered oracle sources, sorts the prices array,
+    /// removes extreme min/max outliers if N >= 5, and calculates the median value.
+    /// This simple outlier exclusion protects against single-oracle manipulation attacks.
     ///
     /// # Arguments
     /// * `env` - The environment
@@ -282,7 +281,7 @@ impl OracleMedianizer {
     /// The calculated median price
     ///
     /// # Panics
-    /// Panics if minimum sources requirement is not met or too many outliers removed
+    /// Panics if minimum sources requirement is not met
     pub fn calculate_median(env: Env, asset: Address, sources: Vec<Address>) -> i128 {
         let min_sources: u32 = env
             .storage()
@@ -308,66 +307,22 @@ impl OracleMedianizer {
             "insufficient valid price feeds"
         );
 
-        // Sort prices for quartile calculation
+        // Sort prices in ascending order
         prices = Self::sort_prices(&env, prices);
 
-        // ── IQR Outlier Rejection ─────────────────────────────────────────
-        //
-        // Split the sorted array into lower and upper halves to compute Q1 and Q3.
-        // For an even-length array the two halves are equal; for an odd-length
-        // array the middle element is excluded from both halves (Tukey / Excel
-        // "exclusive" quartile convention).
-        //
-        // Q1 = median of the lower half
-        // Q3 = median of the upper half
-        // IQR = Q3 - Q1
-        // Acceptable range: [Q1 - 1.5 * IQR, Q3 + 1.5 * IQR]
-
+        // Remove extreme min/max outliers if N >= 5
         let n = prices.len();
-        let half = n / 2;
-
-        // Lower half: indices [0, half)
-        let q1 = Self::median_of_slice(&env, &prices, 0, half);
-
-        // Upper half: indices [n - half, n) — skips the middle element when n is odd
-        let q3 = Self::median_of_slice(&env, &prices, n - half, n);
-
-        let iqr = q3.checked_sub(q1).unwrap_or(0);
-
-        // Use scaled arithmetic to avoid floating-point: multiply by 2 on both
-        // sides rather than dividing by 2 in "1.5 * IQR".
-        // lower_bound = Q1 - 3*IQR/2  =>  2*lower_bound = 2*Q1 - 3*IQR
-        // upper_bound = Q3 + 3*IQR/2  =>  2*upper_bound = 2*Q3 + 3*IQR
-        let two_q1 = q1.checked_mul(2).expect("iqr overflow");
-        let two_q3 = q3.checked_mul(2).expect("iqr overflow");
-        let three_iqr = iqr.checked_mul(3).expect("iqr overflow");
-
-        let two_lower = two_q1.checked_sub(three_iqr).unwrap_or(i128::MIN / 2);
-        let two_upper = two_q3.checked_add(three_iqr).expect("iqr overflow");
-
-        let mut filtered_prices: Vec<i128> = Vec::new(&env);
-        for price in prices.iter() {
-            let two_price = price.checked_mul(2).expect("iqr overflow");
-            if two_price >= two_lower && two_price <= two_upper {
-                filtered_prices.push_back(price);
+        let filtered_prices = if n >= 5 {
+            // Remove the minimum (first) and maximum (last) values
+            let mut filtered: Vec<i128> = Vec::new(&env);
+            for i in 1..(n - 1) {
+                filtered.push_back(prices.get_unchecked(i));
             }
-        }
-
-        // Require at least 3 valid non-outlier feeds to ensure a meaningful median.
-        assert!(
-            filtered_prices.len() >= 3,
-            "minimum 3 valid non-outlier price feeds required"
-        );
-
-        // Also ensure we still satisfy the configured min_sources threshold.
-        assert!(
-            filtered_prices.len() >= min_sources,
-            "too many outliers removed"
-        );
-
-        // Sort filtered prices (they are a subset of the already-sorted array,
-        // so this is a no-op in practice but kept for clarity).
-        filtered_prices = Self::sort_prices(&env, filtered_prices);
+            filtered
+        } else {
+            // No outlier removal for N < 5
+            prices
+        };
 
         // Calculate median
         let len = filtered_prices.len();
@@ -526,23 +481,6 @@ impl OracleMedianizer {
 
         sorted
     }
-
-    /// Compute the median of a contiguous slice `[start, end)` of a sorted `Vec<i128>`.
-    ///
-    /// Assumes `end > start` and that the Vec has been sorted in ascending order.
-    fn median_of_slice(_env: &Env, sorted: &Vec<i128>, start: u32, end: u32) -> i128 {
-        let len = end - start;
-        if len == 0 {
-            return 0;
-        }
-        if len.is_multiple_of(2) {
-            let mid1 = sorted.get_unchecked(start + len / 2 - 1);
-            let mid2 = sorted.get_unchecked(start + len / 2);
-            (mid1.checked_add(mid2).expect("median_of_slice overflow")) / 2
-        } else {
-            sorted.get_unchecked(start + len / 2)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -556,7 +494,6 @@ mod tests {
         let admin = Address::generate(&env);
         let contract_id = env.register(OracleMedianizer, ());
         let client = OracleMedianizerClient::new(&env, &contract_id);
-        // Require minimum 3 sources to meet the non-outlier feed requirement
         client.initialize(&admin, &3u32);
         (env, client, admin)
     }
@@ -600,10 +537,10 @@ mod tests {
         assert!(median > 990000000 && median < 1010000000);
     }
 
-    // ── IQR Outlier Rejection Tests (Issue #999) ─────────────────────────
+    // ── Min/Max Outlier Exclusion Tests ────────────────────────────────
 
     #[test]
-    fn test_iqr_outlier_rejection_rejects_extreme_value() {
+    fn test_outlier_exclusion_with_5_sources() {
         let (env, client, admin) = setup();
 
         let oracle1 = Address::generate(&env);
@@ -637,17 +574,55 @@ mod tests {
         ];
         let median = client.calculate_median(&asset, &sources);
 
-        // The outlier ($1000) should be rejected; median of the four honest feeds
-        // is between $9.90 and $10.10
-        assert!(
-            median >= 990_000_000 && median <= 1_010_000_000,
-            "median {} should be in the honest range after outlier rejection",
-            median
-        );
+        // With N=5, min ($9.90) and max ($1000) are removed
+        // Remaining: [1_000_000_000, 1_005_000_000, 1_010_000_000]
+        // Median should be 1_005_000_000 ($10.05)
+        assert_eq!(median, 1_005_000_000);
     }
 
     #[test]
-    fn test_iqr_accepts_all_values_when_no_outliers() {
+    fn test_outlier_exclusion_with_skewed_inputs() {
+        let (env, client, admin) = setup();
+
+        let oracle1 = Address::generate(&env);
+        let oracle2 = Address::generate(&env);
+        let oracle3 = Address::generate(&env);
+        let oracle4 = Address::generate(&env);
+        let oracle5 = Address::generate(&env);
+
+        client.add_oracle_source(&admin, &oracle1);
+        client.add_oracle_source(&admin, &oracle2);
+        client.add_oracle_source(&admin, &oracle3);
+        client.add_oracle_source(&admin, &oracle4);
+        client.add_oracle_source(&admin, &oracle5);
+
+        let asset = Address::generate(&env);
+
+        // Skewed inputs: one very low, one very high, three clustered
+        client.submit_price(&oracle1, &asset, &100i128);           // $0.000001 — outlier
+        client.submit_price(&oracle2, &asset, &1_000_000_000i128); // $10.00
+        client.submit_price(&oracle3, &asset, &1_010_000_000i128); // $10.10
+        client.submit_price(&oracle4, &asset, &1_005_000_000i128); // $10.05
+        client.submit_price(&oracle5, &asset, &10_000_000_000i128); // $100 — outlier
+
+        let sources = soroban_sdk::vec![
+            &env,
+            oracle1.clone(),
+            oracle2.clone(),
+            oracle3.clone(),
+            oracle4.clone(),
+            oracle5.clone()
+        ];
+        let median = client.calculate_median(&asset, &sources);
+
+        // Min (100) and max (10B) removed
+        // Remaining: [1_000_000_000, 1_005_000_000, 1_010_000_000]
+        // Median should be 1_005_000_000 ($10.05)
+        assert_eq!(median, 1_005_000_000);
+    }
+
+    #[test]
+    fn test_no_outlier_exclusion_with_3_sources() {
         let (env, client, admin) = setup();
 
         let oracle1 = Address::generate(&env);
@@ -660,7 +635,7 @@ mod tests {
 
         let asset = Address::generate(&env);
 
-        // All feeds within normal variance — no outliers expected
+        // With N=3, no outlier removal
         client.submit_price(&oracle1, &asset, &1_000_000_000i128);
         client.submit_price(&oracle2, &asset, &1_010_000_000i128);
         client.submit_price(&oracle3, &asset, &995_000_000i128);
@@ -668,58 +643,89 @@ mod tests {
         let sources = soroban_sdk::vec![&env, oracle1.clone(), oracle2.clone(), oracle3.clone()];
         let median = client.calculate_median(&asset, &sources);
 
-        assert!(median >= 990_000_000 && median <= 1_010_000_000);
+        // Sorted: [995_000_000, 1_000_000_000, 1_010_000_000]
+        // Median should be 1_000_000_000
+        assert_eq!(median, 1_000_000_000);
     }
 
     #[test]
-    #[should_panic(expected = "minimum 3 valid non-outlier price feeds required")]
-    fn test_rejects_when_fewer_than_3_non_outlier_feeds_remain() {
+    fn test_no_outlier_exclusion_with_4_sources() {
         let (env, client, admin) = setup();
 
-        // Register 3 oracles but two submit extreme outlier prices
         let oracle1 = Address::generate(&env);
         let oracle2 = Address::generate(&env);
         let oracle3 = Address::generate(&env);
+        let oracle4 = Address::generate(&env);
 
         client.add_oracle_source(&admin, &oracle1);
         client.add_oracle_source(&admin, &oracle2);
         client.add_oracle_source(&admin, &oracle3);
+        client.add_oracle_source(&admin, &oracle4);
 
         let asset = Address::generate(&env);
 
-        // Two extreme outliers on opposite ends plus one honest feed
-        client.submit_price(&oracle1, &asset, &1_000_000_000i128);       // $10 — honest
-        client.submit_price(&oracle2, &asset, &1_000_000_000_000i128);   // $10,000 — outlier
-        client.submit_price(&oracle3, &asset, &1_000i128);               // $0.00001 — outlier
+        // With N=4, no outlier removal
+        client.submit_price(&oracle1, &asset, &1_000_000_000i128);
+        client.submit_price(&oracle2, &asset, &1_010_000_000i128);
+        client.submit_price(&oracle3, &asset, &995_000_000i128);
+        client.submit_price(&oracle4, &asset, &1_005_000_000i128);
 
-        let sources = soroban_sdk::vec![&env, oracle1.clone(), oracle2.clone(), oracle3.clone()];
-        // Should panic: only 1 feed left after IQR rejection (less than 3 required)
-        client.calculate_median(&asset, &sources);
+        let sources = soroban_sdk::vec![
+            &env,
+            oracle1.clone(),
+            oracle2.clone(),
+            oracle3.clone(),
+            oracle4.clone()
+        ];
+        let median = client.calculate_median(&asset, &sources);
+
+        // Sorted: [995_000_000, 1_000_000_000, 1_005_000_000, 1_010_000_000]
+        // Median = (1_000_000_000 + 1_005_000_000) / 2 = 1_002_500_000
+        assert_eq!(median, 1_002_500_000);
     }
 
     #[test]
-    fn test_minimum_3_sources_enforced() {
-        // Initialise with min_sources = 3 and supply only 2 — should panic
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::generate(&env);
-        let contract_id = env.register(OracleMedianizer, ());
-        let client = OracleMedianizerClient::new(&env, &contract_id);
-        client.initialize(&admin, &3u32);
+    fn test_outlier_exclusion_with_6_sources() {
+        let (env, client, admin) = setup();
 
         let oracle1 = Address::generate(&env);
         let oracle2 = Address::generate(&env);
+        let oracle3 = Address::generate(&env);
+        let oracle4 = Address::generate(&env);
+        let oracle5 = Address::generate(&env);
+        let oracle6 = Address::generate(&env);
+
         client.add_oracle_source(&admin, &oracle1);
         client.add_oracle_source(&admin, &oracle2);
+        client.add_oracle_source(&admin, &oracle3);
+        client.add_oracle_source(&admin, &oracle4);
+        client.add_oracle_source(&admin, &oracle5);
+        client.add_oracle_source(&admin, &oracle6);
 
         let asset = Address::generate(&env);
-        client.submit_price(&oracle1, &asset, &1_000_000_000i128);
-        client.submit_price(&oracle2, &asset, &1_010_000_000i128);
 
-        let sources = soroban_sdk::vec![&env, oracle1.clone(), oracle2.clone()];
-        // This should still compute (min_sources=3 but we only have 2 sources)
-        // — the initial assert catches it. Wrap in catch_unwind isn't available
-        // in no_std so we just verify the happy path succeeds with 3+ sources.
-        let _ = sources; // quiet unused warning; test verifies setup() uses min 3
+        // Six sources with outliers on both ends
+        client.submit_price(&oracle1, &asset, &100i128);           // $0.000001 — outlier
+        client.submit_price(&oracle2, &asset, &1_000_000_000i128); // $10.00
+        client.submit_price(&oracle3, &asset, &1_010_000_000i128); // $10.10
+        client.submit_price(&oracle4, &asset, &1_005_000_000i128); // $10.05
+        client.submit_price(&oracle5, &asset, &1_015_000_000i128); // $10.15
+        client.submit_price(&oracle6, &asset, &10_000_000_000i128); // $100 — outlier
+
+        let sources = soroban_sdk::vec![
+            &env,
+            oracle1.clone(),
+            oracle2.clone(),
+            oracle3.clone(),
+            oracle4.clone(),
+            oracle5.clone(),
+            oracle6.clone()
+        ];
+        let median = client.calculate_median(&asset, &sources);
+
+        // Min (100) and max (10B) removed
+        // Remaining: [1_000_000_000, 1_005_000_000, 1_010_000_000, 1_015_000_000]
+        // Median = (1_005_000_000 + 1_010_000_000) / 2 = 1_007_500_000
+        assert_eq!(median, 1_007_500_000);
     }
 }

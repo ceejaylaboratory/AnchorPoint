@@ -17,6 +17,8 @@
     "lint:backend": "npm run lint -w backend",
     "migrate:check": "npm run migrate:check -w backend",
     "validate-env": "node tools/validate-env.js",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "lint:secrets": "npx --yes --package secretlint@8 --package @secretlint/secretlint-rule-preset-recommend@8 secretlint --config .secretlintrc.json",
     "test:load": "k6 run tests/load/k6_sep_test.js",
     "install:all": "npm install"
   },

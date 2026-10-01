@@ -30,6 +30,8 @@ enum DataKey {
     SecurityRegistry,
     /// Reentrancy lock flag guarding borrower callback execution
     ReentrancyLock,
+    /// Liquidity provider reward pool address
+    RewardPool,
 }
 
 /// Loan details for batch operations
@@ -88,7 +90,11 @@ impl FlashLoanProvider {
 
     /// Get the current fee basis points.
     pub fn get_fee_bps(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(5)
+        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(9)
+    }
+
+    pub fn set_reward_pool(env: Env, address: Address) {
+        env.storage().instance().set(&DataKey::RewardPool, &address);
     }
 
     /// Acquire the reentrancy lock, trapping if a flash loan is already in progress.
@@ -143,12 +149,96 @@ impl FlashLoanProvider {
             panic!("Flash loan not repaid with fee");
         }
 
+        if let Some(reward_pool) = env.storage().instance().get::<_, Address>(&DataKey::RewardPool) {
+            token_client.transfer(&env.current_contract_address(), &reward_pool, &fee);
+        }
+
         // 7. Release the lock only after balance verification has completed.
         Self::release_reentrancy_lock(&env);
 
         // Topic: event name only; receiver + token (Addresses) + amounts in data.
         env.events()
             .publish((symbol_short!("flash_ln"),), (receiver, token, amount, fee));
+    }
+
+    /// Executes a flash loan for multiple distinct tokens in a single call.
+    /// This enables complex arbitrage strategies across multiple token pairs.
+    ///
+    /// # Arguments
+    /// * `receiver` - The address of the contract that will receive the loans and execute the logic.
+    /// * `tokens` - Vector of token addresses to borrow.
+    /// * `amounts` - Vector of amounts to borrow for each token (must match tokens length).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let tokens = vec![&env, token_a, token_b, token_c];
+    /// let amounts = vec![&env, 1000, 500, 250];
+    /// provider.flash_loan_multi(&receiver, &tokens, &amounts);
+    /// ```
+    pub fn flash_loan_multi(env: Env, receiver: Address, tokens: Vec<Address>, amounts: Vec<i128>) {
+        if tokens.is_empty() {
+            panic!("cannot flash loan zero assets");
+        }
+        if tokens.len() != amounts.len() {
+            panic!("tokens and amounts vectors must have equal length");
+        }
+
+        let fee_bps = Self::get_fee_bps(env.clone());
+        let provider_address = env.current_contract_address();
+
+        // 1. Calculate fees and check initial balances for all tokens
+        let mut loan_details: Vec<LoanDetail> = Vec::new(&env);
+        let mut required_repayments: Map<Address, i128> = Map::new(&env);
+
+        for i in 0..tokens.len() {
+            let token = tokens.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
+            let fee = calculate_fee(amount, fee_bps);
+
+            let token_client = token::Client::new(&env, &token);
+            let current_required = required_repayments
+                .get(token.clone())
+                .unwrap_or_else(|| token_client.balance(&provider_address));
+            // Aggregate by token so duplicate-token batches must repay every fee.
+            let expected_repayment = checked_repayment_amount(current_required, fee);
+
+            required_repayments.set(token.clone(), expected_repayment);
+            loan_details.push_back(LoanDetail {
+                token: token.clone(),
+                amount,
+                fee,
+            });
+        }
+
+        // 2. Transfer all tokens to the receiver
+        for i in 0..tokens.len() {
+            let token = tokens.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer(&provider_address, &receiver, &amount);
+        }
+
+        // 3. Invoke the receiver's batch execution logic
+        let receiver_client = FlashLoanBatchReceiverClient::new(&env, &receiver);
+        receiver_client.execute_batch_loan(&loan_details);
+
+        // 4. Verify repayment for all tokens
+        for i in 0..loan_details.len() {
+            let loan = loan_details.get(i).unwrap();
+            let token_client = token::Client::new(&env, &loan.token);
+            let balance_after = token_client.balance(&provider_address);
+            let expected_repayment = required_repayments.get(loan.token.clone()).unwrap();
+            if balance_after < expected_repayment {
+                panic!(
+                    "Flash loan not repaid for token {:?}: expected {}, got {}",
+                    loan.token, expected_repayment, balance_after
+                );
+            }
+        }
+
+        // 5. Emit batch event
+        env.events()
+            .publish((symbol_short!("fl_multi"), receiver), loan_details);
     }
 
     /// Executes a batch flash loan for multiple assets in a single atomic transaction.
@@ -224,6 +314,9 @@ impl FlashLoanProvider {
                     "Flash loan not repaid for token {:?}: expected {}, got {}",
                     loan.token, expected_repayment, balance_after
                 );
+            }
+            if let Some(reward_pool) = env.storage().instance().get::<_, Address>(&DataKey::RewardPool) {
+                token_client.transfer(&provider_address, &reward_pool, &loan.fee);
             }
         }
 

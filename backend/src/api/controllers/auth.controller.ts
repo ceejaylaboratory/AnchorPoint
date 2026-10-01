@@ -26,6 +26,14 @@ import logger from '../../utils/logger';
 
 // RFC 1123 compliant hostname: no consecutive dots/hyphens, labels must start/end with alphanumeric
 const CLIENT_DOMAIN_REGEX = /^(?!-)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.(?!-)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.(?!-)(?:[a-zA-Z]{2,}|xn--[a-zA-Z0-9]+)(?:-[a-zA-Z0-9]+)*$/;
+const SEP10_NONCE_TTL_SECONDS = 300;
+
+type Sep10NonceRecord = {
+  account: string;
+  createdAt: number;
+};
+
+const buildSep10NonceKey = (nonce: string) => `sep10:nonce:${nonce}`;
 
 function validateClientDomain(domain: string): boolean {
   const trimmed = domain.trim();
@@ -143,6 +151,11 @@ export const getChallenge = async (
 
     // Store the challenge in Redis
     await storeSep10Challenge(redisService, account, sep10Challenge);
+    await redisService.setJSON<Sep10NonceRecord>(
+      buildSep10NonceKey(sep10Challenge.challenge),
+      { account, createdAt: Date.now() },
+      SEP10_NONCE_TTL_SECONDS
+    );
 
     const response: ChallengeResponse = {
       transaction: sep10Challenge.transactionXdr || sep10Challenge.challenge,
@@ -269,7 +282,16 @@ export const getToken = async (
       });
     }
 
-    // Remove the challenge to prevent replay attacks
+    const nonceKey = buildSep10NonceKey(storedChallenge.challenge);
+    const nonceRecord = await redisService.getJSON<Sep10NonceRecord>(nonceKey);
+    if (!nonceRecord || nonceRecord.account !== account) {
+      return res.status(400).json({
+        error: 'Invalid or expired nonce'
+      });
+    }
+
+    // Remove the nonce and challenge to prevent replay attacks
+    await redisService.del(nonceKey);
     await removeChallenge(redisService, account);
 
     // Generate JWT token

@@ -1,6 +1,9 @@
+// Must be the first import so OpenTelemetry instruments http/express/ioredis (#1201).
+import { shutdownTracing } from './utils/tracing';
 import http from 'http';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import { config, hydrateEncryptedConfigSecrets } from './config/env';
 import { swaggerSpec } from './config/swagger';
@@ -35,7 +38,7 @@ import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
 import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
-import { createEmailProvider, ConsoleSmsProvider, FcmPushProvider } from './lib/notifications/providers';
+import { createEmailProvider, createSmsProvider, createPushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup, verifyDecryptionCapabilityOnStartup } from './lib/key-management.service';
 import queueDashboardRouter, { dashboardQueues } from './api/routes/queue-dashboard.route';
@@ -46,6 +49,7 @@ import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { dbMetricsScheduler } from './workers/db-metrics.scheduler';
 import { initSocket } from './lib/socket';
 import { kycExpiryScheduler } from './workers/kyc-expiry.scheduler';
+import { kycDocumentExpiryScheduler } from './workers/kyc_document_expiry_scheduler';
 import { cleanupWorker } from './workers/cleanup.worker';
 import { feeReportWorker } from './workers/fee-report.worker';
 import contractQueueService from './services/contract-queue.service';
@@ -72,6 +76,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   feeReportScheduler.stop();
   uploadExpiryScheduler.stop();
   kycExpiryScheduler.stop();
+  kycDocumentExpiryScheduler.stop();
   cleanupWorker.stop();
   dbMetricsScheduler.stop();
 
@@ -99,6 +104,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     ),
     ['Prisma client', () => prisma.$disconnect()],
     ['Redis connection', () => redis.quit()],
+    ['OpenTelemetry tracing', () => shutdownTracing()],
   ];
 
   for (const [label, action] of steps) {
@@ -120,12 +126,27 @@ process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
-notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvider());
-notificationService.registerProvider(NotificationType.PUSH, new FcmPushProvider());
+notificationService.registerProvider(NotificationType.SMS, createSmsProvider());
+notificationService.registerProvider(NotificationType.PUSH, createPushProvider());
 
 const app = express();
 const httpServer = http.createServer(app);
 app.disable('x-powered-by');
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+      },
+    },
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'no-referrer' },
+  })
+);
 app.use(securityHeadersMiddleware);
 app.use(tracingMiddleware);
 const PORT = config.PORT;
@@ -443,6 +464,7 @@ if (process.env.NODE_ENV !== 'test') {
           feeReportScheduler.start();
           uploadExpiryScheduler.start();
           kycExpiryScheduler.start();
+          kycDocumentExpiryScheduler.start();
           dbMetricsScheduler.start();
           cleanupWorker.start();
         });

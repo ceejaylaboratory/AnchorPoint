@@ -2,6 +2,7 @@ import { Server as HttpServer } from 'http';
 import { Server as SocketServer, Socket } from 'socket.io';
 import { verifyToken } from '../services/auth.service';
 import logger from '../utils/logger';
+import { metricsService } from '../services/metrics.service';
 
 let io: SocketServer | null = null;
 
@@ -24,7 +25,11 @@ export function initSocket(httpServer: HttpServer): SocketServer {
 
   io.on('connection', (socket: Socket) => {
     logger.info('WebSocket client connected', { id: socket.id });
-    socket.on('disconnect', () => logger.info('WebSocket client disconnected', { id: socket.id }));
+    metricsService.incrementWebSocketConnections();
+    socket.on('disconnect', () => {
+      metricsService.decrementWebSocketConnections();
+      logger.info('WebSocket client disconnected', { id: socket.id });
+    });
   });
 
   return io;

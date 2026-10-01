@@ -75,12 +75,12 @@ const App = () => {
       <SessionTimeoutModal />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-background/80 px-3 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+        <header className="sticky top-0 z-30 flex min-h-16 flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-background/80 px-2 py-3 backdrop-blur-md sm:px-6 lg:px-8">
           <button
             aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={sidebarOpen}
             aria-controls="main-sidebar"
-            className="relative z-20 -ml-2 rounded bg-background p-2 md:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="relative z-20 -ml-2 rounded bg-background p-2 sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             {sidebarOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
@@ -89,7 +89,7 @@ const App = () => {
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-4">
             <div
               data-testid="backend-status"
-              className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 md:flex"
+              className="hidden items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 sm:flex"
               role="status"
               aria-live="polite"
               aria-label={
@@ -117,7 +117,7 @@ const App = () => {
               {wallet ? (
                 <div className="flex items-center gap-2">
                   <CopyablePublicKey publicKey={wallet.publicKey} label={`${wallet.network} public key`} />
-                  <span className="hidden rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 md:inline">
+                  <span className="hidden rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 sm:inline">
                     0.00 XLM
                   </span>
                 </div>
@@ -135,7 +135,7 @@ const App = () => {
                 </button>
               )}
               {walletStatus === 'error' && !wallet ? (
-                <span className="hidden max-w-48 truncate text-xs text-rose-300 md:inline" role="alert">
+                <span className="hidden max-w-48 truncate text-xs text-rose-300 sm:inline" role="alert">
                   {walletError}
                 </span>
               ) : null}
