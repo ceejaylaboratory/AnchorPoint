@@ -10,6 +10,7 @@ pub enum DataKey {
     BaseRate, // Base rewards per second per token (scaled by 1e7)
     Tiers,    // Vec<LockTier>
     PenaltyBps,
+    PenaltyPool, // Address to receive emergency withdrawal penalties
     Stake(Address),
     // Appended after the original variants so that storage encodings of the
     // keys above stay valid for already-deployed instances.
@@ -140,6 +141,7 @@ impl StakingContract {
         env.storage().instance().get(&DataKey::Tiers).unwrap()
     }
 
+<<<<<<< Updated upstream
     /// Admin-tunable dynamic APR scaling configuration.
     pub fn set_emission_params(env: Env, params: EmissionParams) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
@@ -200,6 +202,14 @@ impl StakingContract {
             .checked_mul(emission_bps)
             .expect("apr overflow")
             / (REWARD_PRECISION * BPS)
+=======
+    pub fn set_penalty_pool(env: Env, penalty_pool: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::PenaltyPool, &penalty_pool);
+>>>>>>> Stashed changes
     }
 
     pub fn stake(env: Env, user: Address, amount: i128, tier_index: u32) {
@@ -386,6 +396,46 @@ impl StakingContract {
             (symbol_short!("staking"), symbol_short!("claim")),
             (user, rewards),
         );
+    }
+
+    pub fn emergency_withdraw(env: Env, user: Address) -> i128 {
+        user.require_auth();
+        let info = Self::get_stake_info(env.clone(), user.clone());
+        assert!(info.amount > 0, "nothing to withdraw");
+
+        let penalty_pool: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PenaltyPool)
+            .expect("penalty pool not set");
+
+        // Calculate 10% penalty on principal
+        let penalty = (info.amount * 1000) / 10000; // 10% = 1000 bps
+        let amount_to_user = info.amount - penalty;
+
+        // Forfeit all accrued rewards (do not pay them out)
+        // Rewards are simply lost
+
+        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_client = token::Client::new(&env, &token_addr);
+
+        // Transfer 90% to user
+        token_client.transfer(&env.current_contract_address(), &user, &amount_to_user);
+
+        // Transfer 10% penalty to penalty pool
+        token_client.transfer(&env.current_contract_address(), &penalty_pool, &penalty);
+
+        // Reset user stake balance
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Stake(user.clone()));
+
+        env.events().publish(
+            (symbol_short!("staking"), symbol_short!("emergency")),
+            (user, amount_to_user, penalty),
+        );
+
+        amount_to_user
     }
 
     pub fn get_stake_info(env: Env, user: Address) -> StakeInfo {
@@ -1061,5 +1111,92 @@ mod tests {
 
         // Full principal + rewards (1000 * 1000 * 3600 / 10_000_000 = 360)
         assert_eq!(token_client.balance(&user), 9000 + 1000 + 360);
+    }
+
+    #[test]
+    fn test_emergency_withdraw_penalty_deduction() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let penalty_pool = Address::generate(&env);
+        let token_client = token::Client::new(&env, &token_id);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
+
+        client.set_penalty_pool(&penalty_pool);
+        client.stake(&user, &1000, &0);
+
+        client.emergency_withdraw(&user);
+
+        // 10% penalty on 1000 = 100, user gets 900
+        assert_eq!(token_client.balance(&user), 9000 + 900);
+        // Penalty pool receives 100
+        assert_eq!(token_client.balance(&penalty_pool), 100);
+    }
+
+    #[test]
+    fn test_emergency_withdraw_forfeits_rewards() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let penalty_pool = Address::generate(&env);
+        let token_client = token::Client::new(&env, &token_id);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
+
+        client.set_penalty_pool(&penalty_pool);
+        client.stake(&user, &1000, &0);
+
+        // Advance time to accrue rewards
+        env.ledger().set_timestamp(env.ledger().timestamp() + 1000);
+
+        // Fund contract with reward tokens
+        stellar_asset_client.mint(&client.address, &100);
+
+        client.emergency_withdraw(&user);
+
+        // User should only get 900 (90% of 1000), rewards are forfeited
+        assert_eq!(token_client.balance(&user), 9000 + 900);
+        // Contract should still have the 100 reward tokens
+        assert_eq!(token_client.balance(&client.address), 100);
+    }
+
+    #[test]
+    fn test_emergency_withdraw_resets_stake() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let penalty_pool = Address::generate(&env);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
+
+        client.set_penalty_pool(&penalty_pool);
+        client.stake(&user, &1000, &0);
+
+        client.emergency_withdraw(&user);
+
+        let info = client.get_stake_info(&user);
+        assert_eq!(info.amount, 0);
+        assert_eq!(info.accumulated_rewards, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "penalty pool not set")]
+    fn test_emergency_withdraw_without_pool_panics() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
+        stellar_asset_client.mint(&user, &10000);
+
+        client.stake(&user, &1000, &0);
+        client.emergency_withdraw(&user);
+    }
+
+    #[test]
+    #[should_panic(expected = "nothing to withdraw")]
+    fn test_emergency_withdraw_nothing_panics() {
+        let (env, client, _admin, _token_id) = setup();
+        let user = Address::generate(&env);
+        let penalty_pool = Address::generate(&env);
+
+        client.set_penalty_pool(&penalty_pool);
+        client.emergency_withdraw(&user);
     }
 }
