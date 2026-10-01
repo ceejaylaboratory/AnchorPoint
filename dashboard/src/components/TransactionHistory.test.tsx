@@ -1,180 +1,135 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { TransactionHistory } from './TransactionHistory';
+import { describe, it, expect } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import React from 'react';
+import { 
+  TransactionHistory, 
+  generateTransactions 
+} from './TransactionHistory';
 
-/**
- * The component seeds itself with a 5000-row fixture and flips out of its
- * loading state after a 1s timer, so every case waits for the first real row
- * before asserting.
- */
-const renderTable = async (props: Parameters<typeof TransactionHistory>[0] = {}) => {
-  const view = render(<TransactionHistory {...props} />);
-  await waitFor(() => expect(screen.getByLabelText('Transaction pagination')).toBeTruthy(), {
-    timeout: 3000,
-  });
-  await waitFor(() => expect(dataRows().length).toBeGreaterThan(0), { timeout: 3000 });
-  return view;
-};
-
-/** Body rows only — excludes the header row and the skeleton placeholders. */
-const dataRows = () => {
-  const body = document.querySelector('tbody');
-  if (!body) return [];
-  return Array.from(body.querySelectorAll('tr')).filter(
-    (row) => !row.querySelector('.animate-pulse') && !row.textContent?.includes('No transactions'),
-  );
-};
-
-const summary = () => screen.getByLabelText('Transaction pagination').textContent ?? '';
-
-describe('TransactionHistory pagination', () => {
-  it('renders only the first page of rows rather than the whole set', async () => {
-    await renderTable();
-
-    expect(dataRows().length).toBe(10);
-    expect(summary()).toContain('Showing 1-10 of 5000 transactions');
-  });
-
-  it('advances to the next page and reports the new range', async () => {
-    await renderTable();
-    const firstRowBefore = dataRows()[0].textContent;
-
-    fireEvent.click(screen.getByLabelText('Next page'));
-
-    await waitFor(() => expect(summary()).toContain('Showing 11-20 of 5000'));
-    expect(dataRows()[0].textContent).not.toBe(firstRowBefore);
-    expect(dataRows().length).toBe(10);
-  });
-
-  it('steps back to the previous page', async () => {
-    await renderTable();
-
-    fireEvent.click(screen.getByLabelText('Next page'));
-    await waitFor(() => expect(summary()).toContain('Showing 11-20'));
-
-    fireEvent.click(screen.getByLabelText('Previous page'));
-    await waitFor(() => expect(summary()).toContain('Showing 1-10 of 5000'));
-  });
-
-  it('disables Previous on the first page and Next on the last', async () => {
-    await renderTable();
-
-    const previous = screen.getByLabelText('Previous page') as HTMLButtonElement;
-    expect(previous.disabled).toBe(true);
-
-    // 5000 rows / 10 per page = 500 pages.
-    fireEvent.click(screen.getByLabelText('Page 500'));
-
-    await waitFor(() => expect(summary()).toContain('Showing 4991-5000 of 5000'));
-    expect((screen.getByLabelText('Next page') as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByLabelText('Previous page') as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it('jumps directly to a numbered page and marks it current', async () => {
-    await renderTable();
-
-    fireEvent.click(screen.getByLabelText('Page 3'));
-
-    await waitFor(() => expect(summary()).toContain('Showing 21-30 of 5000'));
-    expect(screen.getByLabelText('Page 3').getAttribute('aria-current')).toBe('page');
-    expect(screen.getByLabelText('Page 1').getAttribute('aria-current')).toBeNull();
-  });
-
-  it('elides long page runs but keeps the first and last reachable', async () => {
-    await renderTable();
-
-    fireEvent.click(screen.getByLabelText('Page 500'));
-    await waitFor(() => expect(summary()).toContain('Showing 4991-5000'));
-
-    expect(screen.getByLabelText('Page 1')).toBeTruthy();
-    expect(screen.getByLabelText('Page 500')).toBeTruthy();
-    const nav = screen.getByLabelText('Transaction pagination');
-    expect(within(nav).getAllByRole('listitem').length).toBeLessThan(12);
-  });
-});
-
-describe('TransactionHistory page size selector', () => {
-  it('offers 10, 25 and 50 rows per page', async () => {
-    await renderTable();
-
-    const select = screen.getByLabelText('Rows per page') as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.value)).toEqual(['10', '25', '50']);
-    expect(select.value).toBe('10');
-  });
-
-  it('renders the requested number of rows when the size changes', async () => {
-    await renderTable();
-
-    fireEvent.change(screen.getByLabelText('Rows per page'), { target: { value: '25' } });
-
-    await waitFor(() => expect(dataRows().length).toBe(25));
-    expect(summary()).toContain('Showing 1-25 of 5000');
-  });
-
-  it('returns to page 1 when the size changes, since row 1 moves', async () => {
-    await renderTable();
-
-    fireEvent.click(screen.getByLabelText('Page 3'));
-    await waitFor(() => expect(summary()).toContain('Showing 21-30'));
-
-    fireEvent.change(screen.getByLabelText('Rows per page'), { target: { value: '50' } });
-
-    await waitFor(() => expect(summary()).toContain('Showing 1-50 of 5000'));
-  });
-});
-
-describe('TransactionHistory pagination and filters', () => {
-  it('resets to page 1 so a filtered set never opens on an out-of-range page', async () => {
-    await renderTable();
-
-    fireEvent.click(screen.getByLabelText('Page 3'));
-    await waitFor(() => expect(summary()).toContain('Showing 21-30'));
-
-    fireEvent.change(screen.getByLabelText('Search transactions'), {
-      target: { value: 'tx-001' },
+describe('TransactionHistory - Virtualized Transaction History Table for 10,000+ Records', () => {
+  describe('generateTransactions generator', () => {
+    it('generates the exact requested number of transaction records', () => {
+      const txs = generateTransactions(50);
+      expect(txs).toHaveLength(50);
+      expect(txs[0]).toHaveProperty('id');
+      expect(txs[0]).toHaveProperty('hash');
+      expect(txs[0]).toHaveProperty('type');
+      expect(txs[0]).toHaveProperty('amount');
+      expect(txs[0]).toHaveProperty('status');
+      expect(txs[0]).toHaveProperty('counterparty');
     });
 
-    await waitFor(() => expect(summary()).toContain('Showing 1-1 of 1 transaction'));
-    expect(dataRows().length).toBe(1);
+    it('generates 10,000 records efficiently without memory issues', () => {
+      const txs = generateTransactions(10000);
+      expect(txs).toHaveLength(10000);
+      expect(txs[0].id).toBe('TX-10000');
+      expect(txs[9999].id).toBe('TX-1');
+    });
   });
 
-  it('reports an empty set without offering rows', async () => {
-    await renderTable();
+  describe('TransactionHistory virtualization and rendering', () => {
+    it('renders the virtualized table container and header', () => {
+      render(<TransactionHistory totalInitialCount={100} />);
 
-    fireEvent.change(screen.getByLabelText('Search transactions'), {
-      target: { value: 'no-such-transaction' },
+      expect(screen.getByTestId('virtualized-tx-history')).toBeInTheDocument();
+      expect(screen.getByTestId('virtual-scroll-container')).toBeInTheDocument();
+      expect(screen.getByText(/60 FPS Virtualized/i)).toBeInTheDocument();
     });
 
-    await waitFor(() => expect(summary()).toContain('No transactions'));
-    expect(screen.getByText('No transactions match your filters.')).toBeTruthy();
-  });
-});
+    it('computes total virtualizer container size based on row count and row height', () => {
+      // 100 rows * 56px = 5600px
+      render(<TransactionHistory totalInitialCount={100} rowHeight={56} />);
 
-describe('TransactionHistory API query params', () => {
-  it('reports limit and offset for the initial page', async () => {
-    const onPageChange = vi.fn();
-    await renderTable({ onPageChange });
+      const innerContainer = screen.getByTestId('virtual-inner-container');
+      expect(innerContainer).toHaveStyle({ height: '5600px' });
+    });
 
-    expect(onPageChange).toHaveBeenCalledWith({ limit: 10, offset: 0 });
-  });
+    it('verifies DOM node count is bounded and does NOT create 10,000 DOM rows', () => {
+      render(<TransactionHistory totalInitialCount={10000} rowHeight={56} />);
 
-  it('reports the new offset when the page advances', async () => {
-    const onPageChange = vi.fn();
-    await renderTable({ onPageChange });
-    onPageChange.mockClear();
+      // The virtual inner container calculates height for 10,000 items (10000 * 56 = 560000px)
+      const innerContainer = screen.getByTestId('virtual-inner-container');
+      expect(innerContainer).toHaveStyle({ height: '560000px' });
 
-    fireEvent.click(screen.getByLabelText('Next page'));
+      // All rendered transaction rows in the DOM should be bounded (not 10,000)
+      const renderedRows = screen.queryAllByTestId(/^tx-row-/);
+      expect(renderedRows.length).toBeLessThan(100);
+    });
 
-    await waitFor(() => expect(onPageChange).toHaveBeenCalledWith({ limit: 10, offset: 10 }));
-  });
+    it('filters transactions when typing in search query', () => {
+      const sampleTxs = [
+        {
+          id: 'TX-UNIQUE-123',
+          hash: '0xabc123',
+          type: 'Deposit' as const,
+          asset: 'USDC',
+          amount: '100.00',
+          counterparty: 'GDEMO1',
+          status: 'Completed' as const,
+          date: '2024-03-20',
+          timestamp: 1710500000,
+          fee: '0.00001 XLM'
+        },
+        {
+          id: 'TX-OTHER-999',
+          hash: '0xdef456',
+          type: 'Withdrawal' as const,
+          asset: 'XLM',
+          amount: '50.00',
+          counterparty: 'GDEMO2',
+          status: 'Pending' as const,
+          date: '2024-03-21',
+          timestamp: 1710500100,
+          fee: '0.00001 XLM'
+        }
+      ];
 
-  it('reports the new limit when the page size changes', async () => {
-    const onPageChange = vi.fn();
-    await renderTable({ onPageChange });
-    onPageChange.mockClear();
+      render(<TransactionHistory initialData={sampleTxs} totalInitialCount={2} />);
 
-    fireEvent.change(screen.getByLabelText('Rows per page'), { target: { value: '50' } });
+      const searchInput = screen.getByTestId('tx-search-input');
+      fireEvent.change(searchInput, { target: { value: 'UNIQUE-123' } });
 
-    await waitFor(() => expect(onPageChange).toHaveBeenCalledWith({ limit: 50, offset: 0 }));
+      const innerContainer = screen.getByTestId('virtual-inner-container');
+      // Only 1 item matches: 1 * 56 = 56px
+      expect(innerContainer).toHaveStyle({ height: '56px' });
+    });
+
+    it('filters transactions by type dropdown', () => {
+      const sampleTxs = [
+        {
+          id: 'TX-1',
+          hash: '0x1',
+          type: 'Deposit' as const,
+          asset: 'USDC',
+          amount: '100.00',
+          counterparty: 'G1',
+          status: 'Completed' as const,
+          date: '2024-03-20',
+          timestamp: 1710500000,
+          fee: '0.00001 XLM'
+        },
+        {
+          id: 'TX-2',
+          hash: '0x2',
+          type: 'Withdrawal' as const,
+          asset: 'USDC',
+          amount: '50.00',
+          counterparty: 'G2',
+          status: 'Completed' as const,
+          date: '2024-03-21',
+          timestamp: 1710500100,
+          fee: '0.00001 XLM'
+        }
+      ];
+
+      render(<TransactionHistory initialData={sampleTxs} totalInitialCount={2} />);
+
+      const typeFilter = screen.getByTestId('tx-type-filter');
+      fireEvent.change(typeFilter, { target: { value: 'Withdrawal' } });
+
+      const innerContainer = screen.getByTestId('virtual-inner-container');
+      // Only Withdrawal matches: 1 * 56 = 56px
+      expect(innerContainer).toHaveStyle({ height: '56px' });
+    });
   });
 });

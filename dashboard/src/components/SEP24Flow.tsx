@@ -55,7 +55,7 @@ export const SEP24Flow = ({
     // Simulate potential deposit errors for demonstration
     // In production, this would call the backend API
     setDepositError(null);
-    goToStep(3);
+    goToStep(4);
   };
 
   const handleKycDismiss = () => {

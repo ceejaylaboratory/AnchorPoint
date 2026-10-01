@@ -1,0 +1,129 @@
+name: WASM Size Check
+
+# #1244 — builds the Soroban contracts and enforces the 100 KiB per-contract
+# WASM budget, reporting the per-file sizes in a PR comment.
+#
+# The threshold is the same one tools/optimize-wasm.sh enforces in Rust CI
+# (MAX_WASM_SIZE, 102400 bytes); this workflow additionally publishes the
+# per-contract sizes so a PR sees which contract grew and by how much.
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "contracts/**"
+      - "tools/optimize-wasm.sh"
+      - ".github/workflows/wasm-size.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "contracts/**"
+      - "tools/optimize-wasm.sh"
+      - ".github/workflows/wasm-size.yml"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  # 100 KiB — Soroban's contract size ceiling, matched to
+  # MAX_WASM_SIZE in tools/optimize-wasm.sh.
+  MAX_WASM_SIZE: 102400
+  WASM_TARGET: wasm32v1-none
+
+jobs:
+  wasm-size:
+    name: Contract WASM size budget
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Build contracts
+        run: cargo build --target ${{ env.WASM_TARGET }} --release
+
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      # Optimizes each binary and fails the build on any oversize contract,
+      # so the pass is authoritative rather than advisory.
+      - name: Optimize and check size budget
+        run: |
+          chmod +x tools/optimize-wasm.sh
+          ./tools/optimize-wasm.sh "target/${{ env.WASM_TARGET }}/release"
+
+      # Collect per-file sizes for the summary/PR comment. `find -printf` is
+      # GNU find, which is what the ubuntu runner provides.
+      - name: Collect WASM size report
+        run: |
+          {
+            echo "## Soroban WASM size report"
+            echo
+            echo "| Contract | Size | Budget | Headroom |"
+            echo "| --- | --- | --- | --- |"
+            while IFS= read -r -d '' wasm; do
+              NAME=$(basename "$wasm" .wasm)
+              SIZE=$(stat -c%s "$wasm")
+              HEADROOM=$((MAX_WASM_SIZE - SIZE))
+              if [ "$HEADROOM" -lt 0 ]; then
+                echo "| \`$NAME\` | $SIZE B | $MAX_WASM_SIZE B | **over budget by $((-HEADROOM)) B** |"
+              else
+                echo "| \`$NAME\` | $SIZE B | $MAX_WASM_SIZE B | $HEADROOM B |"
+              fi
+            done < <(find "target/${{ env.WASM_TARGET }}/release" -type f -name '*.wasm' -print0 | sort -z)
+            echo
+            echo "Budget: $MAX_WASM_SIZE bytes (100 KiB) per contract."
+          } | tee wasm-size-report.md
+
+      - name: Publish report to the job summary
+        if: always() && hashFiles('wasm-size-report.md') != ''
+        run: cat wasm-size-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment report on the pull request
+        if: always() && github.event_name == 'pull_request' && hashFiles('wasm-size-report.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('wasm-size-report.md', 'utf8');
+            const body = `${report}\n<sub>Budget enforced by <code>.github/workflows/wasm-size.yml</code> (#1244).</sub>`;
+
+            // Replace this workflow's previous comment instead of appending
+            // a new one on every push to the branch.
+            const marker = '<!-- wasm-size-report -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const previous = comments.find((c) => c.body?.includes(marker));
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                comment_id: previous.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `${marker}\n${body}`,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `${marker}\n${body}`,
+              });
+            }

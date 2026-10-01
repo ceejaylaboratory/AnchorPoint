@@ -38,6 +38,16 @@ valid label value.
 {{- end }}
 
 {{/*
+Backend pod / Service selector. Includes the component key so the backend
+Service cannot select the dashboard, Redis or Postgres pods that this chart
+now also renders: they all carry anchor-point.labels.
+*/}}
+{{- define "anchor-point.backend.selectorLabels" -}}
+{{ include "anchor-point.selectorLabels" . }}
+app.kubernetes.io/component: backend
+{{- end }}
+
+{{/*
 Common labels applied to every resource.
 */}}
 {{- define "anchor-point.labels" -}}
@@ -94,4 +104,67 @@ Container image reference — repository:tag.
 */}}
 {{- define "anchor-point.image" -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
+{{- end }}
+
+{{/*
+=============================================================================
+Optional component helpers — Redis, PostgreSQL, dashboard.
+
+Each component keeps its own fullname/selectorLabels so a component can be
+enabled or disabled without changing the labels of anything that is already
+deployed. Their selectorLabels are independent of anchor-point.selectorLabels
+so that a Service never selects pods it does not own.
+=============================================================================
+*/}}
+
+{{- define "anchor-point.redis.fullname" -}}
+{{- printf "%s-redis" (include "anchor-point.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "anchor-point.redis.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "anchor-point.name" . }}-redis
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: redis
+{{- end }}
+
+{{/*
+Secret holding the Redis password.
+*/}}
+{{- define "anchor-point.redis.secretName" -}}
+{{- if .Values.redis.auth.existingSecret }}
+{{- .Values.redis.auth.existingSecret }}
+{{- else }}
+{{- printf "%s-redis" (include "anchor-point.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "anchor-point.postgres.fullname" -}}
+{{- printf "%s-postgres" (include "anchor-point.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "anchor-point.postgres.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "anchor-point.name" . }}-postgres
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: postgres
+{{- end }}
+
+{{/*
+Secret holding the Postgres credentials (keys: postgres-user, postgres-password).
+*/}}
+{{- define "anchor-point.postgres.secretName" -}}
+{{- if .Values.postgres.auth.existingSecret }}
+{{- .Values.postgres.auth.existingSecret }}
+{{- else }}
+{{- printf "%s-postgres" (include "anchor-point.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "anchor-point.dashboard.fullname" -}}
+{{- printf "%s-dashboard" (include "anchor-point.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "anchor-point.dashboard.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "anchor-point.name" . }}-dashboard
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: dashboard
 {{- end }}

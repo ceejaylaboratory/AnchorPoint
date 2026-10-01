@@ -1,6 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import { defaultQueueOptions, QUEUE_NAMES } from '../config/queue';
 import logger from '../utils/logger';
+import { setupWorkerGracefulShutdown } from './graceful-shutdown';
 import {
   type WebhookRetryJobData,
   WEBHOOK_RETRY_JOB_OPTIONS,
@@ -75,6 +76,10 @@ export class WebhookWorker {
         signal: AbortSignal.timeout(cfg.WEBHOOK_TIMEOUT_MS || 5000),
       });
 
+      if (!response.ok) {
+        throw new Error(`Webhook endpoint returned HTTP ${response.status}`);
+      }
+
       const latencyMs = Date.now() - startTime;
       const record: WebhookAttemptRecord = {
         jobId: job.id || `job-${Date.now()}`,
@@ -87,10 +92,6 @@ export class WebhookWorker {
         isDeadLetter: false,
       };
       this.attemptHistories.push(record);
-
-      if (!response.ok) {
-        throw new Error(`Webhook endpoint returned HTTP ${response.status}`);
-      }
 
       logger.info('Webhook retry succeeded', {
         jobId: job.id,
@@ -189,3 +190,16 @@ export class WebhookWorker {
 }
 
 export const defaultWebhookWorker = new WebhookWorker();
+
+// If executed directly as worker process
+if (require.main === module) {
+  logger.info('Webhook worker process started');
+  const workerInstance = defaultWebhookWorker.start();
+  setupWorkerGracefulShutdown(workerInstance, {
+    workerName: 'Webhook worker',
+    timeoutMs: 15000,
+    onShutdown: async () => {
+      await defaultWebhookWorker.close();
+    },
+  });
+}

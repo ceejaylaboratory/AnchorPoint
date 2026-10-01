@@ -1,7 +1,25 @@
 ===========================================================================
-  AnchorPoint Backend — {{ .Chart.Name }} v{{ .Chart.Version }}
+  AnchorPoint — {{ .Chart.Name }} v{{ .Chart.Version }}
   Release: {{ .Release.Name }}  •  Namespace: {{ .Release.Namespace }}
 ===========================================================================
+
+Components deployed by this release:
+  backend   always
+{{- if .Values.redis.enabled }}
+  redis     {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }} ({{ .Values.redis.replicaCount }} replica(s){{ if not .Values.redis.persistence.enabled }}, NO persistence{{ end }})
+{{- else }}
+  redis     external (via REDIS_URL in the backend Secret)
+{{- end }}
+{{- if .Values.postgres.enabled }}
+  postgres  {{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }} (single replica, {{ .Values.postgres.database }})
+{{- else }}
+  postgres  external (via DATABASE_URL in the backend Secret)
+{{- end }}
+{{- if .Values.dashboard.enabled }}
+  dashboard {{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag }} ({{ .Values.dashboard.replicaCount }} replica(s))
+{{- else }}
+  dashboard not deployed
+{{- end }}
 
 1. Get the application URL:
 
@@ -47,6 +65,27 @@
 
 5. HPA status:
    kubectl get hpa {{ include "anchor-point.fullname" . }} -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if and .Values.redis.enabled (not .Values.redis.auth.existingSecret) }}
+⚠️  The chart-managed Redis expects a Secret named
+   {{ include "anchor-point.redis.secretName" . }} with key
+   '{{ .Values.redis.auth.secretKey }}'. Create it before installing, or set
+   redis.auth.existingSecret:
+
+   kubectl create secret generic {{ include "anchor-point.redis.secretName" . }} \
+     -n {{ .Release.Namespace }} --from-literal={{ .Values.redis.auth.secretKey }}='<password>'
+{{- end }}
+
+{{- if and .Values.postgres.enabled (not .Values.postgres.auth.existingSecret) }}
+⚠️  The chart-managed Postgres expects a Secret named
+   {{ include "anchor-point.postgres.secretName" . }} with keys
+   '{{ .Values.postgres.auth.userKey }}' and '{{ .Values.postgres.auth.passwordKey }}':
+
+   kubectl create secret generic {{ include "anchor-point.postgres.secretName" . }} \
+     -n {{ .Release.Namespace }} \
+     --from-literal={{ .Values.postgres.auth.userKey }}='anchorpoint' \
+     --from-literal={{ .Values.postgres.auth.passwordKey }}='<password>'
 {{- end }}
 
 {{- if not .Values.secrets.existingSecret }}

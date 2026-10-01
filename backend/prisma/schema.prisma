@@ -1,4 +1,3 @@
- fix/issue-batch 1
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
@@ -58,16 +57,17 @@ model AdminPasswordResetToken {
 }
 
 model ApiKey {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  tier      Tier     @default(Free)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  key        String   @unique
+  ownerId    String
+  user       User     @relation(fields: [ownerId], references: [id])
+  tier       Tier     @default(Free)
+  usageCount Int      @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
 
   @@index([key])
-  @@index([userId])
+  @@index([ownerId])
 }
 
 enum RecurringPaymentScheduleStatus {
@@ -151,6 +151,13 @@ model Transaction {
   completedAt         DateTime?
   refunded            Boolean        @default(false)
 
+  // SEP-38 quote binding (rate locked at submission)
+  quoteId             String?
+  quotePrice          String?
+
+  // SEP-24 claimable balance deposits to unfunded / no-trustline accounts
+  claimableBalanceId  String?
+
    @@index([userId])
    @@index([type])
    @@index([status])
@@ -158,6 +165,7 @@ model Transaction {
    @@index([status, createdAt])
    @@index([userId, createdAt])
    @@index([status, updatedAt])
+   @@index([userId, status, createdAt])
 }
 
 model FeeReport {
@@ -177,8 +185,6 @@ model FeeReport {
   @@index([startDate])
   @@index([endDate])
 }
-
-
 
 model NotificationPreference {
   id           String  @id @default(uuid())
@@ -238,10 +244,12 @@ model KycCustomer {
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   @@index([provider, providerRef])
   @@index([userId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model Quote {
@@ -455,12 +463,29 @@ model UploadRecord {
   @@index([status])
   @@index([isTemporary, status, createdAt])
 }
-=======
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-generator client {
-  provider = "prisma-client-js"
+/// Historical FX rate snapshot recorded by the FX analytics service.
+/// Each row represents the mid-market rate (and optional spread) for an
+/// asset pair at a specific point in time.
+model FxRateHistory {
+  id               String   @id @default(uuid())
+  /// Source (sell-side) asset code, e.g. "USDC".
+  sourceAsset      String
+  /// Destination (buy-side) asset code, e.g. "XLM".
+  destinationAsset String
+  /// Mid-market exchange rate (sourceAsset → destinationAsset).
+  rate             Float
+  /// Bid price at snapshot time (optional).
+  bid              Float?
+  /// Ask price at snapshot time (optional).
+  ask              Float?
+  /// Spread = ask − bid in destination-asset units (optional).
+  spread           Float?
+  /// Wall-clock time when the snapshot was captured.
+  recordedAt       DateTime @default(now())
+
+  @@index([sourceAsset, destinationAsset, recordedAt])
+  @@index([recordedAt])
 }
 
 datasource db {
@@ -706,10 +731,12 @@ model KycCustomer {
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   @@index([provider, providerRef])
   @@index([userId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model Quote {
@@ -1154,10 +1181,12 @@ model KycCustomer {
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   @@index([provider, providerRef])
   @@index([userId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model Quote {

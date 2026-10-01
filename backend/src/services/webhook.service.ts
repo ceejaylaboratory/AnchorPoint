@@ -290,8 +290,8 @@ export class WebhookService {
       url: cfg.WEBHOOK_URL,
       secret: cfg.WEBHOOK_SECRET,
       timeoutMs: cfg.WEBHOOK_TIMEOUT_MS ?? 5000,
-      maxRetries: cfg.WEBHOOK_MAX_RETRIES ?? 3,
-      retryDelayMs: cfg.WEBHOOK_RETRY_DELAY_MS ?? 1000,
+      maxRetries: cfg.WEBHOOK_MAX_RETRIES ?? 5,
+      retryDelayMs: cfg.WEBHOOK_RETRY_DELAY_MS ?? 2000,
     };
   }
 
@@ -552,8 +552,17 @@ export class WebhookService {
   getRetryDelay(attempt: number): number {
     const config = this.getConfig();
     const initialDelay = config.retryDelayMs || 2000;
-    return calculateFullJitterBackoff(attempt, initialDelay, 3600000);
+    return calculateExponentialBackoff(attempt, initialDelay);
   }
+}
+
+export function calculateExponentialBackoff(
+  attempt: number,
+  baseDelayMs: number = 2000,
+  maxDelayMs: number = 32000
+): number {
+  const delay = baseDelayMs * Math.pow(2, Math.max(0, attempt - 1));
+  return Math.min(delay, maxDelayMs);
 }
 
 export function calculateFullJitterBackoff(

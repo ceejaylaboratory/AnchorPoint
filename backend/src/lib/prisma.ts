@@ -6,8 +6,10 @@ if (!process.env.DATABASE_URL) {
 
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
+import { piiEncryptionMiddleware } from '../services/crypto.service';
 import { config } from '../config/env';
 import logger from '../utils/logger';
+import { softDeleteExtension } from './soft-delete';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -123,7 +125,20 @@ if (typeof prismaAny.$use === 'function') {
       metricsService.observeDbQuery(queryType, seconds);
     }
   });
+
+  // PII encryption middleware – transparently encrypts sensitive fields before
+  // writing to the database and decrypts them on read.
+  prismaAny.$use(piiEncryptionMiddleware as unknown as (params: PrismaMiddlewareParams, next: PrismaMiddleware) => Promise<unknown>);
 }
+
+// ── Soft-delete filtering (#1197) ─────────────────────────────────────
+// Query extensions leave the client's model types unchanged, so the extended
+// client is exposed under the plain PrismaClient type.
+const prismaExtendable = prisma as unknown as { $extends?: (ext: unknown) => unknown };
+const client: PrismaClient =
+  typeof prismaExtendable.$extends === 'function'
+    ? (prismaExtendable.$extends(softDeleteExtension) as PrismaClient)
+    : prisma;
 
 // ── Startup connection retry (production only) ────────────────────────
 // Eagerly verify the database connection on startup so the process fails
@@ -135,4 +150,4 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-export default prisma;
+export default client;

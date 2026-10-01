@@ -1,0 +1,28 @@
+name: API docs freshness
+
+on:
+  pull_request:
+    paths:
+      - "docs/openapi.json"
+      - "docs/api-reference.md"
+      - "tools/generate-api-docs.js"
+      - ".github/workflows/api-docs.yml"
+  push:
+    branches: ["**"]
+    paths:
+      - "docs/openapi.json"
+      - "docs/api-reference.md"
+      - "tools/generate-api-docs.js"
+      - ".github/workflows/api-docs.yml"
+
+jobs:
+  docs-fresh:
+    name: OpenAPI Markdown is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify generated API reference
+        run: node tools/generate-api-docs.js --check
