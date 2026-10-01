@@ -12,7 +12,10 @@ import {
   CheckCircle2,
   TrendingDown,
   Pause,
-  Play
+  Play,
+  Radio,
+  Clock,
+  Activity
 } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -29,6 +32,111 @@ export interface VaultRecord {
   healthFactor?: number;
   status?: 'liquidatable' | 'at_risk' | 'healthy' | 'liquidated';
 }
+
+// ---------------------------------------------------------------------------
+// Oracle Price Feed Types
+// ---------------------------------------------------------------------------
+
+export interface PriceFeed {
+  id: string;
+  asset: string;
+  price: number;
+  timestamp: number;
+  source: 'stellar' | 'coinbase' | 'binance' | 'manual';
+  status: 'active' | 'stale' | 'failed';
+}
+
+/**
+ * Staleness threshold in seconds (300s = 5 minutes)
+ */
+export const ORACLE_STALENESS_THRESHOLD_SECONDS = 300;
+
+/**
+ * Computes the age of a price feed in seconds
+ */
+export function computeFeedAgeSeconds(timestamp: number): number {
+  return Math.floor(Date.now() / 1000) - timestamp;
+}
+
+/**
+ * Determines the status of a price feed based on its timestamp
+ */
+export function computePriceFeedStatus(timestamp: number): 'active' | 'stale' | 'failed' {
+  const age = computeFeedAgeSeconds(timestamp);
+  if (age > ORACLE_STALENESS_THRESHOLD_SECONDS * 2) {
+    return 'failed';
+  }
+  if (age > ORACLE_STALENESS_THRESHOLD_SECONDS) {
+    return 'stale';
+  }
+  return 'active';
+}
+
+/**
+ * Formats the age of a price feed for display
+ */
+export function formatFeedAge(timestamp: number): string {
+  const age = computeFeedAgeSeconds(timestamp);
+  if (age < 60) {
+    return `${age}s ago`;
+  }
+  if (age < 3600) {
+    return `${Math.floor(age / 60)}m ago`;
+  }
+  return `${Math.floor(age / 3600)}h ago`;
+}
+
+// Mock oracle price feeds for the monitoring panel
+export const INITIAL_PRICE_FEEDS: PriceFeed[] = [
+  {
+    id: 'feed-xlm-usd',
+    asset: 'XLM/USD',
+    price: 0.1234,
+    timestamp: Math.floor(Date.now() / 1000) - 15, // 15 seconds old
+    source: 'stellar',
+    status: 'active',
+  },
+  {
+    id: 'feed-usdc-usd',
+    asset: 'USDC/USD',
+    price: 1.0001,
+    timestamp: Math.floor(Date.now() / 1000) - 45, // 45 seconds old
+    source: 'coinbase',
+    status: 'active',
+  },
+  {
+    id: 'feed-eurt-usd',
+    asset: 'EURT/USD',
+    price: 1.0823,
+    timestamp: Math.floor(Date.now() / 1000) - 180, // 3 minutes old
+    source: 'binance',
+    status: 'active',
+  },
+  {
+    id: 'feed-arst-usd',
+    asset: 'ARST/USD',
+    price: 0.4521,
+    timestamp: Math.floor(Date.now() / 1000) - 320, // ~5.3 minutes old - STALE
+    source: 'stellar',
+    status: 'stale',
+  },
+  {
+    id: 'feed-usdt-usd',
+    asset: 'USDT/USD',
+    price: 0.9998,
+    timestamp: Math.floor(Date.now() / 1000) - 650, // ~10.8 minutes old - FAILED
+    source: 'manual',
+    status: 'failed',
+  },
+  {
+    id: 'feed-brlc-usd',
+    asset: 'BRLC/USD',
+    price: 0.1987,
+    timestamp: Math.floor(Date.now() / 1000) - 90, // 1.5 minutes old
+    source: 'stellar',
+    status: 'active',
+  },
+];
 
 /**
  * Computes the Health Factor of a vault.
@@ -814,5 +922,300 @@ const PauseControlsWidget: React.FC<PauseControlsWidgetProps> = ({ apiBaseUrl })
   );
 };
 
+// ---------------------------------------------------------------------------
+// OracleMonitor — Real-time price feed monitoring with staleness warnings
+// ---------------------------------------------------------------------------
+
+interface OracleMonitorProps {
+  /** Base URL of the backend API, e.g. "http://localhost:3002" */
+  apiBaseUrl?: string;
+  /** Initial price feeds to display (defaults to mock data) */
+  initialPriceFeeds?: PriceFeed[];
+  /** Callback when a stale feed is detected */
+  onStaleFeedDetected?: (feed: PriceFeed) => void;
+}
+
+export const OracleMonitor: React.FC<OracleMonitorProps> = ({
+  apiBaseUrl = '',
+  initialPriceFeeds = INITIAL_PRICE_FEEDS,
+  onStaleFeedDetected,
+}) => {
+  const [priceFeeds, setPriceFeeds] = useState<PriceFeed[]>(() => {
+    return initialPriceFeeds.map((feed) => ({
+      ...feed,
+      status: computePriceFeedStatus(feed.timestamp),
+    }));
+  });
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [isLoading, setIsLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  // Fetch price feeds from API
+  const fetchPriceFeeds = useCallback(async () => {
+    if (!apiBaseUrl) {
+      // Simulate live updates with mock data when no API is available
+      setPriceFeeds((prev) =>
+        prev.map((feed) => {
+          // Randomly update some feeds to simulate live updates
+          const shouldUpdate = Math.random() > 0.7;
+          const newTimestamp = shouldUpdate ? Math.floor(Date.now() / 1000) : feed.timestamp;
+          const newPrice = shouldUpdate
+            ? +(feed.price * (1 + (Math.random() - 0.5) * 0.02)).toFixed(4)
+            : feed.price;
+          return {
+            ...feed,
+            timestamp: newTimestamp,
+            price: newPrice,
+            status: computePriceFeedStatus(newTimestamp),
+          };
+        })
+      );
+      setLastRefresh(new Date());
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/oracle/price-feeds`, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      const body = await res.json();
+      const feeds: PriceFeed[] = (body.data ?? body).map((feed: PriceFeed) => ({
+        ...feed,
+        status: computePriceFeedStatus(feed.timestamp),
+      }));
+      setPriceFeeds(feeds);
+      setLastRefresh(new Date());
+      setStatusMessage({ text: 'Price feeds updated successfully', type: 'success' });
+    } catch (err) {
+      setStatusMessage({
+        text: err instanceof Error ? err.message : 'Failed to fetch price feeds',
+        type: 'error',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [apiBaseUrl]);
+
+  // Auto-refresh every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchPriceFeeds();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [fetchPriceFeeds]);
+
+  // Check for stale feeds and trigger callback
+  useEffect(() => {
+    const staleFeeds = priceFeeds.filter((f) => f.status === 'stale' || f.status === 'failed');
+    staleFeeds.forEach((feed) => {
+      onStaleFeedDetected?.(feed);
+    });
+  }, [priceFeeds, onStaleFeedDetected]);
+
+  // Compute statistics
+  const stats = useMemo(() => {
+    const total = priceFeeds.length;
+    const active = priceFeeds.filter((f) => f.status === 'active').length;
+    const stale = priceFeeds.filter((f) => f.status === 'stale').length;
+    const failed = priceFeeds.filter((f) => f.status === 'failed').length;
+    return { total, active, stale, failed };
+  }, [priceFeeds]);
+
+  const getSourceIcon = (source: PriceFeed['source']) => {
+    const icons = {
+      stellar: '⋆',
+      coinbase: 'C',
+      binance: 'B',
+      manual: 'M',
+    };
+    return icons[source];
+  };
+
+  return (
+    <div className="space-y-6" data-testid="oracle-monitor-panel">
+      {/* Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="glass-card p-5 border border-slate-800">
+          <div className="flex items-center justify-between">
+            <span className="text-xs uppercase font-bold tracking-wider text-slate-400 flex items-center gap-1.5">
+              <Radio size={16} className="text-emerald-400" /> Active Feeds
+            </span>
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold font-display text-emerald-400">{stats.active}</span>
+            <span className="text-xs text-slate-400">of {stats.total} total</span>
+          </div>
+        </div>
+
+        <div className={`glass-card p-5 border ${stats.stale > 0 ? 'border-amber-500/40 bg-amber-950/20' : 'border-slate-800'}`}>
+          <div className="flex items-center justify-between">
+            <span className="text-xs uppercase font-bold tracking-wider text-amber-400 flex items-center gap-1.5">
+              <AlertTriangle size={16} /> Stale Feeds
+            </span>
+            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-300">
+              &gt; 5 min
+            </span>
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold font-display text-amber-400">{stats.stale}</span>
+            <span className="text-xs text-amber-300/80">Needs attention</span>
+          </div>
+        </div>
+
+        <div className={`glass-card p-5 border ${stats.failed > 0 ? 'border-rose-500/40 bg-rose-950/20' : 'border-slate-800'}`}>
+          <div className="flex items-center justify-between">
+            <span className="text-xs uppercase font-bold tracking-wider text-rose-400 flex items-center gap-1.5">
+              <ShieldAlert size={16} /> Failed Feeds
+            </span>
+            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/20 text-rose-300">
+              &gt; 10 min
+            </span>
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold font-display text-rose-400">{stats.failed}</span>
+            <span className="text-xs text-rose-300/80">Critical</span>
+          </div>
+        </div>
+
+        <div className="glass-card p-5 border border-slate-800">
+          <div className="flex items-center justify-between">
+            <span className="text-xs uppercase font-bold tracking-wider text-slate-400">Last Update</span>
+            <Clock size={16} className="text-blue-400" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-xl font-bold font-display text-slate-100">
+              {lastRefresh.toLocaleTimeString()}
+            </span>
+            <span className="text-xs text-slate-400">Auto-refresh: 10s</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Status Message */}
+      {statusMessage && (
+        <div
+          className={`p-4 rounded-xl border flex items-center justify-between ${
+            statusMessage.type === 'success'
+              ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+              : statusMessage.type === 'warning'
+              ? 'bg-amber-950/30 border-amber-500/30 text-amber-300'
+              : 'bg-rose-950/30 border-rose-500/30 text-rose-300'
+          }`}
+        >
+          <div className="flex items-center gap-2 text-sm font-medium">
+            {statusMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+            {statusMessage.text}
+          </div>
+          <button
+            onClick={() => setStatusMessage(null)}
+            className="text-xs opacity-75 hover:opacity-100 uppercase font-bold"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Price Feeds Table */}
+      <div className="glass-card overflow-hidden">
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity size={18} className="text-primary" />
+            <h3 className="font-semibold text-slate-200">Price Feed Status</h3>
+          </div>
+          <button
+            onClick={() => void fetchPriceFeeds()}
+            disabled={isLoading}
+            className="px-3 py-2 bg-slate-900 border border-slate-700 hover:border-slate-500 text-xs font-semibold rounded-lg text-slate-300 hover:text-white flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            data-testid="oracle-refresh-button"
+          >
+            <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+            {isLoading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse" data-testid="price-feeds-table">
+            <thead>
+              <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-xs uppercase tracking-wider font-semibold">
+                <th className="p-4">Asset Pair</th>
+                <th className="p-4">Price</th>
+                <th className="p-4">Source</th>
+                <th className="p-4">Last Update</th>
+                <th className="p-4">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800 text-sm">
+              {priceFeeds.map((feed) => {
+                const age = computeFeedAgeSeconds(feed.timestamp);
+                const isStale = feed.status === 'stale';
+                const isFailed = feed.status === 'failed';
+
+                return (
+                  <tr
+                    key={feed.id}
+                    data-testid={`price-feed-${feed.id}`}
+                    className={`transition-colors ${
+                      isFailed
+                        ? 'bg-rose-950/30 hover:bg-rose-950/40 border-l-4 border-l-rose-500'
+                        : isStale
+                        ? 'bg-amber-950/30 hover:bg-amber-950/40 border-l-4 border-l-amber-500'
+                        : 'hover:bg-slate-900/50'
+                    }`}
+                  >
+                    <td className="p-4 font-medium text-slate-200">{feed.asset}</td>
+                    <td className="p-4 font-mono text-slate-200">
+                      ${feed.price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+                    </td>
+                    <td className="p-4">
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-800 text-xs font-bold text-slate-400">
+                        {getSourceIcon(feed.source)}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <div className="flex items-center gap-1.5 text-slate-400">
+                        <Clock size={14} />
+                        <span className="font-mono text-xs">{formatFeedAge(feed.timestamp)}</span>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      {isFailed ? (
+                        <span
+                          data-testid={`feed-status-badge-${feed.id}`}
+                          className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-1 w-max"
+                        >
+                          <AlertTriangle size={12} /> Failed
+                        </span>
+                      ) : isStale ? (
+                        <span
+                          data-testid={`feed-status-badge-${feed.id}`}
+                          className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center gap-1 w-max"
+                        >
+                          <AlertTriangle size={12} /> Stale
+                        </span>
+                      ) : (
+                        <span
+                          data-testid={`feed-status-badge-${feed.id}`}
+                          className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 w-max"
+                        >
+                          <Radio size={12} /> Live
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export { PauseControlsWidget };
+export { OracleMonitor };
 export default AdminWidgets;
