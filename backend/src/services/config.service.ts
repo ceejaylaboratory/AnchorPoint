@@ -17,7 +17,7 @@ class ConfigService {
   }
 
   private setupRedisSubscriber() {
-    this.subscriber.subscribe(REDIS_CHANNEL, (err: Error | null) => {
+    (this.subscriber as any).subscribe(REDIS_CHANNEL, (err: unknown) => {
       if (err) {
         logger.error('Failed to subscribe to config updates:', err);
       }

@@ -1,6 +1,7 @@
 import {
   buildKycStatusChangedPayload,
   buildTransactionStatusChangedPayload,
+  calculateExponentialBackoff,
   signWebhookPayload,
   updateTransactionStatusAndNotify,
   verifyWebhookSignature,
@@ -375,5 +376,37 @@ describe('Webhook Service', () => {
         skipped: true,
       },
     });
+  });
+
+  it('calculates exponential backoff delays (2s, 4s, 8s, 16s, 32s)', () => {
+    expect(calculateExponentialBackoff(1, 2000)).toBe(2000);
+    expect(calculateExponentialBackoff(2, 2000)).toBe(4000);
+    expect(calculateExponentialBackoff(3, 2000)).toBe(8000);
+    expect(calculateExponentialBackoff(4, 2000)).toBe(16000);
+    expect(calculateExponentialBackoff(5, 2000)).toBe(32000);
+  });
+
+  it('retries up to maxRetries on HTTP 500 errors with exponential backoff sequence', async () => {
+    const sleepFn = jest.fn().mockResolvedValue(undefined);
+    const httpClient = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => 'Internal Server Error',
+    });
+    const enqueueRetry = jest.fn().mockResolvedValue('retry-job-id');
+
+    const service = makeService(httpClient, { sleep: sleepFn, enqueueRetry, maxRetries: 5 });
+
+    const result = await service.sendKycStatusChanged(baseKycCustomer, 'PENDING');
+
+    expect(result.delivered).toBe(false);
+    expect(result.attempts).toBe(6);
+    expect(httpClient).toHaveBeenCalledTimes(6);
+    expect(sleepFn).toHaveBeenNthCalledWith(1, 2000);
+    expect(sleepFn).toHaveBeenNthCalledWith(2, 4000);
+    expect(sleepFn).toHaveBeenNthCalledWith(3, 8000);
+    expect(sleepFn).toHaveBeenNthCalledWith(4, 16000);
+    expect(sleepFn).toHaveBeenNthCalledWith(5, 32000);
+    expect(enqueueRetry).toHaveBeenCalled();
   });
 });

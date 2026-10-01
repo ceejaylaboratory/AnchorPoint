@@ -34,7 +34,14 @@ jest.mock('../../services/sep31CallbackNotifier', () => ({
   createCallbackNotifier: jest.fn().mockReturnValue({}),
 }));
 
+jest.mock('../../config/queue', () => ({
+  __esModule: true,
+  listNotificationDlqJobs: jest.fn(),
+  retryNotificationDlqJob: jest.fn(),
+}));
+
 import adminRouter from './admin.route';
+import { listNotificationDlqJobs, retryNotificationDlqJob } from '../../config/queue';
 
 const app = express();
 app.use(express.json());
@@ -111,5 +118,50 @@ describe('Admin password reset routes', () => {
       'a'.repeat(64),
       'StrongPassword123'
     );
+  });
+});
+
+describe('Admin notification DLQ routes (#1199)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('lists dead-lettered notification jobs', async () => {
+    (listNotificationDlqJobs as jest.Mock).mockResolvedValue([
+      { id: 'dlq-1', data: { name: 'send-email', originalJobId: 'job-1', failedReason: 'SMTP down' } },
+    ]);
+
+    const res = await request(app).get('/api/admin/queues/notification-dlq?start=0&end=9');
+
+    expect(res.status).toBe(200);
+    expect(listNotificationDlqJobs).toHaveBeenCalledWith(0, 9);
+    expect(res.body.data).toEqual([
+      { id: 'dlq-1', name: 'send-email', originalJobId: 'job-1', failedReason: 'SMTP down' },
+    ]);
+  });
+
+  it('returns 400 for invalid pagination', async () => {
+    const res = await request(app).get('/api/admin/queues/notification-dlq?start=-1');
+
+    expect(res.status).toBe(400);
+    expect(listNotificationDlqJobs).not.toHaveBeenCalled();
+  });
+
+  it('retries a dead-lettered notification job', async () => {
+    (retryNotificationDlqJob as jest.Mock).mockResolvedValue({ id: 'job-2' });
+
+    const res = await request(app).post('/api/admin/queues/notification-dlq/dlq-1/retry');
+
+    expect(res.status).toBe(200);
+    expect(retryNotificationDlqJob).toHaveBeenCalledWith('dlq-1');
+    expect(res.body.data).toEqual({ jobId: 'job-2' });
+  });
+
+  it('returns 404 when the DLQ job does not exist', async () => {
+    (retryNotificationDlqJob as jest.Mock).mockResolvedValue(null);
+
+    const res = await request(app).post('/api/admin/queues/notification-dlq/missing/retry');
+
+    expect(res.status).toBe(404);
   });
 });

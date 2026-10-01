@@ -6,6 +6,11 @@ vi.mock('@albedo-link/intent', () => ({
   Intent: {
     Prompt: vi.fn(),
   },
+  default: {
+    Intent: {
+      Prompt: vi.fn(),
+    },
+  },
 }));
 
 describe('AlbedoAdapter', () => {
@@ -31,8 +36,9 @@ describe('AlbedoAdapter', () => {
   });
 
   it('connects successfully with Albedo', async () => {
-    const { Intent } = await import('@albedo-link/intent');
-    (Intent.Prompt as any).mockResolvedValue({
+    const albedoModule: any = await import('@albedo-link/intent');
+    const Intent = albedoModule.Intent || albedoModule.default?.Intent;
+    Intent.Prompt.mockResolvedValue({
       pub_key: 'GABCD1234567890',
       network: 'PUBLIC',
     });
@@ -43,15 +49,17 @@ describe('AlbedoAdapter', () => {
   });
 
   it('handles connection errors', async () => {
-    const { Intent } = await import('@albedo-link/intent');
-    (Intent.Prompt as any).mockRejectedValue(new Error('User cancelled'));
+    const albedoModule: any = await import('@albedo-link/intent');
+    const Intent = albedoModule.Intent || albedoModule.default?.Intent;
+    Intent.Prompt.mockRejectedValue(new Error('User cancelled'));
 
     await expect(adapter.connect()).rejects.toThrow('Failed to connect to Albedo');
   });
 
   it('signs transaction successfully', async () => {
-    const { Intent } = await import('@albedo-link/intent');
-    (Intent.Prompt as any).mockResolvedValue({
+    const albedoModule: any = await import('@albedo-link/intent');
+    const Intent = albedoModule.Intent || albedoModule.default?.Intent;
+    Intent.Prompt.mockResolvedValue({
       signed_xdr: 'SIGNED_XDR_HERE',
     });
 
@@ -60,8 +68,9 @@ describe('AlbedoAdapter', () => {
   });
 
   it('handles signing errors', async () => {
-    const { Intent } = await import('@albedo-link/intent');
-    (Intent.Prompt as any).mockRejectedValue(new Error('Signing failed'));
+    const albedoModule: any = await import('@albedo-link/intent');
+    const Intent = albedoModule.Intent || albedoModule.default?.Intent;
+    Intent.Prompt.mockRejectedValue(new Error('Signing failed'));
 
     await expect(adapter.signTransaction('TEST_XDR', 'PUBLIC')).rejects.toThrow('Failed to sign transaction');
   });

@@ -97,7 +97,7 @@ export const AssetDropdown = ({ label, options, value, onChange }: AssetDropdown
 
   return (
     <div ref={containerRef} className="relative">
-      <label className="mb-2 block text-sm font-medium text-slate-300">
+      <label htmlFor={listboxId} className="mb-2 block text-sm font-medium text-slate-300">
         {label}
       </label>
 

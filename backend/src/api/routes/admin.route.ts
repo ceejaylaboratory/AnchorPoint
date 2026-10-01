@@ -22,6 +22,7 @@ import adminAuditService, {
   AdminAuditAction,
   getAuditActor,
 } from '../../services/admin-audit.service';
+import { listNotificationDlqJobs, retryNotificationDlqJob } from '../../config/queue';
 
 const router = Router();
 const adminPasswordResetService = new AdminPasswordResetService();
@@ -480,6 +481,111 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Failed to fetch admin audit logs', { message: error?.message });
     res.status(500).json({ status: 'error', message: 'Failed to fetch audit logs' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/admin/queues/notification-dlq:
+ *   get:
+ *     summary: List dead-lettered notification jobs
+ *     description: Returns notification jobs that exhausted their retries and were moved to the notification-dlq queue.
+ *     tags: [Admin]
+ *     parameters:
+ *       - in: query
+ *         name: start
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *       - in: query
+ *         name: end
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 49
+ *     responses:
+ *       200:
+ *         description: Dead-lettered notification jobs
+ *       400:
+ *         description: Invalid query parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+const dlqListQuerySchema = z.object({
+  start: z.coerce.number().int().min(0).default(0),
+  end: z.coerce.number().int().min(0).default(49),
+});
+
+router.get('/queues/notification-dlq', async (req: Request, res: Response) => {
+  const parsed = dlqListQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      status: 'error',
+      message: parsed.error.issues[0]?.message ?? 'Invalid query parameters',
+    });
+  }
+
+  try {
+    const jobs = await listNotificationDlqJobs(parsed.data.start, parsed.data.end);
+    res.json({
+      status: 'success',
+      data: jobs.map((job) => ({ id: job.id, ...job.data })),
+    });
+  } catch (error: any) {
+    logger.error('Failed to list notification DLQ jobs', { message: error?.message });
+    res.status(500).json({ status: 'error', message: 'Failed to list notification DLQ jobs' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/admin/queues/notification-dlq/{jobId}/retry:
+ *   post:
+ *     summary: Retry a dead-lettered notification job
+ *     description: Re-enqueues the job on the notifications queue and removes it from the DLQ.
+ *     tags: [Admin]
+ *     parameters:
+ *       - in: path
+ *         name: jobId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Job re-enqueued
+ *       404:
+ *         description: DLQ job not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/queues/notification-dlq/:jobId/retry', async (req: Request, res: Response) => {
+  try {
+    const retried = await retryNotificationDlqJob(req.params.jobId);
+    if (!retried) {
+      return res.status(404).json({ status: 'error', message: 'DLQ job not found' });
+    }
+    logger.info('Retried notification DLQ job', { dlqJobId: req.params.jobId, jobId: retried.id });
+    res.json({ status: 'success', data: { jobId: retried.id } });
+  } catch (error: any) {
+    logger.error('Failed to retry notification DLQ job', { message: error?.message });
+    res.status(500).json({ status: 'error', message: 'Failed to retry notification DLQ job' });
   }
 });
 

@@ -390,3 +390,178 @@ export const createKycProvider = (provider: string): IKycProvider => {
 };
 
 export const kycProvider = createKycProvider(config.KYC_PROVIDER);
+
+export interface OutboundKycWebhookOptions {
+  url?: string;
+  maxRetries?: number;
+  baseDelayMs?: number;
+}
+
+export interface KycWebhookDeliveryLog {
+  attempt: number;
+  timestamp: string;
+  statusCode?: number;
+  error?: string;
+  success: boolean;
+}
+
+export class KycWebhookRetryEngine {
+  private readonly maxRetries: number;
+  private readonly baseDelayMs: number;
+  private readonly sleepFn: (ms: number) => Promise<void>;
+
+  constructor(
+    options: Partial<OutboundKycWebhookOptions> = {},
+    sleepFn: (ms: number) => Promise<void> = (ms) => new Promise((res) => setTimeout(res, ms))
+  ) {
+    this.maxRetries = options.maxRetries ?? 5;
+    this.baseDelayMs = options.baseDelayMs ?? 2000;
+    this.sleepFn = sleepFn;
+  }
+
+  getBackoffDelay(attempt: number): number {
+    return this.baseDelayMs * Math.pow(2, Math.max(0, attempt - 1));
+  }
+
+  async sendOutboundKycWebhook(
+    targetUrl: string,
+    payload: Record<string, unknown>,
+    customFetch?: typeof fetch
+  ): Promise<{
+    delivered: boolean;
+    attempts: number;
+    statusCode?: number;
+    logs: KycWebhookDeliveryLog[];
+    error?: string;
+  }> {
+    const fetchImpl = customFetch ?? fetch;
+    const bodyStr = JSON.stringify(payload);
+    const logs: KycWebhookDeliveryLog[] = [];
+    let lastStatusCode: number | undefined;
+    let lastError: string | undefined;
+
+    for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
+      const timestamp = new Date().toISOString();
+      try {
+        const response = await fetchImpl(targetUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-KYC-Attempt': String(attempt),
+          },
+          body: bodyStr,
+        });
+
+        lastStatusCode = response.status;
+
+        if (response.ok) {
+          logs.push({
+            attempt,
+            timestamp,
+            statusCode: response.status,
+            success: true,
+          });
+          return {
+            delivered: true,
+            attempts: attempt,
+            statusCode: response.status,
+            logs,
+          };
+        }
+
+        lastError = `HTTP ${response.status}`;
+        logs.push({
+          attempt,
+          timestamp,
+          statusCode: response.status,
+          error: lastError,
+          success: false,
+        });
+
+        if (attempt < this.maxRetries) {
+          const delay = this.getBackoffDelay(attempt);
+          await this.sleepFn(delay);
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        logs.push({
+          attempt,
+          timestamp,
+          error: lastError,
+          success: false,
+        });
+
+        if (attempt < this.maxRetries) {
+          const delay = this.getBackoffDelay(attempt);
+          await this.sleepFn(delay);
+        }
+      }
+    }
+
+    return {
+      delivered: false,
+      attempts: this.maxRetries,
+      statusCode: lastStatusCode,
+      logs,
+      error: lastError ?? 'Exhausted retry attempts',
+    };
+  }
+}
+
+export class KycStatusPollingEngine {
+  private provider: IKycProvider;
+  private retryEngine: KycWebhookRetryEngine;
+
+  constructor(
+    provider: IKycProvider = kycProvider,
+    retryEngine: KycWebhookRetryEngine = new KycWebhookRetryEngine()
+  ) {
+    this.provider = provider;
+    this.retryEngine = retryEngine;
+  }
+
+  async pollAndNotifyStatusChange(
+    submissionData: KycSubmissionInput,
+    previousStatus: KycStatus,
+    partnerWebhookUrl?: string,
+    customFetch?: typeof fetch
+  ): Promise<{
+    currentStatus: KycStatus;
+    statusChanged: boolean;
+    webhookResult?: { delivered: boolean; attempts: number; statusCode?: number };
+  }> {
+    const res = await this.provider.submitCustomer(submissionData, {});
+    const currentStatus = res.status;
+    const statusChanged = currentStatus !== previousStatus;
+
+    if (statusChanged && partnerWebhookUrl) {
+      const webhookPayload = {
+        event: 'customer.kyc_status_updated',
+        account: submissionData.account,
+        previousStatus,
+        currentStatus,
+        occurredAt: new Date().toISOString(),
+      };
+      const delivery = await this.retryEngine.sendOutboundKycWebhook(
+        partnerWebhookUrl,
+        webhookPayload,
+        customFetch
+      );
+      return {
+        currentStatus,
+        statusChanged,
+        webhookResult: {
+          delivered: delivery.delivered,
+          attempts: delivery.attempts,
+          statusCode: delivery.statusCode,
+        },
+      };
+    }
+
+    return {
+      currentStatus,
+      statusChanged,
+    };
+  }
+}
+

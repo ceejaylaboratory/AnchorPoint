@@ -1,6 +1,9 @@
+// Must be the first import so OpenTelemetry instruments http/express/ioredis (#1201).
+import { shutdownTracing } from './utils/tracing';
 import http from 'http';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import { config, hydrateEncryptedConfigSecrets } from './config/env';
 import { swaggerSpec } from './config/swagger';
@@ -25,7 +28,7 @@ import authRouter from './api/routes/auth.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
-import { sanitizeBodyMiddleware } from './api/middleware/sanitize.middleware';
+import { sanitizeRequestMiddleware } from './api/middleware/sanitize.middleware';
 import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
 import { stellarService } from './services/stellar.service';
@@ -35,7 +38,7 @@ import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
 import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
-import { createEmailProvider, ConsoleSmsProvider, FcmPushProvider } from './lib/notifications/providers';
+import { createEmailProvider, createSmsProvider, createPushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup, verifyDecryptionCapabilityOnStartup } from './lib/key-management.service';
 import queueDashboardRouter, { dashboardQueues } from './api/routes/queue-dashboard.route';
@@ -46,6 +49,7 @@ import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { dbMetricsScheduler } from './workers/db-metrics.scheduler';
 import { initSocket } from './lib/socket';
 import { kycExpiryScheduler } from './workers/kyc-expiry.scheduler';
+import { dataRetentionScheduler } from './workers/data-retention.scheduler';
 import { cleanupWorker } from './workers/cleanup.worker';
 import { feeReportWorker } from './workers/fee-report.worker';
 import contractQueueService from './services/contract-queue.service';
@@ -72,6 +76,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   feeReportScheduler.stop();
   uploadExpiryScheduler.stop();
   kycExpiryScheduler.stop();
+  dataRetentionScheduler.stop();
   cleanupWorker.stop();
   dbMetricsScheduler.stop();
 
@@ -99,6 +104,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     ),
     ['Prisma client', () => prisma.$disconnect()],
     ['Redis connection', () => redis.quit()],
+    ['OpenTelemetry tracing', () => shutdownTracing()],
   ];
 
   for (const [label, action] of steps) {
@@ -120,12 +126,27 @@ process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
-notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvider());
-notificationService.registerProvider(NotificationType.PUSH, new FcmPushProvider());
+notificationService.registerProvider(NotificationType.SMS, createSmsProvider());
+notificationService.registerProvider(NotificationType.PUSH, createPushProvider());
 
 const app = express();
 const httpServer = http.createServer(app);
 app.disable('x-powered-by');
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+      },
+    },
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'no-referrer' },
+  })
+);
 app.use(securityHeadersMiddleware);
 app.use(tracingMiddleware);
 const PORT = config.PORT;
@@ -164,7 +185,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(sanitizeBodyMiddleware);
+app.use(sanitizeRequestMiddleware);
 
 /**
  * @swagger
@@ -191,7 +212,7 @@ app.get('/', (req: Request, res: Response) => {
  * /health:
  *   get:
  *     summary: Health check
- *     description: Check if the API server and its backend dependencies (database, Redis, Soroban RPC) are running
+ *     description: Check if the API server and its backend dependencies (database, Redis, Soroban RPC, Horizon) are running
  *     tags: [Health]
  *     responses:
  *       200:
@@ -219,6 +240,9 @@ app.get('/', (req: Request, res: Response) => {
  *                     sorobanRpc:
  *                       type: string
  *                       example: UP
+ *                     horizon:
+ *                       type: string
+ *                       example: UP
  *       503:
  *         description: One or more backend dependencies are down
  *         content:
@@ -244,12 +268,16 @@ app.get('/', (req: Request, res: Response) => {
  *                     sorobanRpc:
  *                       type: string
  *                       example: DOWN
+ *                     horizon:
+ *                       type: string
+ *                       example: DOWN
  */
 app.get('/health', async (req: Request, res: Response) => {
   let dbStatus = 'UP';
   let redisStatus = 'UP';
   let redisLatency = 0;
   let sorobanRpcStatus = 'UP';
+  let horizonStatus = 'UP';
   let isHealthy = true;
 
   try {
@@ -287,6 +315,18 @@ app.get('/health', async (req: Request, res: Response) => {
     logger.error('Health Check - Soroban RPC connection failed:', err);
   }
 
+  try {
+    const horizonHealth = await stellarService.getHorizonHealth();
+    horizonStatus = horizonHealth.status;
+    if (horizonHealth.status === 'DOWN') {
+      isHealthy = false;
+    }
+  } catch (err) {
+    horizonStatus = 'DOWN';
+    isHealthy = false;
+    logger.error('Health Check - Horizon connection failed:', err);
+  }
+
   const responsePayload = {
     status: isHealthy ? 'UP' : 'DOWN',
     timestamp: new Date().toISOString(),
@@ -294,6 +334,7 @@ app.get('/health', async (req: Request, res: Response) => {
       database: dbStatus,
       redis: { status: redisStatus, latencyMs: redisLatency },
       sorobanRpc: sorobanRpcStatus,
+      horizon: horizonStatus,
     },
   };
 
@@ -423,6 +464,7 @@ if (process.env.NODE_ENV !== 'test') {
           feeReportScheduler.start();
           uploadExpiryScheduler.start();
           kycExpiryScheduler.start();
+          dataRetentionScheduler.start();
           dbMetricsScheduler.start();
           cleanupWorker.start();
         });

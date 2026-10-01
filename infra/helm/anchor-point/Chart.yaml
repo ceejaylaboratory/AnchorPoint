@@ -1,11 +1,13 @@
 apiVersion: v2
 name: anchor-point
 description: >
-  Helm chart for the AnchorPoint backend — a Stellar SEP-compliant anchor
-  service that handles SEP-6, SEP-10, SEP-24, SEP-31, and SEP-38 protocols
-  with BullMQ workers, PostgreSQL, and Redis.
+  Helm chart for AnchorPoint — a Stellar SEP-compliant anchor service that
+  handles SEP-6, SEP-10, SEP-24, SEP-31, and SEP-38 protocols with BullMQ
+  workers, PostgreSQL, and Redis. Deploys the backend by default; Redis,
+  PostgreSQL and the dashboard are optional and disabled by default so
+  production can keep its datastores external.
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "1.0.0"
 keywords:
   - anchorpoint

@@ -1,9 +1,10 @@
-import { Horizon, rpc, TransactionBuilder, Account, Networks, Memo, Operation, Keypair, Transaction, FeeBumpTransaction } from '@stellar/stellar-sdk';
+import { Horizon, rpc, TransactionBuilder, Account, Networks, Memo, Operation, Keypair, Transaction, FeeBumpTransaction, Asset, Claimant, xdr } from '@stellar/stellar-sdk';
 import { NetworkType, NETWORKS } from '../config/networks';
 import { config } from '../config/env';
 import { SignerInfo, SignatureInfo } from './auth.service';
 import configService from './config.service';
 import logger from '../utils/logger';
+import prisma from '../lib/prisma';
 
 export interface AccountSigners {
   signers: Array<{
@@ -52,6 +53,34 @@ export class StellarService {
     }
     const networkConfig = NETWORKS[this.currentNetwork];
     return [networkConfig.sorobanRpcUrl];
+  }
+
+  private static readonly RETRYABLE_HORIZON_STATUS_CODES = [429, 502, 503, 504];
+
+  /**
+   * Wraps a Horizon request with retries (exponential backoff + jitter) for
+   * transient failures (rate limiting, gateway/service errors).
+   */
+  private async retryHorizonRequest<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+    let lastError: any;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error: any) {
+        lastError = error;
+        const statusCode = error?.response?.status;
+        if (attempt === maxRetries || !StellarService.RETRYABLE_HORIZON_STATUS_CODES.includes(statusCode)) {
+          throw error;
+        }
+        const backoffMs = 2 ** attempt * 500;
+        const jitterMs = Math.random() * 250;
+        logger.warn(
+          `Horizon request failed with status ${statusCode}, retrying (attempt ${attempt + 1}/${maxRetries})`
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoffMs + jitterMs));
+      }
+    }
+    throw lastError;
   }
 
   private async executeRpcWithFailover<T>(method: string, ...args: any[]): Promise<T> {
@@ -165,7 +194,7 @@ export class StellarService {
    */
   public async getAccountSigners(accountId: string): Promise<AccountSigners> {
     const server = this.getHorizonServer();
-    const account = await server.loadAccount(accountId);
+    const account = await this.retryHorizonRequest(() => server.loadAccount(accountId));
 
     return {
       signers: account.signers.map((signer: any) => ({
@@ -178,6 +207,153 @@ export class StellarService {
         med_threshold: account.thresholds.med_threshold,
         high_threshold: account.thresholds.high_threshold
       }
+    };
+  }
+
+  /**
+   * Checks whether an account holds a trustline for the given asset.
+   * Useful as a pre-flight check before submitting payout transactions.
+   */
+  public async hasTrustline(accountPublicKey: string, assetCode: string, assetIssuer: string): Promise<boolean> {
+    const server = this.getHorizonServer();
+    const account = await this.retryHorizonRequest(() => server.loadAccount(accountPublicKey));
+
+    return account.balances.some((balance: any) =>
+      balance.asset_code === assetCode && balance.asset_issuer === assetIssuer
+    );
+  }
+
+  /**
+   * Sends `amount` of `assetCode` to `recipientPublicKey`, falling back to a
+   * Claimable Balance when the recipient's account does not hold a trustline
+   * for the asset (e.g. newly created / unfunded accounts).
+   *
+   * Flow:
+   *  1. Load the anchor's distribution account to get the sequence number.
+   *  2. Check whether the recipient holds a trustline via `hasTrustline`.
+   *  3a. Trustline present  → build a standard `Payment` operation.
+   *  3b. Trustline absent   → build a `CreateClaimableBalance` operation so
+   *      the recipient can claim the funds once they establish a trustline.
+   *  4. Sign with `senderSecret`, submit to Horizon, and return the result.
+   *  5. When `transactionId` is given and the fallback path was taken, persist
+   *     the claimable balance ID on the transaction record.
+   *
+   * Returns an object with `hash` (transaction hash) and optionally
+   * `claimableBalanceId` when the fallback path was taken.
+   */
+  public async sendPaymentWithClaimableFallback(options: {
+    senderSecret: string;
+    recipientPublicKey: string;
+    assetCode: string;
+    assetIssuer: string;
+    amount: string;
+    /** Anchor transaction ID to record the claimable balance ID against. */
+    transactionId?: string;
+  }): Promise<{ hash: string; claimableBalanceId?: string; usedClaimableBalance: boolean }> {
+    const { senderSecret, recipientPublicKey, assetCode, assetIssuer, amount, transactionId } = options;
+
+    const senderKeypair = Keypair.fromSecret(senderSecret);
+    const server = this.getHorizonServer();
+    const networkPassphrase = this.getPassphrase();
+
+    const senderAccount = await this.retryHorizonRequest(() =>
+      server.loadAccount(senderKeypair.publicKey()),
+    );
+
+    const asset = new Asset(assetCode, assetIssuer);
+
+    // Check for trustline — determines which operation to use
+    let recipientHasTrustline = false;
+    try {
+      recipientHasTrustline = await this.hasTrustline(recipientPublicKey, assetCode, assetIssuer);
+    } catch (error: any) {
+      // A 404 means the recipient account doesn't exist yet (unfunded), so it
+      // can only receive funds as a claimable balance. Any other failure is a
+      // Horizon/network problem and must not silently change the payment path.
+      const notFound = error?.response?.status === 404 || error?.name === 'NotFoundError';
+      if (!notFound) {
+        throw error;
+      }
+      recipientHasTrustline = false;
+    }
+
+    let operation: ReturnType<typeof Operation.payment | typeof Operation.createClaimableBalance>;
+
+    if (recipientHasTrustline) {
+      // Standard payment path
+      operation = Operation.payment({
+        destination: recipientPublicKey,
+        asset,
+        amount,
+      });
+    } else {
+      // Claimable balance fallback for unfunded / no-trustline accounts
+      logger.info(`Recipient ${recipientPublicKey} has no trustline for ${assetCode}; creating claimable balance`);
+      operation = Operation.createClaimableBalance({
+        asset,
+        amount,
+        claimants: [new Claimant(recipientPublicKey)],
+      });
+    }
+
+    const tx = new TransactionBuilder(senderAccount, {
+      fee: config.STELLAR_BASE_FEE || '100',
+      networkPassphrase,
+    })
+      .addOperation(operation as Parameters<TransactionBuilder['addOperation']>[0])
+      .setTimeout(30)
+      .build();
+
+    tx.sign(senderKeypair);
+
+    const response = await this.retryHorizonRequest(() => server.submitTransaction(tx));
+
+    logger.info(`Payment submitted: ${response.hash}`, {
+      recipient: recipientPublicKey,
+      assetCode,
+      amount,
+      usedClaimableBalance: !recipientHasTrustline,
+    });
+
+    // Extract claimable balance ID from the transaction result when the
+    // fallback path was used. The ID is embedded in the operation result XDR.
+    let claimableBalanceId: string | undefined;
+    if (!recipientHasTrustline) {
+      try {
+        const resultXdr = (response as any).result_xdr;
+        if (resultXdr) {
+          const result = xdr.TransactionResult.fromXDR(resultXdr, 'base64');
+          const opResult = result.result().results()[0];
+          const cbResult = opResult.tr().createClaimableBalanceResult();
+          claimableBalanceId = cbResult.balanceId().toXDR('hex');
+        }
+      } catch (e) {
+        logger.warn('Could not extract claimable balance ID from result XDR', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    if (transactionId && claimableBalanceId) {
+      try {
+        await prisma.transaction.update({
+          where: { id: transactionId },
+          data: { claimableBalanceId, stellarTxId: response.hash },
+        });
+      } catch (e) {
+        // The payment is already on-chain; don't fail the caller over bookkeeping.
+        logger.error('Failed to record claimable balance ID on transaction', {
+          transactionId,
+          claimableBalanceId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    return {
+      hash: response.hash,
+      claimableBalanceId,
+      usedClaimableBalance: !recipientHasTrustline,
     };
   }
 
@@ -368,7 +544,7 @@ export class StellarService {
         );
       }
 
-      const response = await server.submitTransaction(finalTx);
+      const response = await this.retryHorizonRequest(() => server.submitTransaction(finalTx));
       logger.info(`Transaction submitted successfully: ${response.hash}`);
       return response;
     } catch (error: any) {
@@ -418,6 +594,21 @@ export class StellarService {
       return { status: 'UP' };
     } catch (error) {
       logger.error('Soroban RPC health check failed:', error);
+      return { status: 'DOWN' };
+    }
+  }
+
+  /**
+   * Health check for Horizon connectivity
+   */
+  public async getHorizonHealth(): Promise<{ status: 'UP' | 'DOWN' }> {
+    try {
+      const server = this.getHorizonServer();
+      // Lightweight, low-cost endpoint used purely as a connectivity check
+      await server.fetchBaseFee();
+      return { status: 'UP' };
+    } catch (error) {
+      logger.error('Horizon health check failed:', error);
       return { status: 'DOWN' };
     }
   }

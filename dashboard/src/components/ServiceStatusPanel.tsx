@@ -138,7 +138,7 @@ const ServiceStatusPanel: React.FC = () => {
       setServices(list);
       setLastRefresh(now);
     } catch (err) {
-      setFetchError(err instanceof Error ? err.message : 'Failed to reach health endpoint');
+      setFetchError('Failed to reach health endpoint');
       setServices([
         { name: 'Redis', state: 'offline', lastChecked: now },
         { name: 'Database', state: 'offline', lastChecked: now },

@@ -1,6 +1,8 @@
 import {
   createKycProvider,
   KycStatus,
+  KycWebhookRetryEngine,
+  KycStatusPollingEngine,
   type IKycProvider,
 } from './kyc-provider.service';
 
@@ -185,6 +187,87 @@ describe('KYC provider service', () => {
       providerRef: 'shufti_ref_4',
       account: 'shufti_ref_4',
       status: KycStatus.ACCEPTED,
+    });
+  });
+
+  describe('KycWebhookRetryEngine', () => {
+    it('calculates exponential backoff delays (2s, 4s, 8s, 16s, 32s)', () => {
+      const engine = new KycWebhookRetryEngine({ baseDelayMs: 2000, maxRetries: 5 });
+      expect(engine.getBackoffDelay(1)).toBe(2000);
+      expect(engine.getBackoffDelay(2)).toBe(4000);
+      expect(engine.getBackoffDelay(3)).toBe(8000);
+      expect(engine.getBackoffDelay(4)).toBe(16000);
+      expect(engine.getBackoffDelay(5)).toBe(32000);
+    });
+
+    it('retries outbound webhooks on HTTP 500 errors up to 5 attempts with exponential backoff and logs status', async () => {
+      const sleepFn = jest.fn().mockResolvedValue(undefined);
+      const engine = new KycWebhookRetryEngine({ baseDelayMs: 2000, maxRetries: 5 }, sleepFn);
+
+      const customFetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+      } as Response);
+
+      const result = await engine.sendOutboundKycWebhook(
+        'https://partner.example.com/kyc-callback',
+        { customerId: 'cust_1', status: 'ACCEPTED' },
+        customFetch as unknown as typeof fetch
+      );
+
+      expect(result.delivered).toBe(false);
+      expect(result.attempts).toBe(5);
+      expect(result.statusCode).toBe(500);
+      expect(result.logs.length).toBe(5);
+      expect(customFetch).toHaveBeenCalledTimes(5);
+      expect(sleepFn).toHaveBeenNthCalledWith(1, 2000);
+      expect(sleepFn).toHaveBeenNthCalledWith(2, 4000);
+      expect(sleepFn).toHaveBeenNthCalledWith(3, 8000);
+      expect(sleepFn).toHaveBeenNthCalledWith(4, 16000);
+    });
+
+    it('succeeds immediately on 200 OK without retrying', async () => {
+      const sleepFn = jest.fn().mockResolvedValue(undefined);
+      const engine = new KycWebhookRetryEngine({ baseDelayMs: 2000, maxRetries: 5 }, sleepFn);
+
+      const customFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      const result = await engine.sendOutboundKycWebhook(
+        'https://partner.example.com/kyc-callback',
+        { customerId: 'cust_2', status: 'ACCEPTED' },
+        customFetch as unknown as typeof fetch
+      );
+
+      expect(result.delivered).toBe(true);
+      expect(result.attempts).toBe(1);
+      expect(result.statusCode).toBe(200);
+      expect(sleepFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('KycStatusPollingEngine', () => {
+    it('polls status and triggers webhook retry engine on status transition', async () => {
+      const provider = createKycProvider('mock');
+      const engine = new KycStatusPollingEngine(provider);
+
+      const customFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      const res = await engine.pollAndNotifyStatusChange(
+        { account: 'cust_poll_1', email: 'auto@example.com' },
+        KycStatus.PENDING,
+        'https://partner.example.com/webhook',
+        customFetch as unknown as typeof fetch
+      );
+
+      expect(res.statusChanged).toBe(true);
+      expect(res.currentStatus).toBe(KycStatus.ACCEPTED);
+      expect(res.webhookResult?.delivered).toBe(true);
     });
   });
 });

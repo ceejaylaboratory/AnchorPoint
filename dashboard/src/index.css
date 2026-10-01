@@ -53,6 +53,32 @@
     @apply overflow-x-hidden;
   }
 
+  /*
+   * Visible focus indicators for keyboard navigation (WCAG 2.1 AA).
+   * Uses --accent color (violet) for high contrast visibility.
+   */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /*
+   * Remove default focus outline for mouse users, keep for keyboard.
+   * This prevents the visual flash when clicking but preserves accessibility.
+   */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /*
+   * Ensure buttons and links maintain visible focus in high contrast mode.
+   */
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline: 2px solid Highlight;
+    }
+  }
+
   * {
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
     scrollbar-width: thin;
@@ -100,6 +126,28 @@
 }
 
 @layer components {
+  /*
+   * Focus-visible styles for interactive elements.
+   * Applied to all buttons and links for keyboard navigation accessibility.
+   */
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /*
+   * Ensure form inputs have visible focus indicators.
+   */
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 0;
+  }
+
   .glass-card {
     @apply bg-slate-900/50 backdrop-blur-md border border-slate-500 rounded-xl overflow-hidden;
   }

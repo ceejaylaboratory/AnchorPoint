@@ -26,7 +26,7 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "anchor-point.selectorLabels" . | nindent 6 }}
+      {{- include "anchor-point.backend.selectorLabels" . | nindent 6 }}
   strategy:
     type: {{ .Values.strategy.type }}
     {{- if eq .Values.strategy.type "RollingUpdate" }}
@@ -37,7 +37,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "anchor-point.selectorLabels" . | nindent 8 }}
+        {{- include "anchor-point.backend.selectorLabels" . | nindent 8 }}
       annotations:
         # Restart pods when the ConfigMap content changes
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
@@ -72,11 +72,48 @@ spec:
           # Sensitive config from Secret (individual keys for explicit audit trail)
           env:
             {{- range .Values.secrets.keys }}
+            {{- if and (eq . "DATABASE_URL") $.Values.postgres.enabled }}
+            # Skipped: postgres.enabled=true, so the in-cluster connection
+            # string is injected below instead of the externally-managed one.
+            {{- else if and (eq . "REDIS_URL") $.Values.redis.enabled }}
+            # Skipped: redis.enabled=true, see below.
+            {{- else }}
             - name: {{ . }}
               valueFrom:
                 secretKeyRef:
                   name: {{ include "anchor-point.secretName" $ }}
                   key: {{ . }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.postgres.enabled }}
+            # Credentials first: the kubelet expands $(VAR) in an env value
+            # only from variables defined earlier in this list, so DATABASE_URL
+            # below would otherwise keep the literal "$(POSTGRES_USER)".
+            # The password is still only ever read from a Secret; the rendered
+            # manifest contains a reference, never the secret text.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "anchor-point.postgres.secretName" . }}
+                  key: {{ .Values.postgres.auth.userKey }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "anchor-point.postgres.secretName" . }}
+                  key: {{ .Values.postgres.auth.passwordKey }}
+            # Points at the chart-managed Postgres, not at a managed instance.
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@{{ include "anchor-point.postgres.fullname" . }}:{{ .Values.postgres.service.port }}/{{ .Values.postgres.database }}"
+            {{- end }}
+            {{- if .Values.redis.enabled }}
+            # Same ordering rule as DATABASE_URL above.
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "anchor-point.redis.secretName" . }}
+                  key: {{ .Values.redis.auth.secretKey }}
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@{{ include "anchor-point.redis.fullname" . }}:{{ .Values.redis.service.port }}"
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -106,5 +143,63 @@ spec:
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.postgres.enabled .Values.redis.enabled }}
+      # Mirrors the compose ordering: the backend must not boot before the
+      # datastores it dials are accepting connections.
+      initContainers:
+        {{- if .Values.postgres.enabled }}
+        - name: wait-for-postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -ec
+            - |
+              until pg_isready -h {{ include "anchor-point.postgres.fullname" . }} -p {{ .Values.postgres.service.port }} -U "$POSTGRES_USER"; do
+                echo "waiting for postgres..."
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "anchor-point.postgres.secretName" . }}
+                  key: {{ .Values.postgres.auth.userKey }}
+        {{- end }}
+        {{- if .Values.redis.enabled }}
+        - name: wait-for-redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -ec
+            - |
+              until redis-cli -h {{ include "anchor-point.redis.fullname" . }} -p {{ .Values.redis.service.port }} -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG; do
+                echo "waiting for redis..."
+                sleep 2
+              done
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "anchor-point.redis.secretName" . }}
+                  key: {{ .Values.redis.auth.secretKey }}
+        {{- end }}
       {{- end }}
       restartPolicy: Always

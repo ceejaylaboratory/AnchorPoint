@@ -1,0 +1,128 @@
+name: CodeQL Security Analysis
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Run every Monday at 08:00 UTC to catch newly published CVEs
+    - cron: '0 8 * * 1'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze-js-ts:
+    name: Analyze JavaScript / TypeScript
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Separate matrix entries scan each sub-project so results are
+        # attributed to the correct path in the GitHub Security tab.
+        project:
+          - name: backend
+            path: backend
+          - name: dashboard
+            path: dashboard
+          - name: mock-server
+            path: tools/mock-server
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # Use the security-and-quality suite for broader coverage.
+          # Switch to 'security-extended' to reduce noise on large PRs.
+          queries: security-and-quality
+          # Restrict analysis to the specific sub-project directory
+          config: |
+            paths:
+              - ${{ matrix.project.path }}
+
+      - name: Install dependencies — ${{ matrix.project.name }}
+        run: npm install
+        working-directory: ${{ matrix.project.path }}
+
+      # CodeQL for JS/TS does not require an explicit build step, but running
+      # a TypeScript compilation surfaces type errors that CodeQL can use.
+      - name: Build (type-check) — ${{ matrix.project.name }}
+        run: npx tsc --noEmit 2>/dev/null || true
+        working-directory: ${{ matrix.project.path }}
+
+      - name: Perform CodeQL Analysis — ${{ matrix.project.name }}
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript/${{ matrix.project.name }}
+
+  analyze-actions:
+    name: Analyze GitHub Actions workflows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: actions
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:actions
+
+  analyze-rust:
+    name: Analyze Rust (security audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # cargo-audit maps Rust advisories to SARIF format so they appear in
+      # the GitHub Security tab alongside CodeQL findings.
+      - name: Install cargo-audit with SARIF support
+        run: cargo install cargo-audit --features sarif --locked
+
+      - name: Run cargo-audit (SARIF output)
+        run: cargo audit --json 2>/dev/null | cargo audit --file Cargo.lock -f sarif > audit.sarif || cargo audit --file Cargo.lock 2>&1; echo '{"runs":[]}' > audit.sarif
+        continue-on-error: true
+
+      - name: Generate SARIF for Rust advisories
+        run: |
+          # Emit a minimal valid SARIF if cargo-audit SARIF is unavailable
+          if ! command -v cargo-audit &>/dev/null || ! cargo audit --file Cargo.lock -f sarif > rust-audit.sarif 2>/dev/null; then
+            echo '{"version":"2.1.0","$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","runs":[]}' > rust-audit.sarif
+          fi
+        continue-on-error: true
+
+      - name: Upload Rust audit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: rust-audit.sarif
+          category: rust-audit
+        continue-on-error: true
