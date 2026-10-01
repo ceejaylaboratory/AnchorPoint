@@ -1,6 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { fileTypeFromFile } from 'file-type';
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
@@ -77,6 +76,21 @@ const ALLOWED_UPLOAD_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'applicati
  * executable renamed to `.png`) are caught before the request reaches the
  * controller.
  */
+async function detectMimeType(filePath: string): Promise<string | null> {
+  try {
+    const buffer = Buffer.alloc(12);
+    const fd = await fs.promises.open(filePath, 'r');
+    await fd.read(buffer, 0, 12, 0);
+    await fd.close();
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'image/png';
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'application/pdf';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function validateUploadedFileContent(req: Request, res: Response, next: NextFunction) {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (files.length === 0) {
@@ -88,8 +102,8 @@ async function validateUploadedFileContent(req: Request, res: Response, next: Ne
 
   try {
     for (const file of files) {
-      const detected = await fileTypeFromFile(file.path);
-      if (!detected || !ALLOWED_UPLOAD_MIME_TYPES.has(detected.mime)) {
+      const mime = await detectMimeType(file.path);
+      if (!mime || !ALLOWED_UPLOAD_MIME_TYPES.has(mime)) {
         await cleanup();
         return res.status(400).json({
           error: `File "${file.fieldname}" is not a supported document type. Accepted types: ${Array.from(ALLOWED_UPLOAD_MIME_TYPES).join(', ')}`,

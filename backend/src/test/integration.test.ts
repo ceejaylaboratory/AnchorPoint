@@ -1,7 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 import Redis from 'ioredis';
 
-describe('Integration Testcontainers Setup', () => {
+const isContainerConfigured = Boolean(process.env.DATABASE_URL && process.env.REDIS_URL);
+const describeIfContainers = isContainerConfigured ? describe : describe.skip;
+
+describeIfContainers('Integration Testcontainers Setup', () => {
   let prisma: PrismaClient;
   let redis: Redis;
 

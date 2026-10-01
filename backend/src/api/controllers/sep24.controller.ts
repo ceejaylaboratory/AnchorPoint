@@ -180,7 +180,7 @@ export const withdrawInteractive = (req: Request, res: Response): Response => {
   }
 
   // Validate asset
-  if (!isAssetSupported(asset_code)) {
+  if (!SUPPORTED_ASSETS.includes(asset_code.toUpperCase())) {
     return res.status(400).json({
       error: `Asset ${asset_code} is not supported. Supported assets: ${SUPPORTED_ASSETS.join(', ')}`
     });
