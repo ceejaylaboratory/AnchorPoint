@@ -45,6 +45,10 @@ pub enum DataKey {
     Rewards(Address),
     /// Accumulated protocol fee rewards available to harvest.
     ProtocolFeeBalance,
+    /// Vault shares held by each user.
+    VaultShares(Address),
+    /// Total issued vault shares.
+    VaultTotalShares,
 }
 
 #[contract]
@@ -86,6 +90,15 @@ impl YieldFarmingDistributor {
         env.storage()
             .instance()
             .set(&DataKey::RewardRemainder, &0i128);
+        env.storage().instance().set(&DataKey::VaultTotalShares, &0i128);
+    }
+
+    /// Return the number of auto-compounding vault shares held by `user`.
+    pub fn vault_shares(env: Env, user: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VaultShares(user))
+            .unwrap_or(0)
     }
 
     /// Update the per-ledger reward rate (admin only).

@@ -19,7 +19,7 @@ export async function revokeToken(
 ): Promise<void> {
   const key = JWT_BLACKLIST_PREFIX + hashToken(token);
   await redisService.setJSON(key, { revoked: true }, ttlSeconds);
-  logger.info({ key }, 'JWT token revoked');
+  logger.info('JWT token revoked', { key });
 }
 
 /**

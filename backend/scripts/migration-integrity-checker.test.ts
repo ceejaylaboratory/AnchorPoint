@@ -159,7 +159,7 @@ describe('MigrationIntegrityChecker', () => {
       });
 
       const hasErrors = (checker as any).hasErrors();
-      expect(hasErrors).toBe(false); // hasErrors returns true when NO errors
+      expect(hasErrors).toBe(true);
     });
   });
 

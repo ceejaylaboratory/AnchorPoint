@@ -12,9 +12,14 @@
     "dev:backend": "npm run dev -w backend",
     "dev": "concurrently \"npm run dev:dashboard\" \"npm run dev:demo\" \"npm run dev:backend\"",
     "test:backend": "npm test -w backend",
+    "test:dashboard": "npm test -w dashboard",
     "test:e2e": "cd dashboard && npx playwright test",
     "lint:backend": "npm run lint -w backend",
     "migrate:check": "npm run migrate:check -w backend",
+    "validate-env": "node tools/validate-env.js",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "lint:secrets": "npx --yes --package secretlint@8 --package @secretlint/secretlint-rule-preset-recommend@8 secretlint --config .secretlintrc.json",
+    "test:load": "k6 run tests/load/k6_sep_test.js",
     "install:all": "npm install"
   },
   "devDependencies": {
@@ -22,7 +27,8 @@
   },
   "dependencies": {
     "@types/node": "^25.6.0",
-    "axios": "^1.15.2"
+    "axios": "^1.15.2",
+    "path-to-regexp": "^0.1.7"
   },
   "overrides": {
     "brace-expansion": ">=2.1.4",
@@ -38,7 +44,6 @@
     "effect": ">=3.20.0",
     "uuid": ">=11.1.1",
     "@babel/core": ">=7.29.6",
-    "body-parser": ">=1.20.6",
-    "path-to-regexp": ">=8.4.0"
+    "body-parser": ">=1.20.6"
   }
 }

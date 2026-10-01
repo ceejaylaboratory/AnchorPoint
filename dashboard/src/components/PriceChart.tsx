@@ -54,7 +54,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, loading = false, error = 
       <div className="price-chart__header">
         <span className="price-chart__title">{sourceAsset}/{destinationAsset} 24h</span>
       </div>
-      <svg className="price-chart__svg" width={width} height={height} viewBox=`{0 0 ${width} ${height}`>
+      <svg className="price-chart__svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
         <polyline
           className="price-chart__line"
           fill="none"

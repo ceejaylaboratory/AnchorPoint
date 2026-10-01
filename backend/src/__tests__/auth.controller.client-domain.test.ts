@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getChallenge } from '../api/controllers/auth.controller';
 import { RedisService } from '../services/redis.service';
+import * as authService from '../services/auth.service';
 
 jest.mock('../services/auth.service', () => ({
   generateChallenge: () => 'mock-challenge',
@@ -51,6 +52,10 @@ function makeRes(): { res: Response; status: jest.Mock; json: jest.Mock } {
 const mockRedis = {} as RedisService;
 
 describe('getChallenge — client_domain validation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('accepts request without client_domain', async () => {
     const req = makeReq({ account: 'GABCDE' });
     const { res, status } = makeRes();
@@ -127,5 +132,46 @@ describe('getChallenge — client_domain validation', () => {
     expect(json).toHaveBeenCalledWith(
       expect.objectContaining({ error: 'invalid_client_domain' })
     );
+  });
+});
+
+describe('getChallenge — client_domain embedding in challenge transaction', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('passes client_domain to generateSep10ChallengeTransaction when provided', async () => {
+    const req = makeReq({ account: 'GABCDE', client_domain: 'wallet.example.com' });
+    const { res } = makeRes();
+    await getChallenge(req, res, mockRedis);
+
+    expect(authService.generateSep10ChallengeTransaction).toHaveBeenCalledWith(
+      expect.any(String), // anchorPublicKey
+      'GABCDE',           // clientPublicKey
+      expect.anything(),  // networkType
+      'wallet.example.com' // client_domain forwarded
+    );
+  });
+
+  it('passes undefined client_domain to generateSep10ChallengeTransaction when omitted', async () => {
+    const req = makeReq({ account: 'GABCDE' });
+    const { res } = makeRes();
+    await getChallenge(req, res, mockRedis);
+
+    expect(authService.generateSep10ChallengeTransaction).toHaveBeenCalledWith(
+      expect.any(String),
+      'GABCDE',
+      expect.anything(),
+      undefined // no client_domain
+    );
+  });
+
+  it('does not call generateSep10ChallengeTransaction when client_domain is invalid', async () => {
+    const req = makeReq({ account: 'GABCDE', client_domain: 'http://bad-domain.com' });
+    const { res } = makeRes();
+    await getChallenge(req, res, mockRedis);
+
+    // Rejected before reaching service call
+    expect(authService.generateSep10ChallengeTransaction).not.toHaveBeenCalled();
   });
 });

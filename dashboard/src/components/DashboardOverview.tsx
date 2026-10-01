@@ -3,6 +3,7 @@ import { Search, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { LogoMark } from './LogoMark';
 import { MetricsChart } from './MetricsChart';
 import { DashboardOverviewSkeleton } from './Skeletons';
+import { StakingCalculator } from './StakingCalculator';
 import { TransactionStatusBadge, type TransactionStatus } from './TransactionStatusBadge';
 import type { UiConfig } from '../types';
 
@@ -221,44 +222,49 @@ export const DashboardOverview = ({ uiConfig, isLoading = false }: DashboardOver
         <div className="glass-card p-6">
           <MetricsChart />
         </div>
-        <div className="glass-card p-6">
-          <h3 className="font-display text-xl font-bold">Anchor Branding</h3>
-          <div className="mt-5 flex items-center gap-4">
-            <LogoMark uiConfig={uiConfig} />
-            <div>
-              <p className="font-medium">{uiConfig.brandName}</p>
-              <p className="text-sm text-slate-400">
-                {uiConfig.supportEmail ?? 'Support contact not configured'}
-              </p>
+        <div className="space-y-6">
+          <div className="glass-card p-6">
+            <h3 className="font-display text-xl font-bold">Anchor Branding</h3>
+            <div className="mt-5 flex items-center gap-4">
+              <LogoMark uiConfig={uiConfig} />
+              <div>
+                <p className="font-medium">{uiConfig.brandName}</p>
+                <p className="text-sm text-slate-400">
+                  {uiConfig.supportEmail ?? 'Support contact not configured'}
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Primary</p>
+                <div className="mt-3 flex items-center gap-3">
+                  <span
+                    className="h-6 w-6 rounded-full border border-white/10"
+                    style={{ backgroundColor: uiConfig.primaryColor }}
+                    aria-label={`Primary color: ${uiConfig.primaryColor}`}
+                  />
+                  <span className="font-mono text-sm" aria-hidden="true">
+                    {uiConfig.primaryColor}
+                  </span>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Accent</p>
+                <div className="mt-3 flex items-center gap-3">
+                  <span
+                    className="h-6 w-6 rounded-full border border-white/10"
+                    style={{ backgroundColor: uiConfig.accentColor }}
+                    aria-label={`Accent color: ${uiConfig.accentColor}`}
+                  />
+                  <span className="font-mono text-sm" aria-hidden="true">
+                    {uiConfig.accentColor}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Primary</p>
-              <div className="mt-3 flex items-center gap-3">
-                <span
-                  className="h-6 w-6 rounded-full border border-white/10"
-                  style={{ backgroundColor: uiConfig.primaryColor }}
-                  aria-label={`Primary color: ${uiConfig.primaryColor}`}
-                />
-                <span className="font-mono text-sm" aria-hidden="true">
-                  {uiConfig.primaryColor}
-                </span>
-              </div>
-            </div>
-            <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Accent</p>
-              <div className="mt-3 flex items-center gap-3">
-                <span
-                  className="h-6 w-6 rounded-full border border-white/10"
-                  style={{ backgroundColor: uiConfig.accentColor }}
-                  aria-label={`Accent color: ${uiConfig.accentColor}`}
-                />
-                <span className="font-mono text-sm" aria-hidden="true">
-                  {uiConfig.accentColor}
-                </span>
-              </div>
-            </div>
+          <div className="glass-card p-6">
+            <StakingCalculator />
           </div>
         </div>
       </div>
