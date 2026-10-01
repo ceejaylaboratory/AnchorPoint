@@ -7,6 +7,7 @@ if (!process.env.DATABASE_URL) {
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
 import { config } from '../config/env';
+import logger from '../utils/logger';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -60,7 +61,7 @@ async function connectWithRetry(client: PrismaClient): Promise<void> {
   for (let attempt = 1; attempt <= MAX_CONNECT_RETRIES; attempt++) {
     try {
       await client.$connect();
-      console.log('[Prisma] Successfully connected to database');
+      logger.info('[Prisma] Successfully connected to database');
       return;
     } catch (error) {
       if (attempt === MAX_CONNECT_RETRIES) {

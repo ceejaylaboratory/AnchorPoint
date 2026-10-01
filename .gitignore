@@ -18,14 +18,28 @@ dist-ssr/
 .turbo/
 build/
 coverage/
+*.tsbuildinfo
 
-# Environment
+# Environment & Secrets
 .env
 .env.*
 !.env.example
 *.local
+*.pem
+*.key
+*.cert
+*.p12
 
-# Editor/System
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & IDE config (tool-specific, not project config)
+.codex/
 .codex
 .vscode/*
 !.vscode/extensions.json
@@ -36,9 +50,39 @@ coverage/
 *.njsproj
 *.sln
 *.sw?
+.freebuff/
+.kilo/
+.kiro/
+.agents/
+*.gemini/
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 # Testing
 mutants.out/
 mutants.out.old/
 test_snapshots/
 **/test_snapshots/
+
+# Dev-only scripts and scratch data
+create_issues.js
+issues.json
+production_issues.json
+Untitled
+
+# Temporary / generated docs (not for production)
+IMPLEMENTATION_SUMMARY.md
+QUICK_START_ERROR_FEEDBACK.md
+implementation.md
+CODEBASE_INDEX.md
+
+# Debug scripts
+backend/src/services/batch-payment.debug.ts
+backend/src/services/batch-payment.examples.ts
+
+# Demo app dependencies
+demo/node_modules/
+demo/dist/
