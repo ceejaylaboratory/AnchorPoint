@@ -62,8 +62,13 @@ describe('StatusBanner', () => {
     Object.defineProperty(navigator, 'onLine', { value: false });
     
     // Mock location.reload
-    const originalReload = window.location.reload;
-    window.location.reload = vi.fn();
+    const reloadMock = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, reload: reloadMock },
+      writable: true,
+      configurable: true,
+    });
 
     vi.stubGlobal(
       'fetch',
@@ -83,10 +88,14 @@ describe('StatusBanner', () => {
     window.dispatchEvent(new Event('online'));
 
     // Should have called reload to refresh active view
-    expect(window.location.reload).toHaveBeenCalledTimes(1);
+    expect(reloadMock).toHaveBeenCalledTimes(1);
 
-    // Restore original reload
-    window.location.reload = originalReload;
+    // Restore original location
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
   });
 
   it('shows offline banner on initial render if starting offline', () => {

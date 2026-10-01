@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { config } from '../../config/env';
 import { extractBearerToken, verifyToken, MultiKeyVerifiedToken } from '../../services/auth.service';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { redis } from '../../lib/redis';
 
 void config.JWT_SECRET;
 
@@ -17,7 +18,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export const authMiddleware = (req: AuthRequest, res: Response, next: NextFunction) => {
+export const authMiddleware = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const token = extractBearerToken(req.headers.authorization);
   if (!token) {
     return res.status(401).json({
@@ -27,7 +28,7 @@ export const authMiddleware = (req: AuthRequest, res: Response, next: NextFuncti
   }
 
   try {
-    const decoded = verifyToken(token);
+    const decoded = await verifyToken(token);
     
     // Handle both single-key and multi-key tokens
     if ((decoded as MultiKeyVerifiedToken).signers) {
@@ -52,6 +53,49 @@ export const authMiddleware = (req: AuthRequest, res: Response, next: NextFuncti
       status: 'error',
       message: 'Invalid or expired token.'
     });
+  }
+};
+
+export const apiKeyAuthMiddleware = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const apiKeyHeader = req.headers['x-api-key'];
+  if (!apiKeyHeader || typeof apiKeyHeader !== 'string') {
+    return res.status(401).json({ status: 'error', message: 'API key required' });
+  }
+
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const record = await prisma.apiKey.findUnique({
+      where: { key: apiKeyHeader },
+    });
+
+    if (!record || !record.isActive) {
+      return res.status(401).json({ status: 'error', message: 'Invalid or inactive API key' });
+    }
+
+    // Rate Limiting
+    const limit = record.tier === 'Pro' ? 10000 : record.tier === 'Enterprise' ? 100000 : 100;
+    const rateLimitKey = `rate-limit:apikey:${record.key}`;
+    const currentCount = await (redis as any).incr(rateLimitKey);
+    
+    if (currentCount === 1) {
+      await (redis as any).expire(rateLimitKey, 3600); // 1 hour window
+    }
+
+    if (currentCount > limit) {
+      return res.status(429).json({ status: 'error', message: 'Rate limit exceeded' });
+    }
+
+    // Usage Tracking
+    await prisma.apiKey.update({
+      where: { id: record.id },
+      data: { usageCount: { increment: 1 } },
+    });
+
+    req.user = { publicKey: record.ownerId, tier: record.tier as Tier };
+
+    return next();
+  } catch (error) {
+    return res.status(500).json({ status: 'error', message: 'Internal server error validating API Key' });
   }
 };
 

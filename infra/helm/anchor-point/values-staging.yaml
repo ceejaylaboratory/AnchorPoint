@@ -83,3 +83,46 @@ secrets:
     - STELLAR_PASSPHRASE
     - STELLAR_DEPLOYER_SECRET
     - JWT_SECRET
+
+# -- Full in-cluster stack ---------------------------------------------------
+# Staging has no managed Redis/Postgres, so the chart runs them. The backend's
+# REDIS_URL / DATABASE_URL are then derived from the in-cluster Services and
+# the two entries are dropped from the Secret lookup — the staging Secret
+# should no longer carry those two keys.
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+  auth:
+    existingSecret: "anchorpoint-staging-datastores"
+    secretKey: redis-password
+  persistence:
+    enabled: true
+    size: 5Gi
+
+postgres:
+  enabled: true
+  database: anchorpoint
+  auth:
+    existingSecret: "anchorpoint-staging-datastores"
+    userKey: postgres-user
+    passwordKey: postgres-password
+  persistence:
+    size: 10Gi
+
+dashboard:
+  enabled: true
+  replicaCount: 1
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: dashboard.staging.anchorpoint.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: anchorpoint-dashboard-staging-tls
+        hosts:
+          - dashboard.staging.anchorpoint.example.com

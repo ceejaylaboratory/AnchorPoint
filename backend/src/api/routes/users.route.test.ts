@@ -2,13 +2,42 @@ import request from 'supertest';
 import express from 'express';
 import usersRoute from './users.route';
 
+jest.mock('../../lib/prisma', () => ({
+  __esModule: true,
+  default: {
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'user-1', email: 'test@example.com' }),
+    },
+    userPasswordResetToken: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      create: jest.fn().mockResolvedValue({ id: 'token-1' }),
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+        tokenHash: 'hashed',
+        usedAt: null,
+        expiresAt: new Date(Date.now() + 60000),
+      }),
+      update: jest.fn().mockResolvedValue({ id: 'token-1' }),
+    },
+    $transaction: jest.fn(async (callback) =>
+      callback({
+        userPasswordResetToken: {
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          create: jest.fn().mockResolvedValue({ id: 'token-1' }),
+          update: jest.fn().mockResolvedValue({ id: 'token-1' }),
+        },
+      }),
+    ),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use('/api/users', usersRoute);
 
 describe('User password reset routes', () => {
   it('requests password reset and adheres to rate limits', async () => {
-    // Mock user exists in DB - assuming user with email exists
     // Test for rate limit
     for (let i = 0; i < 4; i++) {
       const res = await request(app)
@@ -24,9 +53,10 @@ describe('User password reset routes', () => {
   });
 
   it('confirms password reset with valid payload', async () => {
-      // Need a way to get the token or mock the service
-      // Given the constraints, I will leave this as a placeholder 
-      // as I don't have a functional DB to test against.
-      expect(true).toBe(true);
+    const res = await request(app)
+      .post('/api/users/password-reset/confirm')
+      .send({ token: 'test-token', newPassword: 'validLongPassword123!' });
+    expect(res.status).toBe(200);
   });
 });
+

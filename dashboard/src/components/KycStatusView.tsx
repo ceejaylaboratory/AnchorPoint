@@ -65,7 +65,7 @@ type KycStatusViewProps = {
 };
 
 export const KycStatusView = ({ uiConfig, apiBaseUrl, account }: KycStatusViewProps) => {
-  const [kycState, setKycState] = useState<KycState>('rejected');
+  const [kycState, setKycState] = useState<KycState>('not_started');
   const [customerCreated, setCustomerCreated] = useState(false);
 
   return (

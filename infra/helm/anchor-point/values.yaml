@@ -183,3 +183,126 @@ extraVolumes:
 extraVolumeMounts:
   - name: tmp
     mountPath: /tmp
+
+# -- Redis (optional) --------------------------------------------------------
+# Disabled by default: production should point REDIS_URL at a managed Redis.
+# When enabled the chart runs a single Redis pod and rewrites the backend's
+# REDIS_URL to the in-cluster Service, so REDIS_URL does not have to be edited
+# in the backend Secret by hand.
+redis:
+  enabled: false
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  # AOF keeps queued BullMQ jobs across a pod restart. The file is only fsynced
+  # every 'everysec', so an abrupt node loss can still lose the last second.
+  appendOnly: "yes"
+  service:
+    type: ClusterIP
+    port: 6379
+  auth:
+    # REQUIRED when enabled. Name of an existing Secret holding the password,
+    # or leave empty to use <fullname>-redis.
+    existingSecret: ""
+    secretKey: redis-password
+  persistence:
+    # Disable only for throwaway environments — /data is an emptyDir then and
+    # all queue state is lost when the pod is replaced.
+    enabled: true
+    size: 8Gi
+    # Empty means "use the cluster default StorageClass".
+    storageClass: ""
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  nodeSelector: {}
+  tolerations: []
+
+# -- PostgreSQL (optional) ---------------------------------------------------
+# Disabled by default: production should point DATABASE_URL at a managed
+# Postgres. When enabled the chart runs a single-replica StatefulSet and
+# rewrites the backend's DATABASE_URL to the in-cluster Service.
+#
+# WARNING: this is a single-replica StatefulSet with one PVC. No replica set,
+# no failover, no point-in-time recovery — it exists so a single cluster (dev,
+# staging, CI) can be brought up from this chart alone, and it is not sized or
+# tuned for production data. Keep postgres.enabled=false on production and
+# supply DATABASE_URL from the backend Secret.
+postgres:
+  enabled: false
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  database: anchorpoint
+  service:
+    type: ClusterIP
+    port: 5432
+  auth:
+    # REQUIRED when enabled. Secret must hold the two keys below; empty names
+    # fall back to <fullname>-postgres, which the chart does not create (no
+    # plaintext passwords in a chart).
+    existingSecret: ""
+    userKey: postgres-user
+    passwordKey: postgres-password
+  persistence:
+    size: 20Gi
+    # Empty means "use the cluster default StorageClass".
+    storageClass: ""
+  extraEnv: []
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  nodeSelector: {}
+  tolerations: []
+
+# -- Dashboard (optional) ----------------------------------------------------
+# Disabled by default. The dashboard image is a static nginx bundle that calls
+# the API from the browser, so the API URL is baked in at build time and is not
+# configurable from values here.
+dashboard:
+  enabled: false
+  image:
+    repository: ghcr.io/ceejaylaboratory/anchorpoint-dashboard
+    pullPolicy: IfNotPresent
+    # Override per release with --set dashboard.image.tag=<semver>.
+    tag: "latest"
+  replicaCount: 2
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+  ingress:
+    enabled: false
+    className: nginx
+    annotations: {}
+    hosts:
+      - host: dashboard.anchorpoint.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    # - secretName: anchorpoint-dashboard-tls
+    #   hosts:
+    #     - dashboard.anchorpoint.example.com
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  nodeSelector: {}
+  tolerations: []

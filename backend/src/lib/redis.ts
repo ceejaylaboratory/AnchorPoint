@@ -6,14 +6,23 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
 const isTest = process.env.NODE_ENV === 'test';
 
-type RedisClientLike = {
+export type RedisClientLike = {
   on: (event: string, handler: (...args: any[]) => void) => void;
   duplicate: (...args: unknown[]) => RedisClientLike;
   subscribe: (channel: string, callback?: (err: Error | null) => void) => void;
   publish: (channel: string, message: string) => Promise<number>;
+  get?: (key: string) => Promise<string | null>;
+  set?: (key: string, value: string, ...args: unknown[]) => Promise<unknown>;
+  del?: (key: string) => Promise<number>;
+  incr?: (key: string) => Promise<number>;
+  expire?: (key: string, seconds: number) => Promise<number>;
+  ping?: () => Promise<string>;
+  call?: (command: string, ...args: unknown[]) => unknown;
+  quit?: () => Promise<unknown>;
+  disconnect?: () => Promise<unknown>;
 };
 
-type RedisTestClient = RedisClientLike & {
+export type RedisTestClient = RedisClientLike & {
   subscribe: (channel: string, callback?: (err: Error | null) => void) => void;
   call: (command: string, ...args: unknown[]) => number | string | [number, number];
   get: (key: string) => Promise<string | null>;
@@ -88,9 +97,9 @@ const createTestRedisClient = (): RedisTestClient => ({
   ping: async () => 'PONG',
 });
 
-export const redis = isTest
-  ? createTestRedisClient()
-  : createRedisClient();
+export const redis: Redis = (
+  isTest ? createTestRedisClient() : createRedisClient()
+) as unknown as Redis;
 
 export const redlock = new Redlock(
   [redis as unknown as Redis],

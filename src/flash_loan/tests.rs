@@ -323,6 +323,20 @@ mod tests {
         }
     }
 
+    fn fund_batch_receiver_fees_separate(
+        env: &Env,
+        tokens: &Vec<Address>,
+        amounts: &Vec<i128>,
+        receiver: &Address,
+        fee_bps: u32,
+    ) {
+        for i in 0..tokens.len() {
+            let token = tokens.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
+            mint_to(env, &token, receiver, fee_for(amount, fee_bps));
+        }
+    }
+
     fn balance(env: &Env, token: &Address, account: &Address) -> i128 {
         TokenClient::new(env, token).balance(account)
     }
@@ -720,5 +734,293 @@ mod tests {
         );
 
         provider_client.flash_loan_batch(&receiver_id, &loans);
+    }
+
+    #[test]
+    fn test_flash_loan_multi_success() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 3);
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        // Create separate vectors for tokens and amounts
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_ids.get(0).unwrap());
+        amounts.push_back(100_000);
+        tokens.push_back(token_ids.get(1).unwrap());
+        amounts.push_back(50_000);
+        tokens.push_back(token_ids.get(2).unwrap());
+        amounts.push_back(25_000);
+
+        let fee_bps = 5;
+        let fee_1 = fee_for(100_000, fee_bps);
+        let fee_2 = fee_for(50_000, fee_bps);
+        let fee_3 = fee_for(25_000, fee_bps);
+        fund_batch_receiver_fees_separate(&env, &tokens, &amounts, &receiver_id, fee_bps);
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+
+        // Check provider balances: should be initial + fee for each token
+        assert_eq!(
+            balance(&env, &token_ids.get(0).unwrap(), &provider_id),
+            1_000_000 + fee_1
+        );
+        assert_eq!(
+            balance(&env, &token_ids.get(1).unwrap(), &provider_id),
+            1_000_000 + fee_2
+        );
+        assert_eq!(
+            balance(&env, &token_ids.get(2).unwrap(), &provider_id),
+            1_000_000 + fee_3
+        );
+        assert_eq!(receiver_client.last_batch_count(), 3);
+        assert_eq!(receiver_client.last_batch_amount(), 175_000);
+        assert_eq!(receiver_client.last_batch_fee(), fee_1 + fee_2 + fee_3);
+    }
+
+    #[test]
+    fn test_flash_loan_multi_single_asset() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 1);
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_ids.get(0).unwrap());
+        amounts.push_back(100_000);
+
+        let fee = fee_for(100_000, 5);
+        fund_batch_receiver_fees_separate(&env, &tokens, &amounts, &receiver_id, 5);
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+
+        assert_eq!(
+            balance(&env, &token_ids.get(0).unwrap(), &provider_id),
+            1_000_000 + fee
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot flash loan zero assets")]
+    fn test_flash_loan_multi_empty() {
+        let env = Env::default();
+        let (provider_id, _token_ids, _admin) = setup_multiple_tokens(&env, 1);
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let tokens = Vec::new(&env);
+        let amounts = Vec::new(&env);
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+    }
+
+    #[test]
+    #[should_panic(expected = "tokens and amounts vectors must have equal length")]
+    fn test_flash_loan_multi_mismatched_lengths() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 2);
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_ids.get(0).unwrap());
+        amounts.push_back(100_000);
+        tokens.push_back(token_ids.get(1).unwrap());
+        // Missing second amount
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+    }
+
+    #[test]
+    #[should_panic(expected = "Flash loan not repaid")]
+    fn test_flash_loan_multi_failure() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 2);
+
+        let receiver_id = env.register(MockBatchReceiverFailure, ());
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_ids.get(0).unwrap());
+        amounts.push_back(100_000);
+        tokens.push_back(token_ids.get(1).unwrap());
+        amounts.push_back(50_000);
+        fund_batch_receiver_fees_separate(&env, &tokens, &amounts, &receiver_id, 5);
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+    }
+
+    #[test]
+    #[should_panic(expected = "Flash loan not repaid")]
+    fn test_flash_loan_multi_partial_repayment() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 2);
+
+        let receiver_id = env.register(MockBatchReceiverPartialRepayment, ());
+        let receiver_client = MockBatchReceiverPartialRepaymentClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_ids.get(0).unwrap());
+        amounts.push_back(100_000);
+        tokens.push_back(token_ids.get(1).unwrap());
+        amounts.push_back(50_000);
+        fund_batch_receiver_fees_separate(&env, &tokens, &amounts, &receiver_id, 5);
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+    }
+
+    #[test]
+    fn test_flash_loan_multi_with_custom_fee() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 2);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+        provider_client.set_fee_bps(&15); // 0.15%
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_ids.get(0).unwrap());
+        amounts.push_back(100_000);
+        tokens.push_back(token_ids.get(1).unwrap());
+        amounts.push_back(50_000);
+
+        let fee_bps = 15;
+        let fee_1 = fee_for(100_000, fee_bps);
+        let fee_2 = fee_for(50_000, fee_bps);
+        fund_batch_receiver_fees_separate(&env, &tokens, &amounts, &receiver_id, fee_bps);
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+
+        assert_eq!(
+            balance(&env, &token_ids.get(0).unwrap(), &provider_id),
+            1_000_000 + fee_1
+        );
+        assert_eq!(
+            balance(&env, &token_ids.get(1).unwrap(), &provider_id),
+            1_000_000 + fee_2
+        );
+    }
+
+    #[test]
+    fn test_flash_loan_multi_large_scale() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 5);
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        for i in 0..5 {
+            tokens.push_back(token_ids.get(i).unwrap());
+            amounts.push_back((i + 1) as i128 * 10_000);
+        }
+        fund_batch_receiver_fees_separate(&env, &tokens, &amounts, &receiver_id, 5);
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+
+        let fee_bps = 5;
+        for i in 0..5 {
+            let amount = (i + 1) as i128 * 10_000;
+            let fee = fee_for(amount, fee_bps);
+            assert_eq!(
+                balance(&env, &token_ids.get(i).unwrap(), &provider_id),
+                1_000_000 + fee
+            );
+        }
+    }
+
+    #[test]
+    fn test_flash_loan_multi_duplicate_token_success_accumulates_fees() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 1);
+        let token_id = token_ids.get(0).unwrap();
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_id.clone());
+        amounts.push_back(100_000);
+        tokens.push_back(token_id.clone());
+        amounts.push_back(50_000);
+
+        let fee_1 = fee_for(100_000, 5);
+        let fee_2 = fee_for(50_000, 5);
+        fund_batch_receiver_fees_separate(&env, &tokens, &amounts, &receiver_id, 5);
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
+
+        assert_eq!(
+            balance(&env, &token_id, &provider_id),
+            1_000_000 + fee_1 + fee_2
+        );
+        assert_eq!(receiver_client.last_batch_count(), 2);
+        assert_eq!(receiver_client.last_batch_fee(), fee_1 + fee_2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Flash loan not repaid")]
+    fn test_flash_loan_multi_rejects_duplicate_token_fee_underpayment() {
+        let env = Env::default();
+        let (provider_id, token_ids, _admin) = setup_multiple_tokens(&env, 1);
+        let token_id = token_ids.get(0).unwrap();
+
+        let receiver_id = env.register(MockBatchReceiverDuplicateUnderpay, ());
+        let receiver_client = MockBatchReceiverDuplicateUnderpayClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+
+        let mut tokens = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        tokens.push_back(token_id.clone());
+        amounts.push_back(100_000);
+        tokens.push_back(token_id.clone());
+        amounts.push_back(50_000);
+
+        mint_to(
+            &env,
+            &token_ids.get(0).unwrap(),
+            &receiver_id,
+            fee_for(100_000, 5),
+        );
+
+        provider_client.flash_loan_multi(&receiver_id, &tokens, &amounts);
     }
 }
