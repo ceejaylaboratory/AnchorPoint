@@ -76,6 +76,14 @@ pub struct BatchResult {
     pub nonce: u64,
 }
 
+/// Deterministic lower-bound gas estimate for a batch operation.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchGasEstimate {
+    pub operations: u32,
+    pub units: u64,
+}
+
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -88,6 +96,16 @@ pub struct BatchExecutor;
 #[allow(deprecated)]
 #[contractimpl]
 impl BatchExecutor {
+    /// Estimate batch cost without invoking target contracts or changing state.
+    pub fn estimate_batch(env: Env, calls: Vec<Call>) -> BatchGasEstimate {
+        let operations = calls.len();
+        let units = 1_000u64
+            .checked_add((operations as u64).checked_mul(500).expect("estimate overflow"))
+            .expect("estimate overflow");
+        let _ = env;
+        BatchGasEstimate { operations, units }
+    }
+
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
