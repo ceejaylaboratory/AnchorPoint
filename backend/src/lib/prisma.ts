@@ -6,6 +6,7 @@ if (!process.env.DATABASE_URL) {
 
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
+import { piiEncryptionMiddleware } from '../services/crypto.service';
 import { config } from '../config/env';
 import { softDeleteExtension } from './soft-delete';
 
@@ -123,6 +124,10 @@ if (typeof prismaAny.$use === 'function') {
       metricsService.observeDbQuery(queryType, seconds);
     }
   });
+
+  // PII encryption middleware – transparently encrypts sensitive fields before
+  // writing to the database and decrypts them on read.
+  prismaAny.$use(piiEncryptionMiddleware as unknown as (params: PrismaMiddlewareParams, next: PrismaMiddleware) => Promise<unknown>);
 }
 
 // ── Soft-delete filtering (#1197) ─────────────────────────────────────

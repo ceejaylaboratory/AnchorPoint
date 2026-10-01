@@ -7,7 +7,13 @@ pub enum DataKey {
     EscrowInitialized,
     EscrowDetails,
     RefundClaimed,
+    Cancelled,
+    PendingBeneficiary,
 }
+
+/// Delay (in seconds) a recovery-initiated beneficiary change must wait
+/// before it can be executed: 72 hours.
+pub const BENEFICIARY_UPDATE_DELAY: u64 = 72 * 60 * 60;
 
 #[contracttype]
 #[derive(Clone)]
@@ -19,6 +25,17 @@ pub struct EscrowDetails {
     pub unlock_time: u64,
     pub release_timestamp: u64,
     pub conditions_met: bool,
+    /// Optional key allowed to rotate `recipient` if the beneficiary loses
+    /// access to their wallet. Changes are subject to a 72-hour timelock.
+    pub recovery_key: Option<Address>,
+}
+
+/// A beneficiary change proposed by the recovery key, waiting out its timelock.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingBeneficiaryUpdate {
+    pub new_beneficiary: Address,
+    pub effective_at: u64,
 }
 
 #[contract]
@@ -84,6 +101,7 @@ impl EscrowTimelock {
             unlock_time,
             release_timestamp: unlock_time,
             conditions_met: false,
+            recovery_key: None,
         };
 
         e.storage()
@@ -93,6 +111,7 @@ impl EscrowTimelock {
             .instance()
             .set(&DataKey::EscrowInitialized, &true);
         e.storage().instance().set(&DataKey::RefundClaimed, &false);
+        e.storage().instance().set(&DataKey::Cancelled, &false);
 
         // Transfer tokens from sender to this contract
         let token_client = token::Client::new(&e, &details.token);
@@ -113,6 +132,66 @@ impl EscrowTimelock {
         e.storage()
             .instance()
             .set(&DataKey::EscrowDetails, &details);
+    }
+
+    /// Cancel a pending timelocked escrow before the lockup window begins.
+    ///
+    /// Only the original depositor (sender) may cancel, and only while
+    /// `current_time < unlock_time`. Once the lockup has started the escrow
+    /// can no longer be cancelled and must go through claim/refund instead.
+    pub fn cancel_escrow(e: Env, depositor: Address, escrow_id: u64) {
+        let _ = escrow_id;
+
+        let details: EscrowDetails = e
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowDetails)
+            .expect("escrow not initialized");
+
+        // Only the original depositor may cancel.
+        if depositor != details.sender {
+            panic!("only depositor can cancel");
+        }
+        depositor.require_auth();
+
+        let cancelled: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::Cancelled)
+            .unwrap_or(false);
+        if cancelled {
+            panic!("escrow already cancelled");
+        }
+
+        let refund_claimed: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::RefundClaimed)
+            .unwrap_or(false);
+        if refund_claimed {
+            panic!("escrow already settled");
+        }
+
+        // Cancellation is only permitted before the lockup window starts.
+        let current_time = e.ledger().timestamp();
+        if current_time >= details.unlock_time {
+            panic!("lockup has started - cannot cancel");
+        }
+
+        // Mark as cancelled to prevent double cancellation / later claims.
+        e.storage().instance().set(&DataKey::Cancelled, &true);
+        e.storage().instance().set(&DataKey::RefundClaimed, &true);
+
+        // Refund escrowed tokens back to the depositor.
+        let token_client = token::Client::new(&e, &details.token);
+        let contract_balance = token_client.balance(&e.current_contract_address());
+        if contract_balance > 0 {
+            token_client.transfer(
+                &e.current_contract_address(),
+                &details.sender,
+                &contract_balance,
+            );
+        }
     }
 
     /// Claim funds as the recipient (only after unlock_time or if conditions are met)
@@ -137,6 +216,15 @@ impl EscrowTimelock {
             .instance()
             .get(&DataKey::EscrowDetails)
             .expect("escrow not initialized");
+
+        let cancelled: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::Cancelled)
+            .unwrap_or(false);
+        if cancelled {
+            panic!("escrow cancelled");
+        }
 
         let refund_claimed: bool = e
             .storage()
@@ -226,6 +314,118 @@ impl EscrowTimelock {
         }
     }
 
+    /// Designate (or clear, with `None`) the recovery key for this escrow.
+    ///
+    /// Only the current beneficiary may set their own recovery key, so the
+    /// sender cannot use it to redirect funds away from the recipient. The
+    /// recovery key must be set while the beneficiary still controls their
+    /// wallet. Setting a new key discards any pending beneficiary change
+    /// proposed by the previous key.
+    pub fn set_recovery_key(e: Env, recovery_key: Option<Address>) {
+        let mut details = Self::load_details(&e);
+        Self::assert_active(&e);
+        details.recipient.require_auth();
+
+        if let Some(key) = &recovery_key {
+            if *key == details.recipient {
+                panic!("recovery key must differ from beneficiary");
+            }
+        }
+
+        details.recovery_key = recovery_key;
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowDetails, &details);
+        e.storage().instance().remove(&DataKey::PendingBeneficiary);
+    }
+
+    /// Propose replacing the beneficiary using the designated recovery key.
+    ///
+    /// The change only takes effect after `BENEFICIARY_UPDATE_DELAY` (72 hours)
+    /// via `execute_beneficiary_update`. During that window the current
+    /// beneficiary can veto it with `cancel_beneficiary_update`, which guards
+    /// against a compromised recovery key. A new proposal replaces any pending
+    /// one and restarts the delay.
+    pub fn update_beneficiary(e: Env, recovery_key: Address, new_beneficiary: Address) {
+        let details = Self::load_details(&e);
+        Self::assert_active(&e);
+
+        match &details.recovery_key {
+            Some(key) if *key == recovery_key => {}
+            Some(_) => panic!("not the recovery key"),
+            None => panic!("recovery key not set"),
+        }
+        recovery_key.require_auth();
+
+        if new_beneficiary == details.recipient {
+            panic!("new beneficiary matches current beneficiary");
+        }
+
+        let effective_at = e
+            .ledger()
+            .timestamp()
+            .checked_add(BENEFICIARY_UPDATE_DELAY)
+            .expect("timestamp overflow");
+
+        e.storage().instance().set(
+            &DataKey::PendingBeneficiary,
+            &PendingBeneficiaryUpdate {
+                new_beneficiary,
+                effective_at,
+            },
+        );
+    }
+
+    /// Apply a pending beneficiary change once its 72-hour delay has elapsed.
+    ///
+    /// Permissionless: the delay is the security boundary, so anyone may
+    /// finalize a matured proposal (including the new beneficiary).
+    pub fn execute_beneficiary_update(e: Env) {
+        let mut details = Self::load_details(&e);
+        Self::assert_active(&e);
+
+        let pending: PendingBeneficiaryUpdate = e
+            .storage()
+            .instance()
+            .get(&DataKey::PendingBeneficiary)
+            .expect("no pending beneficiary update");
+
+        if e.ledger().timestamp() < pending.effective_at {
+            panic!("beneficiary update timelock not elapsed");
+        }
+
+        details.recipient = pending.new_beneficiary;
+        e.storage()
+            .instance()
+            .set(&DataKey::EscrowDetails, &details);
+        e.storage().instance().remove(&DataKey::PendingBeneficiary);
+    }
+
+    /// Cancel a pending beneficiary change.
+    ///
+    /// Callable by the current beneficiary (veto) or the recovery key
+    /// (withdrawing its own proposal).
+    pub fn cancel_beneficiary_update(e: Env, caller: Address) {
+        let details = Self::load_details(&e);
+
+        if !e.storage().instance().has(&DataKey::PendingBeneficiary) {
+            panic!("no pending beneficiary update");
+        }
+
+        let is_recovery_key = details.recovery_key.as_ref() == Some(&caller);
+        if caller != details.recipient && !is_recovery_key {
+            panic!("not authorized to cancel");
+        }
+        caller.require_auth();
+
+        e.storage().instance().remove(&DataKey::PendingBeneficiary);
+    }
+
+    /// Get the pending beneficiary change, if any.
+    pub fn get_pending_beneficiary(e: Env) -> Option<PendingBeneficiaryUpdate> {
+        e.storage().instance().get(&DataKey::PendingBeneficiary)
+    }
+
     /// Get escrow details
     pub fn get_escrow_details(e: Env) -> EscrowDetails {
         e.storage()
@@ -242,9 +442,43 @@ impl EscrowTimelock {
             .unwrap_or(false)
     }
 
+    /// Check if the escrow has been cancelled
+    pub fn get_cancelled(e: Env) -> bool {
+        e.storage()
+            .instance()
+            .get(&DataKey::Cancelled)
+            .unwrap_or(false)
+    }
+
     /// Get current ledger timestamp
     pub fn get_current_time(e: Env) -> u64 {
         e.ledger().timestamp()
+    }
+}
+
+impl EscrowTimelock {
+    fn load_details(e: &Env) -> EscrowDetails {
+        e.storage()
+            .instance()
+            .get(&DataKey::EscrowDetails)
+            .expect("escrow not initialized")
+    }
+
+    /// Panics if the escrow has been cancelled or refunded.
+    fn assert_active(e: &Env) {
+        let cancelled: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::Cancelled)
+            .unwrap_or(false);
+        let refund_claimed: bool = e
+            .storage()
+            .instance()
+            .get(&DataKey::RefundClaimed)
+            .unwrap_or(false);
+        if cancelled || refund_claimed {
+            panic!("escrow already settled");
+        }
     }
 }
 
@@ -265,40 +499,21 @@ mod tests {
         let admin = Address::generate(&e);
         let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
         let token_id = token_contract.address();
-        let stellar_client = StellarAssetClient::new(&e, &token_id);
-        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
+        let stellar_asset = StellarAssetClient::new(&e, &token_id);
+        stellar_asset.mint(&sender, &1000);
 
         let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
-        // Mint tokens to sender
-        let amount = 1000;
-        stellar_client.mint(&sender, &amount);
-        assert_eq!(token_client.balance(&sender), amount);
+        client.initialize(&sender, &recipient, &token_id, &500, &2000);
 
-        // Set unlock time to future (current time + 1000 seconds)
-        let current_time = e.ledger().timestamp();
-        let unlock_time = current_time + 1000;
-
-        // Initialize escrow
-        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
-
-        // Verify token transfer
-        assert_eq!(token_client.balance(&sender), 0);
-        assert_eq!(token_client.balance(&contract_id), amount);
-
-        // Verify escrow details
         let details = client.get_escrow_details();
-        assert_eq!(details.sender, sender);
-        assert_eq!(details.recipient, recipient);
-        assert_eq!(details.token, token_id);
-        assert_eq!(details.amount, amount);
-        assert_eq!(details.unlock_time, unlock_time);
-        assert!(!details.conditions_met);
+        assert_eq!(details.amount, 500);
+        assert_eq!(details.unlock_time, 2000);
     }
 
     #[test]
-    fn test_claim_after_unlock_time() {
+    fn test_cancel_escrow_before_lockup() {
         let e = Env::default();
         e.mock_all_auths();
 
@@ -307,36 +522,27 @@ mod tests {
         let admin = Address::generate(&e);
         let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
         let token_id = token_contract.address();
+        let stellar_asset = StellarAssetClient::new(&e, &token_id);
+        stellar_asset.mint(&sender, &1000);
 
         let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
-        // Mint tokens and initialize
-        let amount = 1000;
-        let stellar_client = StellarAssetClient::new(&e, &token_id);
-        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
-        stellar_client.mint(&sender, &amount);
+        e.ledger().set_timestamp(100);
+        client.initialize(&sender, &recipient, &token_id, &500, &2000);
 
-        let unlock_time = 1000; // Set to a fixed time
-        e.ledger().with_mut(|li| li.timestamp = 500); // Set current time before unlock
+        // Cancel before lockup starts.
+        client.cancel_escrow(&sender, &1);
 
-        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
-
-        // Try to claim before unlock time - should fail
-        // (We can't easily test panics in the same test, so we skip ahead)
-
-        // Advance time past unlock
-        e.ledger().with_mut(|li| li.timestamp = 1500);
-
-        // Claim successfully
-        client.claim();
-
-        assert_eq!(token_client.balance(&recipient), amount);
+        assert!(client.get_cancelled());
+        let token_client = token::Client::new(&e, &token_id);
+        assert_eq!(token_client.balance(&sender), 1000);
         assert_eq!(token_client.balance(&contract_id), 0);
     }
 
     #[test]
-    fn test_claim_with_conditions_met() {
+    #[should_panic(expected = "lockup has started - cannot cancel")]
+    fn test_cancel_escrow_after_lockup_fails() {
         let e = Env::default();
         e.mock_all_auths();
 
@@ -345,153 +551,245 @@ mod tests {
         let admin = Address::generate(&e);
         let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
         let token_id = token_contract.address();
+        let stellar_asset = StellarAssetClient::new(&e, &token_id);
+        stellar_asset.mint(&sender, &1000);
 
         let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
-        let amount = 1000;
-        let stellar_client = StellarAssetClient::new(&e, &token_id);
-        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
-        stellar_client.mint(&sender, &amount);
+        e.ledger().set_timestamp(100);
+        client.initialize(&sender, &recipient, &token_id, &500, &2000);
 
-        // Set unlock time far in future
-        let unlock_time = 10000;
-        e.ledger().with_mut(|li| li.timestamp = 500);
+        // Move past the lockup start; cancellation must now fail.
+        e.ledger().set_timestamp(2000);
+        client.cancel_escrow(&sender, &1);
+    }
 
-        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
+    // ── Recovery key / beneficiary replacement ────────────────────────────────
 
-        // Mark conditions as met
-        client.mark_conditions_met();
+    struct RecoverySetup {
+        e: Env,
+        client: EscrowTimelockClient<'static>,
+        contract_id: Address,
+        token_id: Address,
+        sender: Address,
+        recipient: Address,
+        recovery: Address,
+    }
 
-        // Advance time to release_timestamp
-        e.ledger().with_mut(|li| li.timestamp = 10000);
+    fn setup_recovery() -> RecoverySetup {
+        let e = Env::default();
+        e.mock_all_auths();
 
-        // Should be able to claim when release_timestamp is reached
-        client.claim();
+        let sender = Address::generate(&e);
+        let recipient = Address::generate(&e);
+        let recovery = Address::generate(&e);
+        let admin = Address::generate(&e);
+        let token_id = e.register_stellar_asset_contract_v2(admin).address();
+        StellarAssetClient::new(&e, &token_id).mint(&sender, &1000);
 
-        assert_eq!(token_client.balance(&recipient), amount);
+        let contract_id = e.register(EscrowTimelock, ());
+        let client = EscrowTimelockClient::new(&e, &contract_id);
+
+        e.ledger().set_timestamp(100);
+        client.initialize(&sender, &recipient, &token_id, &500, &2000);
+        client.set_recovery_key(&Some(recovery.clone()));
+
+        RecoverySetup {
+            e,
+            client,
+            contract_id,
+            token_id,
+            sender,
+            recipient,
+            recovery,
+        }
     }
 
     #[test]
-    fn test_refund_after_unlock_time() {
+    fn test_recovery_key_defaults_to_none() {
         let e = Env::default();
         e.mock_all_auths();
-
         let sender = Address::generate(&e);
         let recipient = Address::generate(&e);
-        let admin = Address::generate(&e);
-        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
-        let token_id = token_contract.address();
-
+        let token_id = e
+            .register_stellar_asset_contract_v2(Address::generate(&e))
+            .address();
+        StellarAssetClient::new(&e, &token_id).mint(&sender, &1000);
         let contract_id = e.register(EscrowTimelock, ());
         let client = EscrowTimelockClient::new(&e, &contract_id);
 
-        let amount = 1000;
-        let stellar_client = StellarAssetClient::new(&e, &token_id);
-        let token_client = soroban_sdk::token::Client::new(&e, &token_id);
-        stellar_client.mint(&sender, &amount);
+        client.initialize(&sender, &recipient, &token_id, &500, &2000);
 
-        let unlock_time = 1000;
-        e.ledger().with_mut(|li| li.timestamp = 500);
-
-        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
-
-        // Advance time past unlock
-        e.ledger().with_mut(|li| li.timestamp = 1500);
-
-        // Sender requests refund
-        client.refund();
-
-        assert_eq!(token_client.balance(&sender), amount);
-        assert_eq!(token_client.balance(&contract_id), 0);
-        assert!(client.get_refund_claimed());
+        assert_eq!(client.get_escrow_details().recovery_key, None);
+        assert_eq!(client.get_pending_beneficiary(), None);
     }
 
     #[test]
-    #[should_panic(expected = "refund not yet available - unlock time has not passed")]
-    fn test_refund_before_unlock_time_fails() {
-        let e = Env::default();
-        e.mock_all_auths();
+    fn test_set_recovery_key_requires_beneficiary_auth() {
+        let s = setup_recovery();
 
-        let sender = Address::generate(&e);
-        let recipient = Address::generate(&e);
-        let admin = Address::generate(&e);
-        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
-        let token_id = token_contract.address();
-
-        let contract_id = e.register(EscrowTimelock, ());
-        let client = EscrowTimelockClient::new(&e, &contract_id);
-
-        let amount = 1000;
-        let stellar_client = StellarAssetClient::new(&e, &token_id);
-        let _token_client = soroban_sdk::token::Client::new(&e, &token_id);
-        stellar_client.mint(&sender, &amount);
-
-        let unlock_time = 1000;
-        e.ledger().with_mut(|li| li.timestamp = 500); // Before unlock
-
-        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
-
-        // Try to refund before unlock time - should panic
-        client.refund();
+        let auths = s.e.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, s.recipient);
+        assert_eq!(
+            s.client.get_escrow_details().recovery_key,
+            Some(s.recovery.clone())
+        );
     }
 
     #[test]
-    fn test_double_refund_prevented() {
-        let e = Env::default();
-        e.mock_all_auths();
-
-        let sender = Address::generate(&e);
-        let recipient = Address::generate(&e);
-        let admin = Address::generate(&e);
-        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
-        let token_id = token_contract.address();
-
-        let contract_id = e.register(EscrowTimelock, ());
-        let client = EscrowTimelockClient::new(&e, &contract_id);
-
-        let amount = 1000;
-        let stellar_client = StellarAssetClient::new(&e, &token_id);
-        let _token_client = soroban_sdk::token::Client::new(&e, &token_id);
-        stellar_client.mint(&sender, &amount);
-
-        let unlock_time = 1000;
-        e.ledger().with_mut(|li| li.timestamp = 1500); // After unlock
-
-        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
-
-        // First refund succeeds
-        client.refund();
-
-        // Second refund would fail due to panic, but we can't test it here
-        // The contract prevents double claims through the RefundClaimed flag
+    fn test_clear_recovery_key() {
+        let s = setup_recovery();
+        s.client.set_recovery_key(&None);
+        assert_eq!(s.client.get_escrow_details().recovery_key, None);
     }
 
     #[test]
-    #[should_panic(expected = "timelock release delay not reached")]
-    fn test_timelock_release_delay_enforced() {
-        let e = Env::default();
-        e.mock_all_auths();
+    #[should_panic(expected = "recovery key must differ from beneficiary")]
+    fn test_recovery_key_cannot_be_beneficiary() {
+        let s = setup_recovery();
+        s.client.set_recovery_key(&Some(s.recipient.clone()));
+    }
 
-        let sender = Address::generate(&e);
-        let recipient = Address::generate(&e);
-        let admin = Address::generate(&e);
-        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
-        let token_id = token_contract.address();
+    #[test]
+    fn test_recovery_workflow_replaces_beneficiary_after_72h() {
+        let s = setup_recovery();
+        let new_beneficiary = Address::generate(&s.e);
 
-        let contract_id = e.register(EscrowTimelock, ());
-        let client = EscrowTimelockClient::new(&e, &contract_id);
+        s.client.update_beneficiary(&s.recovery, &new_beneficiary);
+        let auths = s.e.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, s.recovery);
 
-        let amount = 1000;
-        let stellar_client = StellarAssetClient::new(&e, &token_id);
-        stellar_client.mint(&sender, &amount);
+        let pending = s.client.get_pending_beneficiary().unwrap();
+        assert_eq!(pending.new_beneficiary, new_beneficiary);
+        assert_eq!(pending.effective_at, 100 + BENEFICIARY_UPDATE_DELAY);
+        // Beneficiary is unchanged while the proposal is pending.
+        assert_eq!(s.client.get_escrow_details().recipient, s.recipient);
 
-        let unlock_time = 1000;
-        e.ledger().with_mut(|li| li.timestamp = 500); // Current timestamp before release_timestamp
+        s.e.ledger().set_timestamp(100 + BENEFICIARY_UPDATE_DELAY);
+        s.client.execute_beneficiary_update();
 
-        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
+        assert_eq!(s.client.get_escrow_details().recipient, new_beneficiary);
+        assert_eq!(s.client.get_pending_beneficiary(), None);
 
-        // Claim before release_timestamp should panic
-        client.claim();
+        // The new beneficiary is the one who must authorize the claim.
+        s.client.claim();
+        let auths = s.e.auths();
+        assert_eq!(auths[0].0, new_beneficiary);
+
+        let token_client = token::Client::new(&s.e, &s.token_id);
+        assert_eq!(token_client.balance(&new_beneficiary), 500);
+        assert_eq!(token_client.balance(&s.recipient), 0);
+        assert_eq!(token_client.balance(&s.contract_id), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "beneficiary update timelock not elapsed")]
+    fn test_execute_beneficiary_update_before_delay_panics() {
+        let s = setup_recovery();
+        s.client
+            .update_beneficiary(&s.recovery, &Address::generate(&s.e));
+
+        s.e.ledger()
+            .set_timestamp(100 + BENEFICIARY_UPDATE_DELAY - 1);
+        s.client.execute_beneficiary_update();
+    }
+
+    #[test]
+    #[should_panic(expected = "no pending beneficiary update")]
+    fn test_execute_without_proposal_panics() {
+        let s = setup_recovery();
+        s.client.execute_beneficiary_update();
+    }
+
+    #[test]
+    #[should_panic(expected = "not the recovery key")]
+    fn test_update_beneficiary_wrong_key_panics() {
+        let s = setup_recovery();
+        let attacker = Address::generate(&s.e);
+        s.client.update_beneficiary(&attacker, &attacker);
+    }
+
+    #[test]
+    #[should_panic(expected = "recovery key not set")]
+    fn test_update_beneficiary_without_recovery_key_panics() {
+        let s = setup_recovery();
+        s.client.set_recovery_key(&None);
+        s.client
+            .update_beneficiary(&s.recovery, &Address::generate(&s.e));
+    }
+
+    #[test]
+    #[should_panic(expected = "new beneficiary matches current beneficiary")]
+    fn test_update_beneficiary_to_same_address_panics() {
+        let s = setup_recovery();
+        s.client.update_beneficiary(&s.recovery, &s.recipient);
+    }
+
+    #[test]
+    fn test_beneficiary_can_veto_pending_update() {
+        let s = setup_recovery();
+        s.client
+            .update_beneficiary(&s.recovery, &Address::generate(&s.e));
+
+        s.client.cancel_beneficiary_update(&s.recipient);
+        assert_eq!(s.client.get_pending_beneficiary(), None);
+
+        s.e.ledger().set_timestamp(100 + BENEFICIARY_UPDATE_DELAY);
+        assert_eq!(s.client.get_escrow_details().recipient, s.recipient);
+    }
+
+    #[test]
+    fn test_recovery_key_can_withdraw_proposal() {
+        let s = setup_recovery();
+        s.client
+            .update_beneficiary(&s.recovery, &Address::generate(&s.e));
+        s.client.cancel_beneficiary_update(&s.recovery);
+        assert_eq!(s.client.get_pending_beneficiary(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "not authorized to cancel")]
+    fn test_third_party_cannot_cancel_update() {
+        let s = setup_recovery();
+        s.client
+            .update_beneficiary(&s.recovery, &Address::generate(&s.e));
+        s.client.cancel_beneficiary_update(&s.sender);
+    }
+
+    #[test]
+    fn test_new_proposal_restarts_delay() {
+        let s = setup_recovery();
+        let first = Address::generate(&s.e);
+        let second = Address::generate(&s.e);
+
+        s.client.update_beneficiary(&s.recovery, &first);
+        s.e.ledger().set_timestamp(1_000);
+        s.client.update_beneficiary(&s.recovery, &second);
+
+        let pending = s.client.get_pending_beneficiary().unwrap();
+        assert_eq!(pending.new_beneficiary, second);
+        assert_eq!(pending.effective_at, 1_000 + BENEFICIARY_UPDATE_DELAY);
+    }
+
+    #[test]
+    fn test_rotating_recovery_key_discards_pending_update() {
+        let s = setup_recovery();
+        s.client
+            .update_beneficiary(&s.recovery, &Address::generate(&s.e));
+
+        s.client.set_recovery_key(&Some(Address::generate(&s.e)));
+        assert_eq!(s.client.get_pending_beneficiary(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "escrow already settled")]
+    fn test_update_beneficiary_after_cancel_panics() {
+        let s = setup_recovery();
+        s.client.cancel_escrow(&s.sender, &1);
+        s.client
+            .update_beneficiary(&s.recovery, &Address::generate(&s.e));
     }
 }

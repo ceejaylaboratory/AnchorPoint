@@ -12,7 +12,8 @@
 //! 2. Deploy this proxy with `initialize(admin, implementation)`.
 //! 3. Clients call `forward(function_name, args)` — the proxy delegates to
 //!    the current implementation transparently.
-//! 4. To upgrade, the admin calls `upgrade(new_implementation)`.
+//! 4. The admin schedules a swap with `request_implementation_upgrade`, waits
+//!    for the timelock, then calls `upgrade(new_implementation)`.
 //!
 //! ## Security
 //!
@@ -52,6 +53,10 @@ pub enum DataKey {
     ApprovalCount,
     /// Minimum number of approvals required to execute an upgrade.
     RequiredApprovals,
+    /// Implementation address proposed for a delayed swap.
+    PendingImplementation,
+    /// Timestamp when the proposed implementation swap can execute.
+    PendingImplementationUnlocksAt,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -72,6 +77,7 @@ impl ProxyContract {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
+        Self::validate_implementation(&env, &implementation);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
@@ -90,7 +96,34 @@ impl ProxyContract {
 
     // ── Upgrade ───────────────────────────────────────────────────────────────
 
-    /// Swap the implementation to `new_implementation` (admin only).
+    /// Schedule an implementation swap after the mandated timelock (admin only).
+    pub fn request_implementation_upgrade(env: Env, new_implementation: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+
+        let unlocks_at = env
+            .ledger()
+            .timestamp()
+            .checked_add(UPGRADE_TIMELOCK_SECONDS)
+            .expect("timelock overflow");
+
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingImplementation, &new_implementation);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingImplementationUnlocksAt, &unlocks_at);
+        env.events().publish(
+            (symbol_short!("impl_req"),),
+            (new_implementation, unlocks_at),
+        );
+    }
+
+    /// Swap the implementation to a previously scheduled address (admin only).
     ///
     /// Emits an `upgraded` event with the old and new implementation addresses.
     pub fn upgrade(env: Env, new_implementation: Address) {
@@ -101,15 +134,43 @@ impl ProxyContract {
             .expect("not initialized");
         admin.require_auth();
 
+        let pending_implementation: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingImplementation)
+            .expect("no pending implementation upgrade");
+        assert!(
+            pending_implementation == new_implementation,
+            "implementation does not match pending upgrade"
+        );
+
+        let unlocks_at: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingImplementationUnlocksAt)
+            .expect("no pending implementation upgrade");
+        assert!(
+            env.ledger().timestamp() >= unlocks_at,
+            "timelock has not expired yet"
+        );
+
         let old_implementation: Address = env
             .storage()
             .instance()
             .get(&DataKey::Implementation)
             .expect("not initialized");
 
+        Self::validate_implementation(&env, &new_implementation);
+
         env.storage()
             .instance()
             .set(&DataKey::Implementation, &new_implementation);
+        env.storage()
+            .instance()
+            .remove(&DataKey::PendingImplementation);
+        env.storage()
+            .instance()
+            .remove(&DataKey::PendingImplementationUnlocksAt);
 
         env.events().publish(
             (symbol_short!("upgraded"),),
@@ -437,6 +498,15 @@ impl ProxyContract {
             .expect("admin not configured");
         assert!(*caller == admin, "caller is not admin");
     }
+
+    fn validate_implementation(env: &Env, implementation: &Address) {
+        let version: u32 = env.invoke_contract(
+            implementation,
+            &symbol_short!("if_ver"),
+            soroban_sdk::vec![env],
+        );
+        assert!(version == 1, "incompatible implementation interface");
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -455,6 +525,10 @@ mod tests {
 
     #[contractimpl]
     impl MockImpl {
+        pub fn if_ver(_env: Env) -> u32 {
+            1
+        }
+
         pub fn ping(_env: Env) -> u32 {
             42
         }

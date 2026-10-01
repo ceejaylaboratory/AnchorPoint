@@ -1,0 +1,16 @@
+[package]
+name = "staking_snapshot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "../snapshot.rs"
+doctest = false
+
+[dependencies]
+soroban-sdk = "26.0.1"
+
+[dev-dependencies]
+soroban-sdk = { version = "26.0.1", features = ["testutils"] }

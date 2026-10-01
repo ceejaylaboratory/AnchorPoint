@@ -33,6 +33,8 @@
     "migrate:rollback:verify": "ts-node scripts/rollback.ts",
     "migrate:status": "prisma migrate status",
     "migrate:validate-env": "node scripts/validate-migration-env.js",
+    "validate-env": "node ../tools/validate-env.js",
+    "test:load": "k6 run ../tests/load/k6_sep_test.js",
     "migrate:bootstrap": "bash scripts/bootstrap-db.sh",
     "swagger:validate": "ts-node -P scripts/tsconfig.json scripts/validate-swagger.ts",
     "clean": "node -e \"const fs=require('fs'),path=require('path');function walk(dir){if(!fs.existsSync(dir))return;for(const f of fs.readdirSync(dir)){const fp=path.join(dir,f);if(fs.statSync(fp).isDirectory())walk(fp);else if(['.db-journal','.db-wal','.db-shm'].some(e=>f.endsWith(e))){fs.unlinkSync(fp);console.log('Removed:',fp)}}};walk('.');['logs','coverage'].forEach(d=>{if(fs.existsSync(d)){fs.rmSync(d,{recursive:true,force:true});console.log('Removed:',d)}});console.log('Clean complete');\""
@@ -66,6 +68,7 @@
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
     "express-rate-limit": "^7.1.0",
+    "helmet": "^8.1.0",
     "ioredis": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^1.4.5-lts.2",
@@ -83,8 +86,8 @@
     "uuid": "^9.0.0",
     "vite": "^6.4.3",
     "winston": "^3.19.0",
-    "zod": "^4.3.6",
-    "xss": "^1.0.15"
+    "xss": "^1.0.15",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^10.0.3",
@@ -115,6 +118,7 @@
     "prisma": "^6.19.2",
     "sinon": "^17.0.0",
     "supertest": "^6.3.4",
+    "testcontainers": "^12.1.0",
     "ts-jest": "^29.1.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.3"

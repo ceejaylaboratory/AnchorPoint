@@ -1,5 +1,6 @@
 import express from 'express';
 import request from 'supertest';
+import http from 'http';
 
 jest.mock('crypto', () => {
   const actual = jest.requireActual('crypto');
@@ -21,6 +22,37 @@ jest.mock('../../lib/prisma', () => ({
     },
   },
 }));
+
+// In-memory Redis Pub/Sub so SSE subscribers receive what the router publishes.
+jest.mock('../../lib/redis', () => {
+  const { EventEmitter } = require('events');
+  const bus = new EventEmitter();
+  const makeClient = (): any => {
+    const client = new EventEmitter();
+    const channels = new Set<string>();
+    const relay = (channel: string, message: string) => {
+      if (channels.has(channel)) client.emit('message', channel, message);
+    };
+    bus.on('publish', relay);
+    return Object.assign(client, {
+      duplicate: () => makeClient(),
+      subscribe: (channel: string, cb?: (err: Error | null) => void) => {
+        channels.add(channel);
+        cb?.(null);
+      },
+      unsubscribe: (channel: string) => channels.delete(channel),
+      quit: () => bus.off('publish', relay),
+      publish: jest.fn(async (channel: string, message: string) => {
+        bus.emit('publish', channel, message);
+        return 1;
+      }),
+      get: async () => null,
+      set: async () => 'OK',
+      del: async () => 1,
+    });
+  };
+  return { __esModule: true, redis: makeClient(), redlock: {} };
+});
 
 jest.mock('../../services/sep24.service', () => {
   const actual = jest.requireActual('../../services/sep24.service');
@@ -288,6 +320,100 @@ describe('SEP-24 Routes', () => {
     });
   });
 
+  describe('GET /fee', () => {
+    it('returns 400 when asset_code is missing', async () => {
+      const res = await request(app).get('/fee?operation=deposit&amount=100');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('asset_code');
+    });
+
+    it('returns 400 when operation is invalid', async () => {
+      const res = await request(app).get('/fee?asset_code=USDC&operation=swap&amount=100');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('operation');
+    });
+
+    it('returns 400 when amount is missing', async () => {
+      const res = await request(app).get('/fee?asset_code=USDC&operation=deposit');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('amount');
+    });
+
+    it('returns 400 for unknown asset', async () => {
+      const res = await request(app).get('/fee?asset_code=DOGE&operation=deposit&amount=100');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('Unknown asset');
+    });
+
+    it('returns itemized fee breakdown for USDC deposit under 1000 (1% tier)', async () => {
+      const res = await request(app).get('/fee?asset_code=USDC&operation=deposit&amount=500');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.asset_code).toBe('USDC');
+      expect(res.body.operation).toBe('deposit');
+      expect(res.body.amount).toBe(500);
+      // fixed 0.5 + 500*0.01=5 = 5.5
+      expect(res.body.fee_percent).toBe(0.01);
+      expect(res.body.fee).toBeCloseTo(5.5, 5);
+      expect(Array.isArray(res.body.fee_details)).toBe(true);
+    });
+
+    it('returns reduced 0.5% tier for amounts >= 1000', async () => {
+      const res = await request(app).get('/fee?asset_code=USDC&operation=deposit&amount=2000');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.fee_percent).toBe(0.005);
+    });
+
+    it('works for withdrawal operation', async () => {
+      const res = await request(app).get('/fee?asset_code=USD&operation=withdrawal&amount=100');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.operation).toBe('withdrawal');
+    });
+  });
+
+  describe('GET /transaction/sse', () => {
+    it('returns 400 when id is missing', async () => {
+      const res = await request(app).get('/transaction/sse');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('id');
+    });
+
+    it('streams status updates published for the transaction and closes on a terminal status', async () => {
+      const server = http.createServer(app).listen(0);
+      const { port } = server.address() as { port: number };
+
+      try {
+        const events = await new Promise<string>((resolve, reject) => {
+          const req = http.get(`http://127.0.0.1:${port}/transaction/sse?id=tx-sse-1`, (res) => {
+            expect(res.statusCode).toBe(200);
+            expect(res.headers['content-type']).toContain('text/event-stream');
+
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', async (chunk: string) => {
+              body += chunk;
+              if (chunk.includes('event: connected')) {
+                const { redis } = require('../../lib/redis');
+                // Updates for other transactions must not leak into this stream.
+                await redis.publish('sep24:tx:other', JSON.stringify({ id: 'other', status: 'completed' }));
+                await redis.publish('sep24:tx:tx-sse-1', JSON.stringify({ id: 'tx-sse-1', status: 'pending_anchor' }));
+                await redis.publish('sep24:tx:tx-sse-1', JSON.stringify({ id: 'tx-sse-1', status: 'completed' }));
+              }
+            });
+            res.on('end', () => resolve(body));
+          });
+          req.on('error', reject);
+        });
+
+        expect(events).toContain('event: connected');
+        expect(events).toContain('"status":"pending_anchor"');
+        expect(events).toContain('event: done');
+        expect(events).not.toContain('"id":"other"');
+      } finally {
+        server.close();
+      }
+    });
+  });
+
   describe('PATCH /transactions/:id/status', () => {
     it('returns 400 when status is missing', async () => {
       const res = await request(app)
@@ -348,6 +474,32 @@ describe('SEP-24 Routes', () => {
           nextStatus: 'completed',
           callbackUrl: 'https://partner.example/hook',
         })
+      );
+    });
+
+    it('publishes the status change to the SSE channel and persists claimable balance id', async () => {
+      (Sep24Service.getCallback as jest.Mock).mockResolvedValueOnce({
+        callbackUrl: 'https://partner.example/hook',
+        kind: 'deposit',
+      });
+      (Sep24Service.notifyStatusChange as jest.Mock).mockResolvedValueOnce({ delivered: true });
+      const prisma = require('../../lib/prisma').default;
+      prisma.transaction.update.mockResolvedValueOnce({ id: 'tx-2' });
+      const { redis } = require('../../lib/redis');
+
+      const res = await request(app)
+        .patch('/transactions/tx-2/status')
+        .send({ status: 'pending_external', claimable_balance_id: 'cb-123' });
+
+      expect(res.statusCode).toBe(200);
+      expect(prisma.transaction.update).toHaveBeenCalledWith({
+        where: { id: 'tx-2' },
+        data: { status: 'PENDING_EXTERNAL', claimableBalanceId: 'cb-123' },
+      });
+      expect(redis.publish).toHaveBeenCalledWith('sep24:tx:tx-2', expect.any(String));
+      const payload = JSON.parse((redis.publish as jest.Mock).mock.calls.at(-1)[1]);
+      expect(payload).toEqual(
+        expect.objectContaining({ id: 'tx-2', status: 'pending_external', claimable_balance_id: 'cb-123' }),
       );
     });
 

@@ -1,10 +1,6 @@
-use anchorpoint_amm::{AMM, AMMClient};
+use anchorpoint_amm::{AMMClient, AMM};
 use proptest::prelude::*;
-use soroban_sdk::{
-    testutils::Address as _,
-    token::StellarAssetClient,
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
 
 const MAX_SUPPLY: i128 = 1_000_000_000_000_000;
 
@@ -188,9 +184,22 @@ proptest! {
             let (r_a2, r_b2) = client.get_reserves();
             prop_assert!(r_a2 >= 0, "reserve_a must be >= 0, got {}", r_a2);
             prop_assert!(r_b2 >= 0, "reserve_b must be >= 0, got {}", r_b2);
+            // The constant product k = reserve_a * reserve_b must not decrease:
+            // the 0.3% fee accrues to the pool, so every swap leaves the pool
+            // solvent or better.
+            //
+            // The *sum* of the reserves is deliberately not asserted. In a
+            // lopsided pool a swap legitimately turns a small amount of the
+            // scarce reserve into a large amount of the abundant one, so the
+            // sum can fall while k still rises — asserting on the sum fails for
+            // perfectly valid pools.
             prop_assert!(
-                r_a2 + r_b2 > r_a + r_b,
-                "total reserves must increase after swap (+fee)"
+                r_a2 * r_b2 >= r_a * r_b,
+                "constant product must not decrease after swap (+fee): {} * {} < {} * {}",
+                r_a2,
+                r_b2,
+                r_a,
+                r_b
             );
         }
     }

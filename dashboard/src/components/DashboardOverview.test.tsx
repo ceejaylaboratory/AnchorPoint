@@ -42,6 +42,13 @@ describe('DashboardOverview status filter', () => {
     expect(screen.getByRole('button', { name: 'Failed' })).toBeTruthy();
   });
 
+  it('renders the staking estimator widget in the dashboard', () => {
+    renderOverview();
+
+    expect(screen.getByRole('heading', { name: /staking yield estimator/i })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /lock duration/i })).toBeInTheDocument();
+  });
+
   it('defaults to the All filter', () => {
     renderOverview();
 

@@ -70,7 +70,7 @@ export const Sidebar = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
           aria-label="Close navigation menu overlay"
-          className="fixed inset-0 z-40 bg-slate-950/70 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-slate-950/70 backdrop-blur-sm sm:hidden"
           onClick={onClose}
         />
       ) : null}
@@ -79,11 +79,12 @@ export const Sidebar = ({
     <motion.aside
       data-testid="sidebar"
       id="main-sidebar"
+      role="complementary"
       aria-label="Main navigation"
       initial={false}
       animate={{ x: sidebarOpen ? 0 : '-100%' }}
       transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-      className="fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-2rem))] border-r border-slate-800 bg-card md:relative md:w-64 md:translate-x-0"
+      className="fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-2rem))] border-r border-slate-800 bg-card sm:relative sm:w-64 sm:translate-x-0"
     >
       <div className="p-5 sm:p-6">
         <div className="mb-8 flex items-center gap-3 sm:mb-10">
