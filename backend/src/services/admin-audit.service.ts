@@ -64,7 +64,7 @@ export interface AuditLogQuery {
  */
 export function getAuditActor(req: Request): AuditActor {
   const authed = req as Request & {
-    admin?: { id?: string; email?: string };
+    admin?: { id?: string; email?: string; publicKey?: string };
     user?: { id?: string; email?: string; publicKey?: string };
     apiKey?: { id?: string; label?: string };
   };
@@ -76,7 +76,7 @@ export function getAuditActor(req: Request): AuditActor {
     : forwardedFor?.split(',')[0]?.trim() || req.ip;
 
   return {
-    id: identity?.id ?? identity?.publicKey ?? authed.apiKey?.id ?? null,
+    id: identity?.id ?? (identity as any)?.publicKey ?? authed.apiKey?.id ?? null,
     email: identity?.email ?? authed.apiKey?.label ?? null,
     ip: ip ?? null,
     userAgent: req.headers['user-agent'] ?? null,

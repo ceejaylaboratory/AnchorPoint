@@ -71,7 +71,7 @@ describe('App responsive sidebar drawer', () => {
     document.body.style.overflow = '';
   });
 
-  describe('mobile viewport (<768px)', () => {
+  describe('mobile viewport (<640px)', () => {
     beforeEach(() => {
       stubViewport(false);
     });
@@ -143,7 +143,7 @@ describe('App responsive sidebar drawer', () => {
     });
   });
 
-  describe('desktop viewport (>=768px)', () => {
+  describe('desktop viewport (>=640px)', () => {
     beforeEach(() => {
       stubViewport(true);
     });

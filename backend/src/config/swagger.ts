@@ -1,6 +1,6 @@
 import swaggerJsdoc from 'swagger-jsdoc';
 
-const options: swaggerJsdoc.Options = {
+export const swaggerOptions: swaggerJsdoc.Options = {
   definition: {
     openapi: '3.0.0',
     info: {
@@ -105,6 +105,17 @@ const options: swaggerJsdoc.Options = {
               description: 'Error message',
             },
           },
+        },
+        SepError: {
+          type: 'object',
+          description: 'Error body returned by Stellar SEP endpoints',
+          properties: {
+            error: {
+              type: 'string',
+              description: 'Error message',
+            },
+          },
+          required: ['error'],
         },
         Challenge: {
           type: 'object',
@@ -431,9 +442,29 @@ const options: swaggerJsdoc.Options = {
         name: 'Events',
         description: 'Indexed smart-contract events',
       },
+      {
+        name: 'SEP-6',
+        description: 'Stellar SEP-6 non-interactive deposit and withdrawal',
+      },
+      {
+        name: 'SEP-12',
+        description: 'Stellar SEP-12 KYC customer information',
+      },
+      {
+        name: 'SEP-31',
+        description: 'Stellar SEP-31 cross-border payments',
+      },
+      {
+        name: 'SEP-38',
+        description: 'Stellar SEP-38 anchor RFQ price quotes',
+      },
+      {
+        name: 'SEP-40',
+        description: 'Stellar SEP-40 swap rates',
+      },
     ],
   },
   apis: ['./src/api/routes/*.ts', './src/index.ts'],
 };
 
-export const swaggerSpec = swaggerJsdoc(options);
+export const swaggerSpec = swaggerJsdoc(swaggerOptions);

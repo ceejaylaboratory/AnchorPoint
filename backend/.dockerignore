@@ -37,8 +37,19 @@ docker-compose*.yml
 .git
 .gitignore
 
-# Documentation
+# Documentation and non-runtime material
 README.md
+docs
+perf
+examples
+.kiro
+.husky-example
+*.md
+jest.config.js
+jest.setup.js
+jest.teardown.js
+demo-e2e.js
+migration-checker.config.json
 
 # Logs
 logs

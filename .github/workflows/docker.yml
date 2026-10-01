@@ -1,0 +1,174 @@
+# =============================================================================
+# Multi-architecture container image builds (#1245)
+#
+# Publishes one multi-arch manifest per service so a single tag can be pulled on
+# both x86 nodes and ARM hosts (AWS Graviton, Apple Silicon, ARM Kubernetes
+# nodes) without anyone maintaining per-arch tags by hand.
+#
+# arm64 is emulated under QEMU, so the build is slower than a native amd64
+# build; that cost is only paid here rather than on the deploy machines.
+# =============================================================================
+name: Docker Multi-Arch
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'backend/Dockerfile'
+      - 'backend/package.json'
+      - 'backend/package-lock.json'
+      - 'dashboard/Dockerfile'
+      - 'dashboard/nginx.conf'
+      - 'dashboard/package.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'docker-compose.yml'
+      - '.github/workflows/docker.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/Dockerfile'
+      - 'backend/package.json'
+      - 'backend/package-lock.json'
+      - 'dashboard/Dockerfile'
+      - 'dashboard/nginx.conf'
+      - 'dashboard/package.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/docker.yml'
+  # Lets a maintainer (re)build a manifest list for an existing ref without
+  # waiting for a matching push.
+  workflow_dispatch:
+
+# The registry rejects a second publish of the same tag; a newer push wins.
+concurrency:
+  group: docker-multiarch-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # Lowercase owner/repo — Docker tags cannot contain uppercase characters.
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # Pull requests only prove the images still build for both architectures.
+  # Nothing is pushed, so a fork PR cannot publish to the package registry.
+  verify:
+    name: Verify ${{ matrix.image.name }} (${{ matrix.platform }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: ./backend
+            dockerfile: backend/Dockerfile
+            platform: linux/amd64
+          - image: backend
+            context: ./backend
+            dockerfile: backend/Dockerfile
+            platform: linux/arm64
+          - image: dashboard
+            context: .
+            dockerfile: dashboard/Dockerfile
+            platform: linux/amd64
+          - image: dashboard
+            context: .
+            dockerfile: dashboard/Dockerfile
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.image }} for ${{ matrix.platform }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          # Load into the local daemon so the build is actually executed, not
+          # deferred to the registry by the cache-only path.
+          load: true
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
+
+  # Main / tag / manual pushes produce a single multi-arch manifest list, so
+  # `:main` and the release tag each resolve to the right image on any host.
+  publish:
+    name: Publish ${{ matrix.image }} (${{ matrix.platform }})
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to push image layers to this repository's GHCR packages.
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: ./backend
+            dockerfile: backend/Dockerfile
+          - image: dashboard
+            context: .
+            dockerfile: dashboard/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        # The emulated arm64 build plus the buildx cache regularly exhausts the
+        # 14 GB runner disk before npm ci finishes.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }} (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Verify the published manifest lists both architectures
+        run: |
+          set -euo pipefail
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}"
+          # A manifest list that is missing an arm64 entry would fail at
+          # deploy time on Graviton, so assert both platforms are present
+          # before the job is called green.
+          manifest=$(docker buildx imagetools inspect --raw "$image")
+          echo "$manifest" | grep -q 'linux/amd64'
+          echo "$manifest" | grep -q 'linux/arm64'
+          docker buildx imagetools inspect "$image"

@@ -76,6 +76,14 @@ pub struct BatchResult {
     pub nonce: u64,
 }
 
+/// Deterministic lower-bound gas estimate for a batch operation.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchGasEstimate {
+    pub operations: u32,
+    pub units: u64,
+}
+
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -88,6 +96,16 @@ pub struct BatchExecutor;
 #[allow(deprecated)]
 #[contractimpl]
 impl BatchExecutor {
+    /// Estimate batch cost without invoking target contracts or changing state.
+    pub fn estimate_batch(env: Env, calls: Vec<Call>) -> BatchGasEstimate {
+        let operations = calls.len();
+        let units = 1_000u64
+            .checked_add((operations as u64).checked_mul(500).expect("estimate overflow"))
+            .expect("estimate overflow");
+        let _ = env;
+        BatchGasEstimate { operations, units }
+    }
+
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -126,6 +144,8 @@ impl BatchExecutor {
         results
     }
 
+    /// Execute calls with retries. If `abort_on_failure` is true, an exhausted
+    /// call reverts the full Soroban invocation, including earlier successes.
     pub fn execute_batch_with_retry(
         env: Env,
         caller: Address,
@@ -146,22 +166,10 @@ impl BatchExecutor {
         let mut results: Vec<OpResult> = Vec::new(&env);
         let mut succeeded: u32 = 0;
         let mut failed: u32 = 0;
-        let mut skipped: u32 = 0;
-        let mut abort = false;
+        let skipped: u32 = 0;
 
         for (raw_index, item) in calls.iter().enumerate() {
             let index = raw_index as u32;
-
-            if abort {
-                results.push_back(OpResult {
-                    index,
-                    status: OpStatus::Skipped,
-                    attempts: 0,
-                    value: 0,
-                });
-                skipped += 1;
-                continue;
-            }
 
             let policy = item.retry.clone().validated();
             let call = item.call.clone();
@@ -205,7 +213,7 @@ impl BatchExecutor {
             if op_status == OpStatus::Failed {
                 failed += 1;
                 if abort_on_failure {
-                    abort = true;
+                    panic!("batch operation failed; reverting batch");
                 }
             }
 

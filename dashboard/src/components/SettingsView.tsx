@@ -3,6 +3,7 @@ import { Monitor, Moon, Sun } from 'lucide-react';
 import type { UiConfig } from '../types';
 import { RequirementList } from './RequirementList';
 import AdminControls from './AdminControls';
+import { PauseControlsWidget } from './AdminWidgets';
 import { THEME_PREFERENCES, useTheme } from '../contexts/ThemeContext';
 import type { ThemePreference } from '../contexts/ThemeContext';
 
@@ -141,6 +142,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ uiConfig, apiBaseUrl }) => 
           </div>
         </div>
         <AdminControls apiBaseUrl={apiBaseUrl} />
+        <PauseControlsWidget apiBaseUrl={apiBaseUrl} />
       </div>
 
       <div className="grid grid-cols-1 gap-6">

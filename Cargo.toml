@@ -18,6 +18,7 @@ members = [
     "src/random",
     "src/security_registry",
     "src/staking",
+    "src/staking/snapshot",
     "src/token",
     "src/upgradeable",
     "src/utils",
@@ -36,4 +37,5 @@ strip = true
 debug-assertions = false
 panic = "abort"
 codegen-units = 1
-lto = "fat"
+lto = true
+

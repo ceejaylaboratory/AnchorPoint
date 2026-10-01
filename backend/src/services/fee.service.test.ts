@@ -183,3 +183,60 @@ describe('FeeService.calculateAssetFee', () => {
     expect(() => service.calculateAssetFee('NOPE', 100)).toThrow('Unknown asset: NOPE');
   });
 });
+
+// ─── SEP-24 itemized fee calculation ──────────────────────────────────────────
+
+describe('FeeService.calculateSep24Fee', () => {
+  const service = new FeeService(makeRedisService(null));
+
+  it('applies 1 % tier for amounts below 1 000', () => {
+    const result = service.calculateSep24Fee('USDC', 'deposit', 100);
+    expect(result.assetCode).toBe('USDC');
+    expect(result.operation).toBe('deposit');
+    expect(result.inputAmount).toBe(100);
+    // USDC fixed fee = 0.5, percentage = 100 * 0.01 = 1.0 → total = 1.5
+    expect(result.feeFixed).toBe(0.5);
+    expect(result.feePercent).toBe(0.01);
+    expect(result.totalFee).toBeCloseTo(1.5, 5);
+    expect(result.feeDetails.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('applies 0.5 % tier for amounts >= 1 000', () => {
+    const result = service.calculateSep24Fee('USDC', 'deposit', 1000);
+    // USDC fixed fee = 0.5, percentage = 1000 * 0.005 = 5.0 → total = 5.5
+    expect(result.feePercent).toBe(0.005);
+    expect(result.totalFee).toBeCloseTo(5.5, 5);
+  });
+
+  it('applies 0.5 % reduced tier at exactly 1 000', () => {
+    const result = service.calculateSep24Fee('USD', 'withdrawal', 1000);
+    expect(result.feePercent).toBe(0.005);
+  });
+
+  it('works for withdrawal operation', () => {
+    const result = service.calculateSep24Fee('USD', 'withdrawal', 500);
+    expect(result.operation).toBe('withdrawal');
+    expect(result.feePercent).toBe(0.01);
+  });
+
+  it('includes fee_details breakdown', () => {
+    const result = service.calculateSep24Fee('USDC', 'deposit', 200);
+    const names = result.feeDetails.map(d => d.name);
+    expect(names).toContain('Variable fee');
+  });
+
+  it('includes fixed fee in details when asset has feeFixed > 0', () => {
+    const result = service.calculateSep24Fee('USDC', 'deposit', 200);
+    const names = result.feeDetails.map(d => d.name);
+    expect(names).toContain('Flat fee');
+  });
+
+  it('throws for unknown asset', () => {
+    expect(() => service.calculateSep24Fee('XYZ', 'deposit', 100)).toThrow('Unknown asset: XYZ');
+  });
+
+  it('is case-insensitive', () => {
+    const result = service.calculateSep24Fee('usdc', 'deposit', 100);
+    expect(result.assetCode).toBe('USDC');
+  });
+});

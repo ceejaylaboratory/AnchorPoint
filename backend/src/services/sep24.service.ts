@@ -2,7 +2,7 @@ import { URL } from 'url';
 import { redis } from '../lib/redis';
 import { RedisService } from './redis.service';
 import {
-  notifySep26StatusChange,
+  notifySep24StatusChange,
   type Sep24CallbackDeliveryResult,
   type Sep24CallbackNotifyInput,
 } from './sep24CallbackNotifier';
@@ -34,7 +34,7 @@ function toSep24CallbackInputWithUnixTimestamps(input: Sep24CallbackNotifyInput)
         : toSep24Timestamp(value as Date | string | number);
     }
   }
-  return result as Sep24CallbackNotifyInput;
+  return result as unknown as Sep24CallbackNotifyInput;
 }
 
 export interface Sep24StoredCallback {
@@ -92,7 +92,7 @@ export class Sep24Service {
     try {
       const parsedUrl = new URL(url);
 
-      if (parsedUrl.protocol !== 'https:' && parsedUrl.protocal !== 'http:') {
+      if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
         return false;
       }
 

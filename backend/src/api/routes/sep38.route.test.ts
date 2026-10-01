@@ -78,11 +78,11 @@ describe('SEP-38 Price Quotes API', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('source_asset', 'USDC');
-      expect(response.body).toHaveProperty('source_amount', 100);
+      expect(parseFloat(response.body.source_amount)).toBe(100);
       expect(response.body).toHaveProperty('destination_asset', 'XLM');
       expect(response.body).toHaveProperty('destination_amount');
       expect(response.body).toHaveProperty('price');
-      expect(response.body.destination_amount).toBeGreaterThan(0);
+      expect(parseFloat(response.body.destination_amount)).toBeGreaterThan(0);
     });
 
     it('should handle XLM to USDC conversion', async () => {
@@ -154,6 +154,47 @@ describe('SEP-38 Price Quotes API', () => {
     });
   });
 
+  describe('GET /sep38/prices', () => {
+    it('should return multiple prices when only sell_asset is provided', async () => {
+      const response = await request(app)
+        .get('/sep38/prices')
+        .query({
+          sell_asset: 'USDC',
+          sell_amount: '100',
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('buy_assets');
+      expect(Array.isArray(response.body.buy_assets)).toBe(true);
+      expect(response.body.buy_assets.length).toBeGreaterThan(0);
+      expect(response.body.buy_assets[0]).toHaveProperty('asset');
+      expect(response.body.buy_assets[0]).toHaveProperty('price');
+    });
+
+    it('should return single pair quote when buy_asset is specified', async () => {
+      const response = await request(app)
+        .get('/sep38/prices')
+        .query({
+          sell_asset: 'USDC',
+          sell_amount: '100',
+          buy_asset: 'XLM',
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('buy_assets');
+      expect(response.body).toHaveProperty('source_asset', 'USDC');
+      expect(response.body).toHaveProperty('destination_asset', 'XLM');
+    });
+
+    it('should return 400 when sell_asset is missing', async () => {
+      const response = await request(app)
+        .get('/sep38/prices');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error', 'missing_required_params');
+    });
+  });
+
   describe('POST /sep38/quote', () => {
     it('should return price quote for valid POST request', async () => {
       const response = await request(app)
@@ -166,7 +207,7 @@ describe('SEP-38 Price Quotes API', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('source_asset', 'USDC');
-      expect(response.body.destination_amount).toBeGreaterThan(0);
+      expect(parseFloat(response.body.destination_amount)).toBeGreaterThan(0);
     });
 
     it('should return error for missing body parameters', async () => {

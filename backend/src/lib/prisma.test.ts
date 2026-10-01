@@ -1,6 +1,6 @@
 jest.mock("@prisma/client", () => ({
   PrismaClient: jest.fn(() => ({
-    $extends: jest.fn().mockReturnValue({}),
+    $extends: jest.fn().mockReturnThis(),
   })),
 }));
 

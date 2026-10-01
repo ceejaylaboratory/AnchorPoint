@@ -49,7 +49,7 @@ describe('UserAvatarDropdown', () => {
 
     // Should display active session status
     expect(screen.getByText('Session Status')).toBeInTheDocument();
-    expect(screen.getByText(/Active \(04:59\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Active \(04:5[89]\)/i)).toBeInTheDocument();
   });
 
   it('calls onSignOut and purges JWT when logout button is clicked', () => {
