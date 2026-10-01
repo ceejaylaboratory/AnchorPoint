@@ -6,7 +6,9 @@ if (!process.env.DATABASE_URL) {
 
 import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
+import { piiEncryptionMiddleware } from '../services/crypto.service';
 import { config } from '../config/env';
+import { withTracingExtension } from '../tracing/prisma.extension';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -122,7 +124,19 @@ if (typeof prismaAny.$use === 'function') {
       metricsService.observeDbQuery(queryType, seconds);
     }
   });
+
+  // PII encryption middleware – transparently encrypts sensitive fields before
+  // writing to the database and decrypts them on read.
+  prismaAny.$use(piiEncryptionMiddleware as unknown as (params: PrismaMiddlewareParams, next: PrismaMiddleware) => Promise<unknown>);
 }
+
+// ── Tracing (#1201) ───────────────────────────────────────────────────
+// Wrap every query in a `prisma:<Model>.<operation>` span. Query extensions
+// leave model types unchanged, so the client keeps the PrismaClient type.
+const client: PrismaClient =
+  typeof (prisma as { $extends?: unknown }).$extends === 'function'
+    ? (withTracingExtension(prisma) as unknown as PrismaClient)
+    : prisma;
 
 // ── Startup connection retry (production only) ────────────────────────
 // Eagerly verify the database connection on startup so the process fails
@@ -134,4 +148,4 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-export default prisma;
+export default client;

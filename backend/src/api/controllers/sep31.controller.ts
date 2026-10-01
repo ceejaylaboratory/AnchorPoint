@@ -54,13 +54,14 @@ export const createTransaction = async (
   res: Response,
 ): Promise<Response> => {
   try {
-    const { asset_code, amount, sender_info, receiver_info, callback } =
+    const { asset_code, amount, sender_info, receiver_info, callback, quote_id } =
       req.body as {
         asset_code?: string;
         amount?: string;
         sender_info?: Record<string, string>;
         receiver_info?: Record<string, string>;
         callback?: string;
+        quote_id?: string;
       };
 
     if (!asset_code) {
@@ -83,6 +84,7 @@ export const createTransaction = async (
       receiverInfo: receiver_info,
       callbackUrl: callback,
       userPublicKey: req.user?.publicKey,
+      quoteId: quote_id,
     });
 
     return res.status(201).json({
@@ -98,7 +100,10 @@ export const createTransaction = async (
         msg === "unsupported asset" ||
         msg.startsWith("amount out of range") ||
         msg.startsWith("Missing sender_info") ||
-        msg.startsWith("Missing receiver_info")
+        msg.startsWith("Missing receiver_info") ||
+        msg.startsWith("quote_not_found") ||
+        msg.startsWith("quote_expired") ||
+        msg.startsWith("quote_already_used")
       ) {
         return res.status(400).json({ error: msg });
       }

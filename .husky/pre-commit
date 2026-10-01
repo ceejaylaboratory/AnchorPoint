@@ -1,0 +1,110 @@
+#!/usr/bin/env sh
+# =============================================================================
+# pre-commit — block secrets before they reach git history (#1256)
+#
+# Runs secretlint over the staged content only. A commit is cheap to redo; a
+# leaked key is not, because the object stays in the local reflog, in any
+# pushed branch and in every clone afterwards.
+#
+# Install: `npm install` (root) runs scripts/install-git-hooks.mjs, which points
+# core.hooksPath at this directory. Nothing to do by hand.
+#
+# Escape hatch: SKIP_SECRETLINT=1 git commit ...
+# Only for a false positive you have already confirmed — say so in the commit.
+#
+# Behaviour on failure: the commit is aborted and nothing is unstaged, so the
+# staged content is still there to fix or to `git reset` deliberately.
+# =============================================================================
+
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if [ "${SKIP_SECRETLINT:-0}" = "1" ]; then
+  echo "pre-commit: SKIP_SECRETLINT=1 — secret scan skipped for this commit"
+  exit 0
+fi
+
+# --- staged files ------------------------------------------------------------
+# --diff-filter=ACMR keeps added/copied/modified/renamed and drops deletions,
+# which have no content to scan. -z so paths with spaces or newlines survive.
+staged=$(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if [ -z "$staged" ]; then
+  echo "pre-commit: nothing staged, nothing to scan"
+  exit 0
+fi
+
+# Write the NUL-separated list to a file: it is the only way to pass paths to
+# secretlint without a shell-quoting bug on an odd filename.
+staged_list=".git/secretlint-staged-$PPID"
+trap 'rm -f "$staged_list"' EXIT INT TERM
+printf '%s' "$staged" >"$staged_list"
+
+# --- .env files must never be staged ----------------------------------------
+# .gitignore already covers .env, so this only fires on `git add -f`, which is
+# exactly the case that leaks a real local config into a commit.
+env_violations=$(git diff --cached --name-only --diff-filter=ACMR -- '*.env' '*.env.*' '.env' | grep -v -E '\.env\.example$' || true)
+if [ -n "$env_violations" ]; then
+  echo "pre-commit: refusing to commit environment files:"
+  printf '  %s\n' $env_violations
+  echo "  Only *.env.example belongs in git. Unstage with:"
+  printf '  git reset -- %s\n' $env_violations
+  exit 1
+fi
+
+# --- secretlint --------------------------------------------------------------
+# npx keeps this dependency-free: no lockfile entry, nothing for `npm ci` in CI
+# to resolve. First run downloads into the npx cache and is slower.
+lint_status=0
+if command -v npx >/dev/null 2>&1; then
+  # `set -e` would abort before the status could be inspected, so the failure is
+  # captured explicitly.
+  npx --yes \
+    --package secretlint@8 \
+    --package @secretlint/secretlint-rule-preset-recommend@8 \
+    secretlint \
+    --config .secretlintrc.json \
+    --no-color \
+    $(tr '\0' '\n' <"$staged_list" | tr '\n' ' ') || lint_status=$?
+else
+  echo "pre-commit: npx not found — cannot run secretlint" >&2
+  lint_status=127
+fi
+
+# --- offline fallback --------------------------------------------------------
+# Only reached when secretlint could not run at all. The one pattern worth
+# checking without a rule engine is a PEM private key header, which is exact
+# and has no false positives.
+if [ "$lint_status" -ne 0 ]; then
+  if [ "$lint_status" -eq 127 ]; then
+    echo "pre-commit: secretlint unavailable, falling back to the private-key check only" >&2
+  fi
+
+  pem_hits=$(git diff --cached --diff-filter=ACMR -G 'BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY' --name-only || true)
+  if [ -n "$pem_hits" ]; then
+    echo "pre-commit: private key material in:" >&2
+    printf '  %s\n' $pem_hits >&2
+    exit 1
+  fi
+
+  if [ "$lint_status" -ne 0 ]; then
+    # Fail closed. This is deliberately ambiguous between "secretlint reported
+    # findings" and "secretlint could not run" — a non-zero exit is either, and
+    # both should stop the commit. The remedy differs, so say so instead of
+    # guessing which one happened.
+    echo "pre-commit: secretlint did not pass (exit $lint_status)." >&2
+    echo "           Read the output above: either it listed findings, or it" >&2
+    echo "           could not run (no network, npm cache miss, bad config)." >&2
+    echo "           For a confirmed false positive:" >&2
+    echo "             SKIP_SECRETLINT=1 git commit ...   # and say why in the message" >&2
+    exit 1
+  fi
+
+  echo "pre-commit: npx unavailable and no private key found — commit allowed" >&2
+  echo "           install Node.js tooling or run the scan manually:" >&2
+  echo "           npm run lint:secrets" >&2
+fi
+
+exit 0

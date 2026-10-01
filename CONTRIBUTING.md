@@ -121,6 +121,62 @@ AnchorPoint/
    ```
 7. **Open a Pull Request** against `main`.
 
+### Secret Scanning (pre-commit)
+
+A leaked key cannot be un-leaked. Even if you delete the file and force-push,
+the blob stays in the reflog, in every clone, and on GitHub's servers until the
+credential is rotated. The repository therefore installs a
+[secretlint](https://github.com/secretlint/secretlint) pre-commit hook that scans
+staged content and aborts the commit when it finds a credential.
+
+**Nothing to install by hand.** The root `npm install` runs
+`scripts/install-git-hooks.mjs`, which points `core.hooksPath` at `.husky`. The
+hook uses the husky v9 layout, so if you later add husky itself the existing
+hook file is picked up unchanged.
+
+Verify it is active:
+
+```bash
+git config --get core.hooksPath   # -> .husky
+```
+
+**What it checks**
+
+- every staged file, via secretlint's recommended rule set (private keys, AWS,
+  GCP, GitHub, Slack, Stripe, npm, and generic high-entropy credentials)
+- a separate hard refusal for any staged `.env` file — only `*.env.example`
+  belongs in git, and `.env` is already gitignored, so this only fires on
+  `git add -f`
+- a PEM private-key header check that still runs when secretlint itself cannot
+  start (offline machine, cold npx cache)
+
+**Scan the whole repository at any time**
+
+```bash
+npm run lint:secrets
+```
+
+**Bypassing the hook**
+
+```bash
+SKIP_SECRETLINT=1 git commit -m "..."
+```
+
+Only for a false positive you have already confirmed, and say so in the commit
+message. The hook fails closed: if secretlint cannot run, the commit is
+aborted, because a contributor with no network must not be able to opt out of
+the check by accident.
+
+**If the hook blocks you with a real finding**
+
+1. Do not commit it. Unstage the file: `git reset -- <file>`.
+2. If the value is a live credential, rotate it first — removing the line is
+   not enough.
+3. Move the value into a real secret store or an untracked `.env`, and commit a
+   placeholder to `*.env.example` instead.
+4. If the finding is a placeholder that looks like a real key, add the path to
+   `.secretlintignore` with a comment explaining why it is safe.
+
 ### Commit Message Convention
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/):

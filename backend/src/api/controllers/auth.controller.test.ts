@@ -50,6 +50,7 @@ describe('Auth Controller', () => {
       (authService.generateChallenge as jest.Mock).mockReturnValue('test-challenge');
       (authService.storeChallenge as jest.Mock).mockResolvedValue(undefined);
       (authService.generateSep10ChallengeTransaction as jest.Mock).mockReturnValue({
+        challenge: 'nonce-value',
         transactionXdr: 'test-challenge',
         networkPassphrase: 'Test SDF Network ; September 2015',
       });
@@ -61,6 +62,11 @@ describe('Auth Controller', () => {
         mockRedisService,
         'GBAD_PUBLIC_KEY',
         'test-challenge'
+      );
+      expect(mockRedisService.setJSON).toHaveBeenCalledWith(
+        'sep10:nonce:nonce-value',
+        expect.objectContaining({ account: 'GBAD_PUBLIC_KEY' }),
+        300
       );
       expect(mockResponse.json).toHaveBeenCalledWith({
         transaction: 'test-challenge',
@@ -74,6 +80,7 @@ describe('Auth Controller', () => {
       (authService.generateChallenge as jest.Mock).mockReturnValue('test-challenge');
       (authService.storeChallenge as jest.Mock).mockResolvedValue(undefined);
       (authService.generateSep10ChallengeTransaction as jest.Mock).mockReturnValue({
+        challenge: 'nonce-value',
         transactionXdr: 'test-challenge',
         networkPassphrase: 'Test SDF Network ; September 2015',
       });
@@ -90,12 +97,18 @@ describe('Auth Controller', () => {
       expect(authService.generateSep10ChallengeTransaction).toHaveBeenCalledWith(
         'GBAD_PUBLIC_KEY',
         'GBAD_PUBLIC_KEY',
-        expect.anything()
+        'TESTNET',
+        undefined
       );
       expect(authService.storeSep10Challenge).toHaveBeenCalledWith(
         mockRedisService,
         'GBAD_PUBLIC_KEY',
         expect.objectContaining({ transactionXdr: 'test-challenge' })
+      );
+      expect(mockRedisService.setJSON).toHaveBeenCalledWith(
+        'sep10:nonce:nonce-value',
+        expect.objectContaining({ account: 'GBAD_PUBLIC_KEY' }),
+        300
       );
       expect(mockResponse.json).toHaveBeenCalledWith({
         transaction: 'test-challenge',
@@ -156,11 +169,17 @@ describe('Auth Controller', () => {
       (authService.getChallenge as jest.Mock).mockResolvedValue(mockChallenge);
       (authService.removeChallenge as jest.Mock).mockResolvedValue(undefined);
       (authService.signToken as jest.Mock).mockReturnValue('jwt-token');
+      (mockRedisService.getJSON as jest.Mock).mockResolvedValue({
+        account: 'GBAD_PUBLIC_KEY',
+        createdAt: Date.now()
+      });
       (sep10Stellar.extractAccountFromSep10Transaction as jest.Mock).mockReturnValue('GBAD_PUBLIC_KEY');
       (authService.verifySep10ChallengeTransaction as jest.Mock).mockReturnValue({ isValid: true });
 
       await getToken(mockRequest as Request, mockResponse as Response, mockRedisService as RedisService);
 
+      expect(mockRedisService.getJSON).toHaveBeenCalledWith('sep10:nonce:valid-challenge');
+      expect(mockRedisService.del).toHaveBeenCalledWith('sep10:nonce:valid-challenge');
       expect(authService.removeChallenge).toHaveBeenCalledWith(mockRedisService, 'GBAD_PUBLIC_KEY');
       expect(authService.signToken).toHaveBeenCalledWith('GBAD_PUBLIC_KEY');
       expect(mockResponse.json).toHaveBeenCalledWith({
@@ -168,6 +187,29 @@ describe('Auth Controller', () => {
         type: 'bearer',
         expires_in: 3600
       });
+    });
+
+    it('rejects replayed challenge when nonce was already consumed', async () => {
+      mockRequest.body = { transaction: 'valid-challenge' };
+      const mockChallenge = {
+        challenge: 'valid-challenge',
+        publicKey: 'GBAD_PUBLIC_KEY',
+        createdAt: Date.now()
+      };
+
+      (authService.getChallenge as jest.Mock).mockResolvedValue(mockChallenge);
+      (mockRedisService.getJSON as jest.Mock).mockResolvedValue(null);
+      (sep10Stellar.extractAccountFromSep10Transaction as jest.Mock).mockReturnValue('GBAD_PUBLIC_KEY');
+      (authService.verifySep10ChallengeTransaction as jest.Mock).mockReturnValue({ isValid: true });
+
+      await getToken(mockRequest as Request, mockResponse as Response, mockRedisService as RedisService);
+
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        error: 'Invalid or expired nonce'
+      });
+      expect(authService.removeChallenge).not.toHaveBeenCalled();
+      expect(authService.signToken).not.toHaveBeenCalled();
     });
 
     it('returns 500 when token generation fails', async () => {

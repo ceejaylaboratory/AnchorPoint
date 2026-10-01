@@ -41,9 +41,27 @@ jobs:
 
         with:
           tool: cargo-scout-audit@0.3.16
+          tool: cargo-audit@0.21.0
 
       - name: Install Scout system dependencies
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config gcc
+
+      # #1243: scan the Rust dependency graph for crates with known
+      # advisories. Installed by the same taiki-e/install-action step as
+      # cargo-scout-audit above, so no cargo install (and its compile time)
+      # is needed.
+      - name: Install cargo-audit
+        run: cargo audit --version
+
+      - name: Audit Rust dependencies (cargo-audit)
+        run: |
+          if cargo audit; then
+            echo "cargo-audit: no known vulnerabilities in the dependency graph."
+          else
+            echo "::error::cargo-audit found advisories in the Rust dependency graph (listed above)."
+            cargo audit --json > cargo-audit.json || true
+            exit 1
+          fi
 
       - name: Test sep41-token
         run: cargo test -p sep41-token

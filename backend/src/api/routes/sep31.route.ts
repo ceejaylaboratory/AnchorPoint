@@ -17,6 +17,8 @@ const createTransactionBodySchema = z.object({
   sender_info: z.record(z.string(), z.string()),
   receiver_info: z.record(z.string(), z.string()),
   callback: z.string().url().optional(),
+  /** Optional SEP-38 quote ID — validated for existence and expiry in the service layer. */
+  quote_id: z.string().uuid().optional(),
 });
 
 /**
