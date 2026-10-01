@@ -69,12 +69,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: 'package-lock.json'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --ignore-scripts --no-audit
 
       # Generate the Prisma client before any migration steps so that all
       # downstream commands (migrate deploy, migrate diff, ts-node scripts)
@@ -105,11 +105,9 @@ jobs:
 
       - name: Verify Migrations Against Temporary Database
         env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
-          SHADOW_DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5433/shadowdb"
-          VERIFY_MIGRATIONS_ALLOW_RESET: "true"
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
           SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
+          VERIFY_MIGRATIONS_ALLOW_RESET: "true"
         run: npm run migrate:verify
 
       - name: Run Migration Integrity Checker

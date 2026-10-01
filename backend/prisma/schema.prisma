@@ -488,11 +488,6 @@ model FxRateHistory {
   @@index([recordedAt])
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
 enum Tier {
   Free
   Pro
@@ -947,11 +942,6 @@ model UploadRecord {
 
 generator client {
   provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum Tier {
