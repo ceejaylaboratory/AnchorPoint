@@ -28,7 +28,7 @@ import authRouter from './api/routes/auth.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
-import { sanitizeBodyMiddleware } from './api/middleware/sanitize.middleware';
+import { sanitizeRequestMiddleware } from './api/middleware/sanitize.middleware';
 import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
 import { stellarService } from './services/stellar.service';
@@ -49,7 +49,7 @@ import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { dbMetricsScheduler } from './workers/db-metrics.scheduler';
 import { initSocket } from './lib/socket';
 import { kycExpiryScheduler } from './workers/kyc-expiry.scheduler';
-import { kycDocumentExpiryScheduler } from './workers/kyc_document_expiry_scheduler';
+import { dataRetentionScheduler } from './workers/data-retention.scheduler';
 import { cleanupWorker } from './workers/cleanup.worker';
 import { feeReportWorker } from './workers/fee-report.worker';
 import contractQueueService from './services/contract-queue.service';
@@ -76,7 +76,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   feeReportScheduler.stop();
   uploadExpiryScheduler.stop();
   kycExpiryScheduler.stop();
-  kycDocumentExpiryScheduler.stop();
+  dataRetentionScheduler.stop();
   cleanupWorker.stop();
   dbMetricsScheduler.stop();
 
@@ -185,7 +185,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(sanitizeBodyMiddleware);
+app.use(sanitizeRequestMiddleware);
 
 /**
  * @swagger
@@ -464,7 +464,7 @@ if (process.env.NODE_ENV !== 'test') {
           feeReportScheduler.start();
           uploadExpiryScheduler.start();
           kycExpiryScheduler.start();
-          kycDocumentExpiryScheduler.start();
+          dataRetentionScheduler.start();
           dbMetricsScheduler.start();
           cleanupWorker.start();
         });

@@ -8,7 +8,7 @@ import { PrismaClient } from '@prisma/client';
 import { metricsService } from '../services/metrics.service';
 import { piiEncryptionMiddleware } from '../services/crypto.service';
 import { config } from '../config/env';
-import { withTracingExtension } from '../tracing/prisma.extension';
+import { softDeleteExtension } from './soft-delete';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -130,12 +130,13 @@ if (typeof prismaAny.$use === 'function') {
   prismaAny.$use(piiEncryptionMiddleware as unknown as (params: PrismaMiddlewareParams, next: PrismaMiddleware) => Promise<unknown>);
 }
 
-// ── Tracing (#1201) ───────────────────────────────────────────────────
-// Wrap every query in a `prisma:<Model>.<operation>` span. Query extensions
-// leave model types unchanged, so the client keeps the PrismaClient type.
+// ── Soft-delete filtering (#1197) ─────────────────────────────────────
+// Query extensions leave the client's model types unchanged, so the extended
+// client is exposed under the plain PrismaClient type.
+const prismaExtendable = prisma as unknown as { $extends?: (ext: unknown) => unknown };
 const client: PrismaClient =
-  typeof (prisma as { $extends?: unknown }).$extends === 'function'
-    ? (withTracingExtension(prisma) as unknown as PrismaClient)
+  typeof prismaExtendable.$extends === 'function'
+    ? (prismaExtendable.$extends(softDeleteExtension) as PrismaClient)
     : prisma;
 
 // ── Startup connection retry (production only) ────────────────────────

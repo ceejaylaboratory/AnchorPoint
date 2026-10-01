@@ -6,15 +6,99 @@ import { fxAnalyticsService } from '../../services/fx_analytics.service';
 const router = Router();
 
 /**
- * GET /sep38/price
- * 
- * Get a price quote for exchanging one asset for another.
- * 
- * Query Parameters:
- * - source_asset: The asset code to sell (e.g., "USDC")
- * - source_amount: The amount of source asset to sell
- * - destination_asset: The asset code to buy (e.g., "XLM")
- * - context: Optional context for the price request (e.g., "SEP-24")
+ * @swagger
+ * /sep38/price:
+ *   get:
+ *     summary: Get an indicative price
+ *     description: Returns an indicative price for exchanging one asset for another.
+ *     tags: [SEP-38]
+ *     parameters:
+ *       - in: query
+ *         name: source_asset
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Asset code to sell, e.g. USDC
+ *       - in: query
+ *         name: source_amount
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Amount of source asset to sell
+ *       - in: query
+ *         name: destination_asset
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Asset code to buy, e.g. XLM
+ *       - in: query
+ *         name: context
+ *         schema:
+ *           type: string
+ *         description: Context of the price request, e.g. sep6, sep24, sep31
+ *     responses:
+ *       200:
+ *         description: Indicative price
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 source_asset:
+ *                   type: string
+ *                 source_amount:
+ *                   type: string
+ *                 destination_asset:
+ *                   type: string
+ *                 destination_amount:
+ *                   type: string
+ *                 price:
+ *                   type: string
+ *                 price_decimals:
+ *                   type: integer
+ *                 fee:
+ *                   type: string
+ *                 expiration_time:
+ *                   type: integer
+ *                   description: Unix timestamp (ms) when the price expires
+ *                 context:
+ *                   type: string
+ *                 cached:
+ *                   type: boolean
+ *                 confidence:
+ *                   type: number
+ *                 sources_used:
+ *                   type: integer
+ *                 is_partial:
+ *                   type: boolean
+ *                 routing_path:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *       400:
+ *         description: Missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   description: Error code
+ *                 message:
+ *                   type: string
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   description: Error code
+ *                 message:
+ *                   type: string
  */
 router.get('/price', async (req: Request, res: Response) => {
   try {
@@ -52,107 +136,96 @@ router.get('/price', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /sep38/prices
- * 
- * Get indicative prices for exchanging an asset for one or all supported assets (SEP-38).
- * 
- * Query Parameters:
- * - sell_asset / source_asset: The asset code to sell (e.g., "USDC")
- * - sell_amount / source_amount / amount: The amount to sell (default 1)
- * - buy_asset / destination_asset: Optional specific buy asset
- * - context: Optional context (e.g., "sep38-swap")
- */
-router.get('/prices', async (req: Request, res: Response) => {
-  try {
-    const sellAsset = (req.query.sell_asset || req.query.source_asset) as string;
-    const sellAmount = (req.query.sell_amount || req.query.source_amount || req.query.amount || '1') as string;
-    const buyAsset = (req.query.buy_asset || req.query.destination_asset) as string | undefined;
-    const context = req.query.context as string | undefined;
-
-    if (!sellAsset) {
-      return res.status(400).json({
-        error: 'missing_required_params',
-        message: 'Missing required parameter: sell_asset (or source_asset)',
-      });
-    }
-
-    const cleanSellAsset = sellAsset.replace(/^stellar:/i, '').split(':')[0].toUpperCase();
-
-    if (buyAsset) {
-      const cleanBuyAsset = buyAsset.replace(/^stellar:/i, '').split(':')[0].toUpperCase();
-      const quote = await sep38Controller.getPriceQuote(
-        cleanSellAsset,
-        sellAmount,
-        cleanBuyAsset,
-        context
-      );
-
-      return res.json({
-        buy_assets: [
-          {
-            asset: cleanBuyAsset,
-            price: quote.price,
-            decimals: quote.price_decimals,
-          },
-        ],
-        ...quote,
-      });
-    }
-
-    // Return prices for all supported assets
-    const supportedAssets = await sep38Controller.getSupportedAssets();
-    const targetAssets = supportedAssets.filter((a) => a.code.toUpperCase() !== cleanSellAsset);
-
-    const quotes = await Promise.all(
-      targetAssets.map(async (target) => {
-        try {
-          const q = await sep38Controller.getPriceQuote(
-            cleanSellAsset,
-            sellAmount,
-            target.code,
-            context
-          );
-          return {
-            asset: target.code,
-            price: q.price,
-            decimals: q.price_decimals,
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
-
-    const validQuotes = quotes.filter((q): q is NonNullable<typeof q> => q !== null);
-
-    res.json({
-      buy_assets: validQuotes,
-    });
-  } catch (error) {
-    if (error instanceof Error) {
-      res.status(500).json({
-        error: 'internal_server_error',
-        message: error.message,
-      });
-    } else {
-      res.status(500).json({
-        error: 'internal_server_error',
-        message: 'An unexpected error occurred',
-      });
-    }
-  }
-});
-
-/**
- * POST /quote
- * 
- * Get a firm price quote for exchanging one asset for another and persist it.
- * 
- * Request Body:
- * - source_asset: The asset code to sell (e.g., "USDC")
- * - source_amount: The amount of source asset to sell
- * - destination_asset: The asset code to buy (e.g., "XLM")
- * - context: Optional context for the price request
+ * @swagger
+ * /sep38/quote:
+ *   post:
+ *     summary: Request a firm quote
+ *     description: Returns a firm price quote and persists it so it can be referenced by a transaction.
+ *     tags: [SEP-38]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - source_asset
+ *               - source_amount
+ *               - destination_asset
+ *             properties:
+ *               source_asset:
+ *                 type: string
+ *               source_amount:
+ *                 type: string
+ *               destination_asset:
+ *                 type: string
+ *               context:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Firm quote
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                 source_asset:
+ *                   type: string
+ *                 source_amount:
+ *                   type: string
+ *                 destination_asset:
+ *                   type: string
+ *                 destination_amount:
+ *                   type: string
+ *                 price:
+ *                   type: string
+ *                 price_decimals:
+ *                   type: integer
+ *                 fee:
+ *                   type: string
+ *                 expiration_time:
+ *                   type: integer
+ *                   description: Unix timestamp (ms) when the price expires
+ *                 context:
+ *                   type: string
+ *                 cached:
+ *                   type: boolean
+ *                 confidence:
+ *                   type: number
+ *                 sources_used:
+ *                   type: integer
+ *                 is_partial:
+ *                   type: boolean
+ *                 routing_path:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *       400:
+ *         description: Missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   description: Error code
+ *                 message:
+ *                   type: string
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   description: Error code
+ *                 message:
+ *                   type: string
  */
 router.post('/quote', async (req: Request, res: Response) => {
   const start = Date.now();
@@ -201,9 +274,52 @@ router.post('/quote', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /sep38/assets
- * 
- * Get list of supported assets for trading.
+ * @swagger
+ * /sep38/assets:
+ *   get:
+ *     summary: List tradable assets
+ *     tags: [SEP-38]
+ *     responses:
+ *       200:
+ *         description: Supported assets
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 assets:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       code:
+ *                         type: string
+ *                       issuer:
+ *                         type: string
+ *                       asset_type:
+ *                         type: string
+ *                         enum:
+ *                           - native
+ *                           - credit_alphanum4
+ *                           - credit_alphanum12
+ *                       name:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *                       decimals:
+ *                         type: integer
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   description: Error code
+ *                 message:
+ *                   type: string
  */
 router.get('/assets', async (req: Request, res: Response) => {
   try {
@@ -225,13 +341,83 @@ router.get('/assets', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /sep38/history
- * 
- * Get historical price data for an asset pair over the last 24 hours.
- * 
- * Query Parameters:
- * - source_asset: The asset code to sell (e.g., "USDC")
- * - destination_asset: The asset code to buy (e.g., "XLM")
+ * @swagger
+ * /sep38/history:
+ *   get:
+ *     summary: Get 24h price history
+ *     description: Returns historical price data for an asset pair over the last 24 hours.
+ *     tags: [SEP-38]
+ *     parameters:
+ *       - in: query
+ *         name: source_asset
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Asset code to sell, e.g. USDC
+ *       - in: query
+ *         name: destination_asset
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Asset code to buy, e.g. XLM
+ *     responses:
+ *       200:
+ *         description: Price history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 prices:
+ *                   type: object
+ *                   properties:
+ *                     source_asset:
+ *                       type: string
+ *                     destination_asset:
+ *                       type: string
+ *                     points:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           timestamp:
+ *                             type: integer
+ *                           price:
+ *                             type: number
+ *                     high_24h:
+ *                       type: number
+ *                     low_24h:
+ *                       type: number
+ *                     spread_24h:
+ *                       type: number
+ *                     average:
+ *                       type: number
+ *                     change_24h_percent:
+ *                       type: number
+ *       400:
+ *         description: Missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   description: Error code
+ *                 message:
+ *                   type: string
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
+ *                   description: Error code
+ *                 message:
+ *                   type: string
  */
 router.get('/history', async (req: Request, res: Response) => {
   try {

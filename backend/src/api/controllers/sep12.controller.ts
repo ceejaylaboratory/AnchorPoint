@@ -10,6 +10,7 @@ import logger from '../../utils/logger';
 import { storageProvider } from '../../services/storage-provider.service';
 import { uploadStore } from '../../services/upload-store.service';
 import { config } from '../../config/env';
+import { softDeleteKycCustomer } from '../../services/data-retention.service';
 
 type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 
@@ -159,7 +160,8 @@ export class Sep12Controller {
 
       const kycCustomer = await prisma.kycCustomer.upsert({
         where: { userId: user.id },
-        update: dbData,
+        // Re-submitting KYC restores a previously soft-deleted record.
+        update: { ...dbData, deletedAt: null },
         create: dbData,
       });
 
@@ -237,7 +239,8 @@ export class Sep12Controller {
       if (!account) return res.status(400).json({ error: 'account is required' });
 
       const user = await prisma.user.findUnique({ where: { publicKey: account }, include: { kycCustomer: true } });
-      if (!user || !user.kycCustomer) {
+      // Relation includes bypass the soft-delete query filter, so check deletedAt here.
+      if (!user || !user.kycCustomer || user.kycCustomer.deletedAt) {
         return res.status(404).json({ error: 'Customer not found' });
       }
 
@@ -288,8 +291,8 @@ export class Sep12Controller {
       if (!account) return res.status(400).json({ error: 'account is required' });
 
       const user = await prisma.user.findUnique({ where: { publicKey: account } });
-      if (user) {
-        await prisma.kycCustomer.delete({ where: { userId: user.id } });
+      if (user && !(await softDeleteKycCustomer(user.id))) {
+        return res.status(404).json({ error: 'Customer not found' });
       }
       res.status(200).send();
     } catch (error) {
@@ -337,7 +340,7 @@ export class Sep12Controller {
           where: { publicKey: event.account },
           include: { kycCustomer: true },
         });
-        targetCustomer = user?.kycCustomer
+        targetCustomer = user?.kycCustomer && !user.kycCustomer.deletedAt
           ? { ...user.kycCustomer, user: { publicKey: user.publicKey } }
           : null;
       }
