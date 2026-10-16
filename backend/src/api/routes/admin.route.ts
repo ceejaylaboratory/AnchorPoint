@@ -92,6 +92,13 @@ router.post('/network', validate({ body: switchNetworkSchema }), async (req: Req
     });
     res.json({ message: `Switched to ${network} successfully`, network });
   } catch (error: any) {
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_NETWORK_SWITCH',
+      actor: getAuditActor(req),
+      targetEntity: 'stellar_network',
+      result: 'failure',
+      metadata: { network, error: error.message },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -151,6 +158,13 @@ router.patch('/transactions/:id', validate({ body: patchTransactionSchema }), as
     res.json({ message: 'Transaction status updated successfully', transaction: updatedTransaction });
   } catch (error: any) {
     logger.error('Error updating transaction status', { error: error.message });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_TRANSACTION_STATUS_UPDATE',
+      actor: getAuditActor(req),
+      targetEntity: `transaction:${req.params.id}`,
+      result: 'failure',
+      metadata: { status: req.body?.status, error: error.message },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -242,6 +256,14 @@ router.post('/password-reset/confirm', validate({ body: passwordResetConfirmSche
       message: 'Password has been reset successfully.',
     });
   } catch (error: any) {
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_PASSWORD_RESET_CONFIRM',
+      actor: getAuditActor(req),
+      targetEntity: 'admin_password',
+      result: 'failure',
+      metadata: { error: error?.message },
+    });
+
     if (error instanceof InvalidResetTokenError) {
       return res.status(400).json({
         status: 'error',
@@ -389,6 +411,13 @@ router.post('/cache/purge-toml', validate({ body: purgeCacheSchema }), async (re
     res.json({ purged });
   } catch (error: any) {
     logger.error('Failed to purge TOML cache', { message: error?.message });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_TOML_CACHE_PURGE',
+      actor: getAuditActor(req),
+      targetEntity: parsed.data.homeDomain ?? 'all',
+      result: 'failure',
+      metadata: { error: error?.message },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -404,6 +433,11 @@ const auditLogsQuerySchema = z.object({
 
 /**
  * @swagger
+ * /admin/audit-log:
+ *   get:
+ *     summary: List administrative audit log entries (alias of /admin/audit-logs)
+ *     tags: [Admin]
+ *     description: Supports the same query parameters, including startDate/endDate range filtering.
  * /admin/audit-logs:
  *   get:
  *     summary: List administrative audit log entries
@@ -442,7 +476,7 @@ const auditLogsQuerySchema = z.object({
  *       400:
  *         description: Invalid query parameters
  */
-router.get('/audit-logs', async (req: Request, res: Response) => {
+router.get(['/audit-log', '/audit-logs'], async (req: Request, res: Response) => {
   const parsed = auditLogsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({
@@ -579,12 +613,32 @@ router.post('/queues/notification-dlq/:jobId/retry', async (req: Request, res: R
   try {
     const retried = await retryNotificationDlqJob(req.params.jobId);
     if (!retried) {
+      await adminAuditService.recordConfigChange({
+        action: 'ADMIN_NOTIFICATION_DLQ_RETRY',
+        actor: getAuditActor(req),
+        targetEntity: `notification_dlq_job:${req.params.jobId}`,
+        result: 'failure',
+        metadata: { error: 'DLQ job not found' },
+      });
       return res.status(404).json({ status: 'error', message: 'DLQ job not found' });
     }
     logger.info('Retried notification DLQ job', { dlqJobId: req.params.jobId, jobId: retried.id });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_NOTIFICATION_DLQ_RETRY',
+      actor: getAuditActor(req),
+      targetEntity: `notification_dlq_job:${req.params.jobId}`,
+      after: { jobId: retried.id },
+    });
     res.json({ status: 'success', data: { jobId: retried.id } });
   } catch (error: any) {
     logger.error('Failed to retry notification DLQ job', { message: error?.message });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_NOTIFICATION_DLQ_RETRY',
+      actor: getAuditActor(req),
+      targetEntity: `notification_dlq_job:${req.params.jobId}`,
+      result: 'failure',
+      metadata: { error: error?.message },
+    });
     res.status(500).json({ status: 'error', message: 'Failed to retry notification DLQ job' });
   }
 });

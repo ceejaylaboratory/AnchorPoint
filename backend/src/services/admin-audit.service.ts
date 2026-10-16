@@ -20,7 +20,13 @@ export type AdminAuditAction =
   | 'FEATURE_FLAG_ROLLOUT_UPDATE'
   | 'FEATURE_FLAG_TARGET_USERS_ADD'
   | 'FEATURE_FLAG_TARGET_USERS_REMOVE'
-  | 'FEATURE_FLAG_DELETE';
+  | 'FEATURE_FLAG_DELETE'
+  | 'ADMIN_NOTIFICATION_DLQ_RETRY';
+
+/**
+ * Outcome of the audited admin action.
+ */
+export type AdminAuditResult = 'success' | 'failure';
 
 /**
  * Information about the administrator (or automated actor) responsible for a
@@ -47,6 +53,8 @@ export interface RecordConfigChangeParams {
   after?: Record<string, unknown> | null;
   /** Arbitrary extra context to persist alongside the entry. */
   metadata?: Record<string, unknown> | null;
+  /** Outcome of the action. Defaults to `success`. */
+  result?: AdminAuditResult;
 }
 
 export interface AuditLogQuery {
@@ -124,6 +132,9 @@ export function computeConfigDiff(
  * Recording is intentionally best-effort: an audit write must never block or
  * fail the underlying configuration change, so failures are logged and
  * swallowed rather than propagated.
+ *
+ * Entries are append-only: this service exposes no update or delete path, and
+ * the database rejects UPDATE/DELETE on the audit table.
  */
 export class AdminAuditService {
   async recordConfigChange(params: RecordConfigChangeParams): Promise<void> {
@@ -140,6 +151,8 @@ export class AdminAuditService {
           actorEmail: params.actor?.email ?? null,
           actorIp: params.actor?.ip ?? null,
           userAgent: params.actor?.userAgent ?? null,
+          ipAddress: params.actor?.ip ?? null,
+          result: params.result ?? 'success',
           configVersion: params.configVersion ?? null,
           previousVersion: params.previousVersion ?? null,
           changedKeys: changedKeys.length > 0 ? JSON.stringify(changedKeys) : null,
@@ -151,6 +164,7 @@ export class AdminAuditService {
       logger.info('Recorded admin config audit entry', {
         action: params.action,
         actorId: params.actor?.id ?? undefined,
+        result: params.result ?? 'success',
         configVersion: params.configVersion ?? undefined,
         changedKeys,
       });

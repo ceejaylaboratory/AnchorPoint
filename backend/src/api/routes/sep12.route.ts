@@ -8,6 +8,7 @@ import { authMiddleware } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 import { isValidStellarPublicKey } from '../../utils/stellar-address';
 import { config } from '../../config/env';
+import { encryptStoredDocument } from '../../services/upload-store.service';
 
 const router = Router();
 
@@ -114,6 +115,28 @@ async function validateUploadedFileContent(req: Request, res: Response, next: Ne
   } catch (error) {
     await cleanup();
     return res.status(400).json({ error: 'Failed to validate uploaded file content' });
+  }
+}
+
+/**
+ * Middleware: encrypts every uploaded KYC document at rest (AES-256-GCM with
+ * a KMS-wrapped data key) once its content has been validated. Plain-text
+ * files are removed if encryption fails so nothing unencrypted is retained.
+ */
+async function encryptUploadedFiles(req: Request, res: Response, next: NextFunction) {
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  if (files.length === 0) {
+    return next();
+  }
+
+  try {
+    for (const file of files) {
+      await encryptStoredDocument(file.path);
+    }
+    return next();
+  } catch (error) {
+    await Promise.all(files.map((file) => fs.promises.unlink(file.path).catch(() => undefined)));
+    return res.status(500).json({ error: 'Failed to encrypt uploaded document' });
   }
 }
 
@@ -352,6 +375,7 @@ router.put(
   authMiddleware,
   handleUpload,
   validateUploadedFileContent,
+  encryptUploadedFiles,
   validate({ body: putCustomerBodySchema }),
   sep12Controller.putCustomer.bind(sep12Controller)
 );

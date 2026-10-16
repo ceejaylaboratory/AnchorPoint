@@ -9,19 +9,19 @@ jest.mock('../lib/prisma', () => ({
 
 describe('DbMetricsScheduler', () => {
   const originalDatabaseUrl = process.env.DATABASE_URL;
-  const originalConnectionLimit = process.env.DB_CONNECTION_LIMIT;
+  const originalConnectionLimit = process.env.DATABASE_POOL_SIZE;
 
   beforeEach(() => {
     metricsService.reset();
     jest.useFakeTimers();
-    process.env.DB_CONNECTION_LIMIT = '20';
+    process.env.DATABASE_POOL_SIZE = '20';
     jest.clearAllMocks();
   });
 
   afterEach(() => {
     jest.useRealTimers();
     process.env.DATABASE_URL = originalDatabaseUrl;
-    process.env.DB_CONNECTION_LIMIT = originalConnectionLimit;
+    process.env.DATABASE_POOL_SIZE = originalConnectionLimit;
   });
 
   it('publishes the configured pool limit even for non-Postgres datasources', async () => {

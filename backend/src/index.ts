@@ -243,6 +243,17 @@ app.get('/', (req: Request, res: Response) => {
  *                     horizon:
  *                       type: string
  *                       example: UP
+ *                     databasePool:
+ *                       type: object
+ *                       properties:
+ *                         active:
+ *                           type: integer
+ *                           nullable: true
+ *                         limit:
+ *                           type: integer
+ *                         utilization:
+ *                           type: number
+ *                           nullable: true
  *       503:
  *         description: One or more backend dependencies are down
  *         content:
@@ -335,6 +346,7 @@ app.get('/health', async (req: Request, res: Response) => {
       redis: { status: redisStatus, latencyMs: redisLatency },
       sorobanRpc: sorobanRpcStatus,
       horizon: horizonStatus,
+      databasePool: dbMetricsScheduler.getPoolUtilization(),
     },
   };
 

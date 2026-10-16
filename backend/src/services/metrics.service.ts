@@ -14,6 +14,7 @@ export class MetricsService {
   private sep38QuoteDuration: Histogram<string>;
   private dbConnectionsActive: Gauge<string>;
   private dbConnectionsLimit: Gauge<string>;
+  private dbPoolConnectionsActive: Gauge<string>;
   private sepTransactionsTotal: Counter<string>;
   private sepTransactionDuration: Histogram<string>;
   private kycVerificationTotal: Counter<string>;
@@ -125,6 +126,13 @@ export class MetricsService {
     this.dbConnectionsLimit = new promClient.Gauge({
       name: 'db_connections_limit',
       help: 'Maximum number of database connections in the pool',
+      labelNames: ['pool'] as const,
+      registers: [this.registry],
+    });
+
+    this.dbPoolConnectionsActive = new promClient.Gauge({
+      name: 'db_pool_connections_active',
+      help: 'Number of active connections in the database connection pool',
       labelNames: ['pool'] as const,
       registers: [this.registry],
     });
@@ -260,6 +268,13 @@ export class MetricsService {
    */
   setDbConnectionsLimit(limit: number, pool = 'default'): void {
     this.dbConnectionsLimit.set({ pool }, limit);
+  }
+
+  /**
+   * Set the number of active connections in the database connection pool.
+   */
+  setDbPoolConnectionsActive(count: number, pool = 'default'): void {
+    this.dbPoolConnectionsActive.set({ pool }, count);
   }
 
   /**

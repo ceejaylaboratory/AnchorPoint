@@ -15,16 +15,18 @@ const envSchema = z.object({
     .pipe(z.number().positive()),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').default('file:./prisma/dev.db'),
   // PostgreSQL connection pool configuration for production high-concurrency workloads.
-  DB_CONNECTION_LIMIT: z
-    .string()
-    .default('20')
-    .transform((val: string) => parseInt(val, 10))
-    .pipe(z.number().int().min(1).max(100)),
-  DB_POOL_TIMEOUT: z
+  // DATABASE_POOL_SIZE maps to Prisma's `connection_limit`.
+  DATABASE_POOL_SIZE: z
     .string()
     .default('10')
     .transform((val: string) => parseInt(val, 10))
-    .pipe(z.number().int().min(1).max(60)),
+    .pipe(z.number().int().min(1).max(100)),
+  // DATABASE_POOL_TIMEOUT_MS is the connection acquisition timeout (Prisma's `pool_timeout`).
+  DATABASE_POOL_TIMEOUT_MS: z
+    .string()
+    .default('5000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1000).max(60000)),
   // SSL mode for PostgreSQL connections. Defaults to 'disable' for safe local
   // development. Set to 'require' (or stricter) for production deployments.
   DB_SSL_MODE: z.enum(['require', 'disable', 'allow', 'prefer', 'verify-ca', 'verify-full']).default('disable'),
