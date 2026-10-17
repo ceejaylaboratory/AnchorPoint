@@ -2,6 +2,7 @@ import cron, { ScheduledTask } from 'node-cron';
 import prisma from '../lib/prisma';
 import { stellarService } from '../services/stellar.service';
 import { metricsService } from '../services/metrics.service';
+import { emitTransactionStatusUpdate } from '../lib/socket';
 import logger from '../utils/logger';
 
 /** Transactions must have been pending for at least this long before reconciling. */
@@ -55,13 +56,19 @@ export class TransactionReconcileScheduler {
         const record = await server.transactions().transaction(tx.stellarTxId as string).call();
 
         if (record.successful) {
-          await prisma.transaction.update({
+          const updated = await prisma.transaction.update({
             where: { id: tx.id },
             data: { status: 'completed', sep31Status: 'completed', completedAt: new Date() },
           });
           metricsService.incrementTransactionReconciliation('completed');
+          emitTransactionStatusUpdate(tx.userId, {
+            id: updated.id,
+            status: updated.status,
+            updated_at: updated.updatedAt,
+            stellar_transaction_id: updated.stellarTxId,
+          });
         } else {
-          await prisma.transaction.update({
+          const updated = await prisma.transaction.update({
             where: { id: tx.id },
             data: {
               status: 'error',
@@ -70,7 +77,14 @@ export class TransactionReconcileScheduler {
             },
           });
           metricsService.incrementTransactionReconciliation('error');
+          emitTransactionStatusUpdate(tx.userId, {
+            id: updated.id,
+            status: updated.status,
+            updated_at: updated.updatedAt,
+            stellar_transaction_id: updated.stellarTxId,
+          });
         }
+
         reconciled++;
       } catch (error) {
         const statusCode = (error as { response?: { status?: number } })?.response?.status;

@@ -5,7 +5,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 import { stellarService } from '../../services/stellar.service';
 import { submissionLimiter } from '../middleware/rate-limit.middleware';
-import { emitTxUpdated } from '../../lib/socket';
+import { emitTxUpdated, emitTransactionStatusUpdate } from '../../lib/socket';
 
 
 const router = Router();
@@ -336,6 +336,12 @@ router.patch('/:id/status', authMiddleware, validate({ body: statusUpdateSchema 
     });
 
     emitTxUpdated({ id: tx.id, status: tx.status, assetCode: tx.assetCode, amount: tx.amount, type: tx.type });
+    emitTransactionStatusUpdate([tx.userId, user.id, user.publicKey], {
+      id: tx.id,
+      status: tx.status,
+      updated_at: tx.updatedAt,
+      stellar_transaction_id: tx.stellarTxId,
+    });
 
     return res.json({ status: 'success', data: tx });
   } catch (error) {

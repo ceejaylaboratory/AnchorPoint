@@ -3,6 +3,7 @@ import logger from '../utils/logger';
 import { traceAsync, SpanKind } from '../utils/tracing';
 import configService from './config.service';
 import { notificationService } from './notification.service';
+import { emitTransactionStatusUpdate } from '../lib/socket';
 import {
   buildIdempotencyKey,
   buildWebhookDeliveryHash,
@@ -629,6 +630,16 @@ export const updateTransactionStatusAndNotify = async ({
           },
         },
       });
+
+      emitTransactionStatusUpdate(
+        [updatedTransaction.userId, updatedTransaction.user?.publicKey].filter(Boolean) as string[],
+        {
+          id: updatedTransaction.id,
+          status: updatedTransaction.status,
+          updated_at: updatedTransaction.updatedAt,
+          stellar_transaction_id: updatedTransaction.stellarTxId,
+        }
+      );
 
       // Trigger Notification Engine
       const notificationMessage = `Your transaction ${transactionId} status updated to: ${nextStatus.replace('_', ' ')}`;

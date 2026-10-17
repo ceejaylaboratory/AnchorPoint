@@ -10,6 +10,8 @@ jest.mock('../../lib/prisma', () => ({
   transaction: {
     findMany: jest.fn(),
     count: jest.fn(),
+    findFirst: jest.fn(),
+    update: jest.fn(),
   },
   user: {
     findUnique: jest.fn().mockResolvedValue({ id: 'user_123', publicKey: 'GBXP...' }),
@@ -18,10 +20,66 @@ jest.mock('../../lib/prisma', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
+jest.mock('../../lib/socket', () => ({
+  emitTxUpdated: jest.fn(),
+  emitTransactionStatusUpdate: jest.fn(),
+}));
+
+jest.mock('../../utils/logger', () => ({
+  __esModule: true,
+  default: {
+    info: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
+jest.mock('../../utils/tracing', () => {
+  const dummySpan = {
+    setAttribute: jest.fn(),
+    setAttributes: jest.fn(),
+    recordException: jest.fn(),
+    setStatus: jest.fn(),
+    end: jest.fn(),
+  };
+  return {
+    traceAsync: (_name: any, fn: any) => fn(dummySpan),
+    traceSync: (_name: any, fn: any) => fn(dummySpan),
+    SpanKind: {},
+    initTracing: jest.fn(),
+    createTraceExporter: jest.fn(),
+  };
+});
+
+jest.mock('../../lib/redis', () => {
+  const client = {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    on: jest.fn(),
+    subscribe: jest.fn(),
+    duplicate: jest.fn().mockReturnValue({
+      get: jest.fn(),
+      set: jest.fn(),
+      del: jest.fn(),
+      on: jest.fn(),
+      subscribe: jest.fn(),
+    }),
+  };
+  return {
+    __esModule: true,
+    default: client,
+    redisClient: client,
+    redis: client,
+  };
+});
+
 // Mock Rate Limiting
 jest.mock('../middleware/rate-limit.middleware', () => ({
   submissionLimiter: (req: any, res: any, next: any) => next(),
 }));
+
 
 
 const app = express();
@@ -125,4 +183,66 @@ describe('Transactions Router', () => {
     expect(res.statusCode).toEqual(500);
     expect(res.body.message).toEqual('Failed to fetch transaction history');
   });
+
+  describe('PATCH /api/transactions/:id/status', () => {
+    it('should update transaction status and emit socket event', async () => {
+      const mockTx = {
+        id: 'tx_123',
+        userId: 'user_123',
+        status: 'COMPLETED',
+        updatedAt: new Date(),
+        stellarTxId: 'stellar_hash_1',
+        assetCode: 'USDC',
+        amount: '50',
+        type: 'DEPOSIT',
+      };
+
+      (prisma.transaction.findFirst as jest.Mock).mockResolvedValue(mockTx);
+      (prisma.transaction.update as jest.Mock).mockResolvedValue(mockTx);
+
+      const res = await request(app)
+        .patch('/api/transactions/tx_123/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'COMPLETED' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.status).toBe('success');
+      expect(prisma.transaction.update).toHaveBeenCalledWith({
+        where: { id: 'tx_123' },
+        data: { status: 'COMPLETED' },
+      });
+      const { emitTransactionStatusUpdate } = require('../../lib/socket');
+      expect(emitTransactionStatusUpdate).toHaveBeenCalledWith(
+        expect.arrayContaining(['user_123', mockPublicKey]),
+        expect.objectContaining({
+          id: 'tx_123',
+          status: 'COMPLETED',
+          stellar_transaction_id: 'stellar_hash_1',
+          updated_at: mockTx.updatedAt,
+        })
+      );
+    });
+
+    it('should return 404 if transaction not found', async () => {
+      (prisma.transaction.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const res = await request(app)
+        .patch('/api/transactions/non_existent/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'COMPLETED' });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.body.message).toBe('Transaction not found');
+    });
+
+    it('should return 400 for invalid status', async () => {
+      const res = await request(app)
+        .patch('/api/transactions/tx_123/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'INVALID_STATUS' });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });
+

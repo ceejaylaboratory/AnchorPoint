@@ -16,6 +16,7 @@ import { Sep24Service, Sep24MemoType } from '../../services/sep24.service';
 import { FeeService } from '../../services/fee.service';
 import { RedisService } from '../../services/redis.service';
 import { redis } from '../../lib/redis';
+import { emitTransactionStatusUpdate } from '../../lib/socket';
 
 const router = Router();
 
@@ -754,9 +755,18 @@ router.patch('/transactions/:id/status', async (req: Request, res: Response) => 
         ...(effectiveClaimableBalanceId ? { claimableBalanceId: effectiveClaimableBalanceId } : {}),
       },
     });
+    if (updatedTransaction?.userId) {
+      emitTransactionStatusUpdate(updatedTransaction.userId, {
+        id: updatedTransaction.id,
+        status: updatedTransaction.status,
+        updated_at: updatedTransaction.updatedAt,
+        stellar_transaction_id: updatedTransaction.stellarTxId,
+      });
+    }
   } catch {
     // Transaction may not exist yet (interactive-only flow); still notify partner.
   }
+
 
   // Fan out to any wallets listening on GET /transaction/sse.
   try {

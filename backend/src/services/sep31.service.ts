@@ -6,6 +6,7 @@ import {
 } from "../config/sep31Fields";
 import logger from "../utils/logger";
 import { notificationService } from "./notification.service";
+import { emitTransactionStatusUpdate } from "../lib/socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -283,6 +284,13 @@ export class SEP31Service {
     const updated = await prisma.transaction.update({
       where: { id },
       data: updateData,
+    });
+
+    emitTransactionStatusUpdate(updated.userId, {
+      id: updated.id,
+      status: updated.status,
+      updated_at: updated.updatedAt,
+      stellar_transaction_id: updated.stellarTxId,
     });
 
     const tx = this.mapToSep31Transaction(updated);
