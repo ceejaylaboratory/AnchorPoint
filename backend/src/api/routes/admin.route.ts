@@ -8,6 +8,7 @@ import {
   passwordResetRequestSchema,
   passwordResetConfirmSchema,
   purgeCacheSchema,
+  createFeeScheduleSchema,
 } from './admin.schemas';
 import { stellarService } from '../../services/stellar.service';
 import { NetworkType } from '../../config/networks';
@@ -591,6 +592,166 @@ router.post('/queues/notification-dlq/:jobId/retry', requireWriteAccess, async (
   } catch (error: any) {
     logger.error('Failed to retry notification DLQ job', { message: error?.message });
     res.status(500).json({ status: 'error', message: 'Failed to retry notification DLQ job' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/admin/fees/schedule:
+ *   post:
+ *     summary: Add new fee schedule version with future effective date
+ *     tags: [Admin]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - assetCode
+ *               - feeType
+ *               - effectiveFrom
+ *             properties:
+ *               assetCode:
+ *                 type: string
+ *                 example: USDC
+ *               feeType:
+ *                 type: string
+ *                 enum: [flat, percentage, tiered]
+ *                 example: flat
+ *               feeFixed:
+ *                 type: number
+ *                 example: 0.5
+ *               feePercent:
+ *                 type: number
+ *                 example: 0.005
+ *               feeMinimum:
+ *                 type: number
+ *                 example: 0.5
+ *               effectiveFrom:
+ *                 type: string
+ *                 format: date-time
+ *     responses:
+ *       201:
+ *         description: Fee schedule created successfully
+ *       400:
+ *         description: Validation error or non-future date
+ */
+router.post('/fees/schedule', requireWriteAccess, validate({ body: createFeeScheduleSchema }), async (req: Request, res: Response) => {
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const { assetCode, feeType, feeFixed, feePercent, feeMinimum, effectiveFrom, effective_from } = req.body;
+    const effectiveDate = new Date(effectiveFrom || effective_from);
+
+    const schedule = await prisma.feeSchedule.create({
+      data: {
+        assetCode,
+        feeType,
+        feeFixed: feeFixed ?? 0,
+        feePercent: feePercent ?? 0,
+        feeMinimum: feeMinimum ?? 0,
+        effectiveFrom: effectiveDate,
+      },
+    });
+
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_FEE_SCHEDULE_CREATE' as any,
+      actor: getAuditActor(req),
+      targetEntity: `fee_schedule:${schedule.id}`,
+      after: schedule,
+    });
+
+    res.status(201).json({
+      status: 'success',
+      data: schedule,
+    });
+  } catch (error: any) {
+    logger.error('Failed to create fee schedule', { error: error.message });
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message || 'Failed to create fee schedule',
+      },
+    });
+  }
+});
+
+// Alias for plural endpoint
+router.post('/fee-schedules', requireWriteAccess, validate({ body: createFeeScheduleSchema }), async (req: Request, res: Response) => {
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const { assetCode, feeType, feeFixed, feePercent, feeMinimum, effectiveFrom, effective_from } = req.body;
+    const effectiveDate = new Date(effectiveFrom || effective_from);
+
+    const schedule = await prisma.feeSchedule.create({
+      data: {
+        assetCode,
+        feeType,
+        feeFixed: feeFixed ?? 0,
+        feePercent: feePercent ?? 0,
+        feeMinimum: feeMinimum ?? 0,
+        effectiveFrom: effectiveDate,
+      },
+    });
+
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_FEE_SCHEDULE_CREATE' as any,
+      actor: getAuditActor(req),
+      targetEntity: `fee_schedule:${schedule.id}`,
+      after: schedule,
+    });
+
+    res.status(201).json({
+      status: 'success',
+      data: schedule,
+    });
+  } catch (error: any) {
+    logger.error('Failed to create fee schedule', { error: error.message });
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message || 'Failed to create fee schedule',
+      },
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/admin/fees/schedules:
+ *   get:
+ *     summary: List versioned fee schedules
+ *     tags: [Admin]
+ *     parameters:
+ *       - in: query
+ *         name: asset
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of fee schedules
+ */
+router.get('/fees/schedules', requireReadAccess, async (req: Request, res: Response) => {
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const asset = req.query.asset as string | undefined;
+    const schedules = await prisma.feeSchedule.findMany({
+      where: asset ? { assetCode: asset.toUpperCase() } : undefined,
+      orderBy: { effectiveFrom: 'desc' },
+    });
+
+    res.json({
+      status: 'success',
+      data: schedules,
+    });
+  } catch (error: any) {
+    logger.error('Failed to list fee schedules', { error: error.message });
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message || 'Failed to list fee schedules',
+      },
+    });
   }
 });
 

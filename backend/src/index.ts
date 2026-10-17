@@ -33,6 +33,7 @@ import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
 import { stellarService } from './services/stellar.service';
 import feeReportRouter from './api/routes/fee-report.route';
+import feeRouter from './api/routes/fee.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
@@ -446,6 +447,7 @@ app.use(metricsMiddleware);
 
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/admin', adminRouter);
+app.use('/admin', adminRouter);
 app.use('/api/config', configRouter);
 app.use('/api/reports', feeReportRouter);
 app.use('/api/events', eventRouter);
@@ -473,6 +475,7 @@ const publicRoutes: Array<[string, express.Router]> = [
   ['/info', infoRouter],
   ['/sep24', sep24Router],
   ['/sep6', sep6Router],
+  ['/fees', feeRouter],
   ['/metrics', metricsRouter],
 ];
 

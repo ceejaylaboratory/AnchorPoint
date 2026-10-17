@@ -191,7 +191,7 @@ export class AdminAuditService {
       prisma.adminConfigAuditLog.count({ where }),
     ]);
 
-    const entries = rows.map((row) => ({
+    const entries = rows.map((row: any) => ({
       ...row,
       changedKeys: safeJsonParse(row.changedKeys),
       diff: safeJsonParse(row.diff),

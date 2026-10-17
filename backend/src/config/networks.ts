@@ -1,4 +1,8 @@
-import { Networks } from '@stellar/stellar-sdk';
+export const StellarNetworks = {
+  PUBLIC: 'Public Global Stellar Network ; September 2015',
+  TESTNET: 'Test SDF Network ; September 2015',
+  FUTURENET: 'Test SDF Future Network ; October 2022',
+};
 
 export enum NetworkType {
   PUBLIC = 'PUBLIC',
@@ -16,16 +20,16 @@ export const NETWORKS: Record<NetworkType, NetworkConfig> = {
   [NetworkType.PUBLIC]: {
     horizonUrl: 'https://horizon.stellar.org',
     sorobanRpcUrl: 'https://mainnet.stellar.org:443',
-    passphrase: Networks.PUBLIC,
+    passphrase: StellarNetworks.PUBLIC,
   },
   [NetworkType.TESTNET]: {
     horizonUrl: 'https://horizon-testnet.stellar.org',
     sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
-    passphrase: Networks.TESTNET,
+    passphrase: StellarNetworks.TESTNET,
   },
   [NetworkType.FUTURENET]: {
     horizonUrl: 'https://horizon-futurenet.stellar.org',
     sorobanRpcUrl: 'https://rpc-futurenet.stellar.org',
-    passphrase: Networks.FUTURENET,
+    passphrase: StellarNetworks.FUTURENET,
   },
 };
