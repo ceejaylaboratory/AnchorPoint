@@ -1389,5 +1389,18 @@ model UploadRecord {
   updatedAt   DateTime @updatedAt
 
   @@index([status])
-  @@index([isTemporary, status, createdAt])
-} main
+}
+
+model FeeSchedule {
+  id            String    @id @default(uuid())
+  assetCode     String
+  feeType       String    // flat | percentage | tiered
+  feeFixed      Float     @default(0)
+  feePercent    Float     @default(0)
+  feeMinimum    Float     @default(0)
+  effectiveFrom DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([assetCode, effectiveFrom])
+}

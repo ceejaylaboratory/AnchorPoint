@@ -3,6 +3,7 @@ import { getAsset, AssetConfig, FeeType } from '../config/assets';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { DECIMAL_PRECISION, formatDecimal, toDecimal } from '../utils/decimal';
+import prisma from '../lib/prisma';
 
 const HORIZON_URL = config.HORIZON_URL;
 const CACHE_KEY = 'fee_engine:stats';
@@ -107,6 +108,16 @@ function buildFeeStats(raw: HorizonFeeStats): FeeStats {
   };
 }
 
+export interface FeeScheduleConfig {
+  id?: string;
+  assetCode: string;
+  feeType: FeeType;
+  feeFixed: number;
+  feePercent: number;
+  feeMinimum: number;
+  effectiveFrom?: Date;
+}
+
 export interface AssetFeeResult {
   assetCode: string;
   feeType: FeeType;
@@ -115,6 +126,8 @@ export interface AssetFeeResult {
   feeFixed: number;
   feePercent: number;
   feeMinimum: number;
+  scheduleId?: string;
+  effectiveFrom?: string;
 }
 
 /**
@@ -124,7 +137,7 @@ export interface AssetFeeResult {
  *  - percentage:  amount * feePercent, floored to feeMinimum.
  *  - tiered:      feeFixed + (amount * feePercent), floored to feeMinimum.
  */
-export function computeAssetFee(asset: AssetConfig, amount: number | string): number {
+export function computeAssetFee(asset: AssetConfig | FeeScheduleConfig, amount: number | string): number {
   const amountValue = toDecimal(amount);
   let fee = toDecimal(0);
 
@@ -153,19 +166,23 @@ export function computeAssetFee(asset: AssetConfig, amount: number | string): nu
 }
 
 export class FeeService {
-  constructor(private readonly redis: RedisService) {}
+  constructor(private readonly redis?: RedisService) {}
 
   /**
    * Returns current fee stats, using Redis cache when available.
    */
   async getFeeStats(): Promise<FeeStats> {
-    const cached = await this.redis.getJSON<FeeStats>(CACHE_KEY);
-    if (cached) return cached;
+    if (this.redis) {
+      const cached = await this.redis.getJSON<FeeStats>(CACHE_KEY);
+      if (cached) return cached;
+    }
 
     const raw = await fetchHorizonFeeStats();
     const stats = buildFeeStats(raw);
 
-    await this.redis.setJSON(CACHE_KEY, stats, CACHE_TTL_SECONDS);
+    if (this.redis) {
+      await this.redis.setJSON(CACHE_KEY, stats, CACHE_TTL_SECONDS);
+    }
     logger.info('Fee stats refreshed from Horizon', {
       surgeActive: stats.surgeActive,
       recommended: stats.recommendedFeeStroops,
@@ -200,28 +217,171 @@ export class FeeService {
   }
 
   /**
-   * Calculates the fee for a specific asset and amount using the asset's
-   * configured fee strategy (flat / percentage / tiered).
-   *
-   * Throws if the asset code is unknown.
+   * Retrieves the active fee schedule for an asset at a specific timestamp.
+   * Looks up the version where effectiveFrom <= effectiveAt, ordered by effectiveFrom DESC.
+   * Falls back to static asset configuration from ASSET_MAP if no DB version exists.
    */
-  calculateAssetFee(assetCode: string, amount: number | string): AssetFeeResult {
-    const asset = getAsset(assetCode);
-    if (!asset) {
+  async getActiveFeeSchedule(
+    assetCode: string,
+    effectiveAt: Date | string = new Date()
+  ): Promise<FeeScheduleConfig> {
+    const targetDate = typeof effectiveAt === 'string' ? new Date(effectiveAt) : effectiveAt;
+    const normalizedCode = assetCode.trim().toUpperCase();
+
+    try {
+      const schedule = await prisma.feeSchedule.findFirst({
+        where: {
+          assetCode: normalizedCode,
+          effectiveFrom: {
+            lte: targetDate,
+          },
+        },
+        orderBy: {
+          effectiveFrom: 'desc',
+        },
+      });
+
+      if (schedule) {
+        return {
+          id: schedule.id,
+          assetCode: schedule.assetCode,
+          feeType: schedule.feeType as FeeType,
+          feeFixed: schedule.feeFixed,
+          feePercent: schedule.feePercent,
+          feeMinimum: schedule.feeMinimum,
+          effectiveFrom: schedule.effectiveFrom,
+        };
+      }
+    } catch (err) {
+      logger.warn(`FeeSchedule lookup in DB failed for ${assetCode}, falling back to static config:`, err);
+    }
+
+    const fallbackAsset = getAsset(normalizedCode);
+    if (!fallbackAsset) {
       throw new Error(`Unknown asset: ${assetCode}`);
     }
 
-    const feeAmount = computeAssetFee(asset, amount);
+    return {
+      assetCode: fallbackAsset.code,
+      feeType: fallbackAsset.feeType,
+      feeFixed: fallbackAsset.feeFixed,
+      feePercent: fallbackAsset.feePercent,
+      feeMinimum: fallbackAsset.feeMinimum,
+    };
+  }
+
+  /**
+   * Calculates the fee for an asset and amount at a specific timestamp (default: current time).
+   * Queries the version active at the provided effectiveAt timestamp (e.g. transaction createdAt).
+   */
+  async calculateAssetFee(
+    assetCode: string,
+    amount: number | string,
+    effectiveAt?: Date | string
+  ): Promise<AssetFeeResult> {
+    const schedule = await this.getActiveFeeSchedule(assetCode, effectiveAt);
+    const feeAmount = computeAssetFee(schedule, amount);
 
     return {
-      assetCode: asset.code,
-      feeType: asset.feeType,
+      assetCode: schedule.assetCode,
+      feeType: schedule.feeType,
       inputAmount: Number(formatDecimal(toDecimal(amount))),
       feeAmount,
-      feeFixed: asset.feeFixed,
-      feePercent: asset.feePercent,
-      feeMinimum: asset.feeMinimum,
+      feeFixed: schedule.feeFixed,
+      feePercent: schedule.feePercent,
+      feeMinimum: schedule.feeMinimum,
+      ...(schedule.id ? { scheduleId: schedule.id } : {}),
+      ...(schedule.effectiveFrom ? { effectiveFrom: schedule.effectiveFrom.toISOString() } : {}),
     };
+  }
+
+  /**
+   * Synchronous calculation version using static config or a provided schedule.
+   */
+  calculateAssetFeeSync(
+    assetCode: string,
+    amount: number | string,
+    schedule?: FeeScheduleConfig
+  ): AssetFeeResult {
+    let feeConfig: FeeScheduleConfig;
+    if (schedule) {
+      feeConfig = schedule;
+    } else {
+      const asset = getAsset(assetCode);
+      if (!asset) {
+        throw new Error(`Unknown asset: ${assetCode}`);
+      }
+      feeConfig = {
+        assetCode: asset.code,
+        feeType: asset.feeType,
+        feeFixed: asset.feeFixed,
+        feePercent: asset.feePercent,
+        feeMinimum: asset.feeMinimum,
+      };
+    }
+
+    const feeAmount = computeAssetFee(feeConfig, amount);
+
+    return {
+      assetCode: feeConfig.assetCode,
+      feeType: feeConfig.feeType,
+      inputAmount: Number(formatDecimal(toDecimal(amount))),
+      feeAmount,
+      feeFixed: feeConfig.feeFixed,
+      feePercent: feeConfig.feePercent,
+      feeMinimum: feeConfig.feeMinimum,
+      ...(feeConfig.id ? { scheduleId: feeConfig.id } : {}),
+      ...(feeConfig.effectiveFrom ? { effectiveFrom: feeConfig.effectiveFrom.toISOString() } : {}),
+    };
+  }
+
+  /**
+   * Calculates the fee for a transaction using its createdAt timestamp.
+   */
+  async getFeeForTransaction(tx: {
+    assetCode: string;
+    amount: string | number;
+    createdAt: Date | string;
+  }): Promise<AssetFeeResult> {
+    return this.calculateAssetFee(tx.assetCode, tx.amount, tx.createdAt);
+  }
+
+  /**
+   * Adds a new versioned fee schedule with a future effective date.
+   * Rejects if effectiveFrom is in the past.
+   */
+  async addFeeSchedule(data: {
+    assetCode: string;
+    feeType: FeeType;
+    feeFixed?: number;
+    feePercent?: number;
+    feeMinimum?: number;
+    effectiveFrom: Date | string;
+  }) {
+    const effectiveDate = typeof data.effectiveFrom === 'string' ? new Date(data.effectiveFrom) : data.effectiveFrom;
+    if (isNaN(effectiveDate.getTime()) || effectiveDate.getTime() <= Date.now()) {
+      throw new Error('effectiveFrom must be a future date');
+    }
+
+    const normalizedCode = data.assetCode.trim().toUpperCase();
+    const created = await prisma.feeSchedule.create({
+      data: {
+        assetCode: normalizedCode,
+        feeType: data.feeType,
+        feeFixed: data.feeFixed ?? 0,
+        feePercent: data.feePercent ?? 0,
+        feeMinimum: data.feeMinimum ?? 0,
+        effectiveFrom: effectiveDate,
+      },
+    });
+
+    logger.info('Created new fee schedule version', {
+      id: created.id,
+      assetCode: created.assetCode,
+      effectiveFrom: created.effectiveFrom,
+    });
+
+    return created;
   }
 
   /**
