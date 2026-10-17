@@ -37,13 +37,17 @@ describe('Validate Middleware', () => {
       expect(res.body.data.name).toEqual('John');
     });
 
-    it('should return 400 on invalid body', async () => {
+    it('should return 400 on invalid body with standardized error format and field details', async () => {
       const res = await request(app)
         .post('/test')
         .send({ name: '', age: -5 });
       expect(res.statusCode).toEqual(400);
-      expect(res.body.status).toEqual('error');
-      expect(res.body.details).toHaveLength(2);
+      expect(res.body.error).toBeDefined();
+      expect(res.body.error.code).toEqual('VALIDATION_ERROR');
+      expect(res.body.error.message).toEqual('Validation failed');
+      expect(res.body.error.details.issues).toHaveLength(2);
+      expect(res.body.error.details.fields).toHaveProperty('name');
+      expect(res.body.error.details.fields).toHaveProperty('age');
     });
   });
 
@@ -57,12 +61,13 @@ describe('Validate Middleware', () => {
       expect(res.body.data.query.page).toEqual(1);
     });
 
-    it('should return 400 on invalid query', async () => {
+    it('should return 400 on invalid query with standardized error format', async () => {
       const res = await request(app)
         .get('/test/not-a-uuid')
         .query({ page: 'abc' });
       expect(res.statusCode).toEqual(400);
-      expect(res.body.status).toEqual('error');
+      expect(res.body.error).toBeDefined();
+      expect(res.body.error.code).toEqual('VALIDATION_ERROR');
     });
   });
 
@@ -76,38 +81,25 @@ describe('Validate Middleware', () => {
       expect(res.body.data.params.id).toEqual(validUuid);
     });
 
-    it('should return 400 on invalid params', async () => {
+    it('should return 400 on invalid params with standardized error format', async () => {
       const res = await request(app)
         .get('/test/invalid-id')
         .query({ page: '1' });
       expect(res.statusCode).toEqual(400);
-      expect(res.body.status).toEqual('error');
+      expect(res.body.error).toBeDefined();
+      expect(res.body.error.code).toEqual('VALIDATION_ERROR');
     });
 
-    it('should return 400 on missing params when required', async () => {
-      // This route requires params.id, but we're calling a route without it
-      // This test case is more about route definition than middleware,
-      // but if the middleware was applied to a route like '/test' expecting params, it would fail.
-      // For the current setup, calling '/test' without an ID would result in a 404 before validation.
-      // To properly test missing params, we'd need a route like app.get('/test', validate({ params: testSchema.params }))
-      // which would be a logical contradiction.
-      // The existing '/test/:id' route inherently requires an ID in the path.
-      // So, an "invalid-id" test case covers the validation aspect.
-      // This comment serves as a note for the user about the nature of params validation.
+    it('should return non-200 on missing params when required', async () => {
       const res = await request(app)
-        .get('/test/') // This would likely result in a 404 or a different route handler
+        .get('/test/')
         .query({ page: '1' });
-      // Depending on Express routing, this might be a 404 or fall through to another handler.
-      // For this specific setup, it's hard to simulate a "missing param" for a route like /test/:id
-      // without changing the route definition itself.
-      // The 'invalid-id' test case already covers the validation failure for params.
-      expect(res.statusCode).not.toEqual(200); // It should not be successful
+      expect(res.statusCode).not.toEqual(200);
     });
   });
 
   describe('Internal Server Error', () => {
-    it('should return 500 on unexpected non-Zod errors', async () => {
-      // Create a spoofed schema that throws non-Zod error
+    it('should return 500 on unexpected non-Zod errors with standardized error format', async () => {
       const buggySchema = {
         body: {
           parseAsync: () => { throw new Error('Unchecked exception'); }
@@ -123,7 +115,9 @@ describe('Validate Middleware', () => {
         .send({ some: 'data' });
       
       expect(res.statusCode).toEqual(500);
-      expect(res.body.message).toEqual('Internal server error during validation');
+      expect(res.body.error).toBeDefined();
+      expect(res.body.error.code).toEqual('INTERNAL_SERVER_ERROR');
+      expect(res.body.error.message).toEqual('Internal server error during validation');
     });
   });
 });
