@@ -13,9 +13,23 @@ export interface ApiKeyRecord {
   lastUsedAt?: Date | null;
 }
 
+/** Generated keys are 24 random bytes rendered as 48 lowercase hex characters. */
+export const API_KEY_FORMAT = /^[0-9a-f]{48}$/;
+
+/** Raised when a freshly generated key does not match {@link API_KEY_FORMAT}. */
+export class ApiKeyFormatError extends Error {
+  constructor() {
+    super("Generated API key has an invalid format");
+    this.name = "ApiKeyFormatError";
+  }
+}
+
 export class ApiKeyService {
   async createKey(ownerId: string, tier: Tier, expiresInDays?: number): Promise<ApiKeyRecord> {
     const key = crypto.randomBytes(24).toString("hex"); // 48 hex chars
+    if (!API_KEY_FORMAT.test(key)) {
+      throw new ApiKeyFormatError();
+    }
     const expiresAt = expiresInDays
       ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
       : null;
