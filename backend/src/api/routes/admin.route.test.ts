@@ -1,6 +1,26 @@
 import express from 'express';
 import request from 'supertest';
 
+jest.mock('../../lib/prisma', () => ({
+  __esModule: true,
+  default: {
+    adminUser: { findFirst: jest.fn() },
+    feeSchedule: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn() },
+    transaction: { findMany: jest.fn(), count: jest.fn() },
+  },
+}));
+
+jest.mock('../../api/middleware/auth.middleware', () => {
+  const actual = jest.requireActual('../../api/middleware/auth.middleware');
+  return {
+    ...actual,
+    requireRole: () => (req: any, _res: any, next: any) => {
+      req.admin = { id: 'admin-1', email: 'admin@example.com', role: 'SUPER_ADMIN' };
+      next();
+    },
+  };
+});
+
 jest.mock('../../services/admin-password-reset.service', () => {
   const mockedService = {
     requestPasswordReset: jest.fn(),
@@ -42,6 +62,7 @@ jest.mock('../../config/queue', () => ({
 
 import adminRouter from './admin.route';
 import { listNotificationDlqJobs, retryNotificationDlqJob } from '../../config/queue';
+import prisma from '../../lib/prisma';
 
 const app = express();
 app.use(express.json());
@@ -163,5 +184,92 @@ describe('Admin notification DLQ routes (#1199)', () => {
     const res = await request(app).post('/api/admin/queues/notification-dlq/missing/retry');
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe('Admin versioned fee schedule routes (#1348)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('adds a new fee version with a future effective date', async () => {
+    const futureDate = new Date(Date.now() + 86400 * 1000 * 14).toISOString();
+    const createdSchedule = {
+      id: 'sched-101',
+      assetCode: 'USDC',
+      feeType: 'flat',
+      feeFixed: 0.75,
+      feePercent: 0,
+      feeMinimum: 0,
+      effectiveFrom: new Date(futureDate),
+    };
+
+    (prisma.feeSchedule.create as jest.Mock).mockResolvedValue(createdSchedule);
+
+    const res = await request(app)
+      .post('/api/admin/fees/schedule')
+      .send({
+        assetCode: 'USDC',
+        feeType: 'flat',
+        feeFixed: 0.75,
+        effectiveFrom: futureDate,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('success');
+    expect(res.body.data.id).toBe('sched-101');
+    expect(prisma.feeSchedule.create).toHaveBeenCalled();
+  });
+
+  it('rejects adding a fee version when effectiveFrom is in the past', async () => {
+    const pastDate = new Date(Date.now() - 86400 * 1000).toISOString();
+
+    const res = await request(app)
+      .post('/api/admin/fees/schedule')
+      .send({
+        assetCode: 'USDC',
+        feeType: 'flat',
+        feeFixed: 0.75,
+        effectiveFrom: pastDate,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeDefined();
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(prisma.feeSchedule.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects adding a fee version with invalid feeType', async () => {
+    const futureDate = new Date(Date.now() + 86400 * 1000).toISOString();
+
+    const res = await request(app)
+      .post('/api/admin/fees/schedule')
+      .send({
+        assetCode: 'USDC',
+        feeType: 'invalid_type',
+        feeFixed: 0.75,
+        effectiveFrom: futureDate,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('lists versioned fee schedules', async () => {
+    const schedules = [
+      { id: 'sched-1', assetCode: 'USDC', feeType: 'flat', feeFixed: 0.5 },
+      { id: 'sched-2', assetCode: 'USDC', feeType: 'percentage', feePercent: 0.01 },
+    ];
+    (prisma.feeSchedule.findMany as jest.Mock).mockResolvedValue(schedules);
+
+    const res = await request(app).get('/api/admin/fees/schedules?asset=USDC');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('success');
+    expect(res.body.data).toHaveLength(2);
+    expect(prisma.feeSchedule.findMany).toHaveBeenCalledWith({
+      where: { assetCode: 'USDC' },
+      orderBy: { effectiveFrom: 'desc' },
+    });
   });
 });

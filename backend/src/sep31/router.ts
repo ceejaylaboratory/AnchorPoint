@@ -99,6 +99,8 @@ router.post(
       return res.status(201).json(result);
     } catch (err) {
       if (err instanceof Error && /^quote_(not_found|expired|already_used)/.test(err.message)) {
+        return sep31Error(res, 400, err.message);
+      }
       // Surface receiver KYC and invalid memo errors as 400 responses
       if (
         err instanceof Error &&

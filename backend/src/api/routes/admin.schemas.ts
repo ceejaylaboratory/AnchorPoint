@@ -45,3 +45,25 @@ export const purgeCacheSchema = z.object({
     .optional()
     .default('toml'),
 });
+
+export const createFeeScheduleSchema = z.object({
+  assetCode: z.string().min(1, 'assetCode is required').transform((s) => s.toUpperCase()),
+  feeType: z.enum(['flat', 'percentage', 'tiered'], {
+    message: 'feeType must be flat, percentage, or tiered',
+  }),
+  feeFixed: z.coerce.number().min(0, 'feeFixed must be non-negative').default(0),
+  feePercent: z.coerce.number().min(0, 'feePercent must be non-negative').default(0),
+  feeMinimum: z.coerce.number().min(0, 'feeMinimum must be non-negative').default(0),
+  effectiveFrom: z.string().optional(),
+  effective_from: z.string().optional(),
+}).refine(
+  (data) => Boolean(data.effectiveFrom || data.effective_from),
+  { message: 'effectiveFrom or effective_from is required', path: ['effectiveFrom'] }
+).refine(
+  (data) => {
+    const raw = data.effectiveFrom || data.effective_from;
+    const d = new Date(raw!);
+    return !isNaN(d.getTime()) && d.getTime() > Date.now();
+  },
+  { message: 'effectiveFrom must be a future date', path: ['effectiveFrom'] }
+);

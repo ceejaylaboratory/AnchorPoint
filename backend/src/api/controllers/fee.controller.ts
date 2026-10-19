@@ -12,7 +12,12 @@ export async function getFeeStats(req: Request, res: Response, feeService: FeeSe
     res.json(stats);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch fee stats';
-    res.status(502).json({ error: message });
+    res.status(502).json({
+      error: {
+        code: 'BAD_GATEWAY',
+        message,
+      },
+    });
   }
 }
 
@@ -29,34 +34,72 @@ export async function estimateFee(req: Request, res: Response, feeService: FeeSe
     res.json(estimate);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to estimate fee';
-    res.status(502).json({ error: message });
+    res.status(502).json({
+      error: {
+        code: 'BAD_GATEWAY',
+        message,
+      },
+    });
   }
 }
 
 /**
- * GET /fees/calculate?asset=USDC&amount=100
+ * GET /fees/calculate?asset=USDC&amount=100&timestamp=2026-10-15T00:00:00Z
  * Returns the calculated fee for a specific asset and amount using the
- * asset's configured fee strategy (flat / percentage / tiered).
+ * versioned fee schedule active at the transaction's created_at timestamp.
  */
-export function calculateAssetFee(req: Request, res: Response, feeService: FeeService): void {
+export async function calculateAssetFee(req: Request, res: Response, feeService: FeeService): Promise<void> {
   const assetCode = req.query.asset as string;
   const amountRaw = req.query.amount as string;
+  const timestampRaw = (req.query.timestamp || req.query.created_at || req.query.effective_at) as string | undefined;
   const amount = amountRaw ? toDecimal(amountRaw) : null;
 
   if (!assetCode) {
-    res.status(400).json({ error: 'asset query parameter is required' });
+    res.status(400).json({
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'asset query parameter is required',
+        details: { field: 'asset' },
+      },
+    });
     return;
   }
   if (!amountRaw || !amount || !amount.isFinite() || amount.isNegative()) {
-    res.status(400).json({ error: 'amount must be a non-negative number' });
+    res.status(400).json({
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'amount must be a non-negative number',
+        details: { field: 'amount' },
+      },
+    });
     return;
   }
 
+  let effectiveAt: Date | undefined;
+  if (timestampRaw) {
+    effectiveAt = new Date(timestampRaw);
+    if (isNaN(effectiveAt.getTime())) {
+      res.status(400).json({
+        error: {
+          code: 'BAD_REQUEST',
+          message: 'invalid timestamp query parameter format',
+          details: { field: 'timestamp' },
+        },
+      });
+      return;
+    }
+  }
+
   try {
-    const result = feeService.calculateAssetFee(assetCode, amountRaw);
+    const result = await feeService.calculateAssetFee(assetCode, amountRaw, effectiveAt);
     res.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to calculate fee';
-    res.status(400).json({ error: message });
+    res.status(400).json({
+      error: {
+        code: 'BAD_REQUEST',
+        message,
+      },
+    });
   }
 }

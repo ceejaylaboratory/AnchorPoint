@@ -178,7 +178,7 @@ export class SEP31Service {
     try {
       const { FeeService } = require('./fee.service');
       const feeService = new FeeService();
-      const feeResult = feeService.calculateAssetFee(assetCode, numericAmount);
+      const feeResult = await feeService.calculateAssetFee(assetCode, numericAmount);
       feeAmount = feeResult.feeAmount.toFixed(7);
     } catch {
       // Fee calculation is non-critical; proceed without fee
