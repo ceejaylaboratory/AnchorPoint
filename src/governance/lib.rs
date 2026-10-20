@@ -1227,6 +1227,88 @@ mod tests {
         }));
         assert!(result.is_err(), "old admin should no longer have access");
     }
+
+    // ---- #1536 regression: VotingCredits must be decremented after a vote ---
+
+    /// After casting a vote the voter's credits must be reduced by the quadratic
+    /// cost (votes²).  If credits are not decremented the voter could cast more
+    /// votes than their budget allows across successive calls.
+    #[test]
+    fn test_voting_credits_decremented_after_vote() {
+        let (env, admin, _) = setup();
+        let id = env.register(GovernanceContract, ());
+        let client = GovernanceContractClient::new(&env, &id);
+        let token_contract = env.register(MockToken, ());
+        client.initialize(&admin, &token_contract);
+
+        let creator = Address::generate(&env);
+        let voter = Address::generate(&env);
+
+        // Give the voter a known credit budget.
+        client.allocate_credits(&admin, &voter, &1000);
+        assert_eq!(client.get_credits(&voter), 1000);
+
+        let proposal_id = client.create_proposal(
+            &creator,
+            &String::from_str(&env, "Credit Decrement Test"),
+            &String::from_str(&env, "Verifies credits are deducted on vote"),
+            &86400u64,
+        );
+
+        // Cast 10 votes; quadratic cost = 10² = 100.
+        client.vote(&voter, &proposal_id, &true, &10i128);
+
+        // Credits must have dropped by exactly the quadratic cost.
+        let remaining = client.get_credits(&voter);
+        assert_eq!(
+            remaining, 900,
+            "credits must be decremented by quadratic cost (100); got {}",
+            remaining
+        );
+    }
+
+    /// A user who has already voted on a proposal must not be able to vote a
+    /// second time, even if their remaining credits are sufficient.
+    #[test]
+    fn test_double_vote_blocked_after_credits_decremented() {
+        let (env, admin, _) = setup();
+        let id = env.register(GovernanceContract, ());
+        let client = GovernanceContractClient::new(&env, &id);
+        let token_contract = env.register(MockToken, ());
+        client.initialize(&admin, &token_contract);
+
+        let creator = Address::generate(&env);
+        let voter = Address::generate(&env);
+
+        // Generous credit budget — the voter could theoretically cast a second
+        // vote if the double-vote check were absent.
+        client.allocate_credits(&admin, &voter, &10000);
+
+        let proposal_id = client.create_proposal(
+            &creator,
+            &String::from_str(&env, "Double Vote Test"),
+            &String::from_str(&env, "Verifies a voter cannot vote twice"),
+            &86400u64,
+        );
+
+        // First vote succeeds.
+        client.vote(&voter, &proposal_id, &true, &5i128);
+
+        // Second vote on the *same* proposal must be rejected with "already voted",
+        // regardless of remaining credits (10000 - 25 = 9975 remaining).
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.vote(&voter, &proposal_id, &false, &5i128);
+        }));
+        assert!(
+            result.is_err(),
+            "second vote on the same proposal must be rejected"
+        );
+
+        // Proposal vote totals must reflect only the first vote.
+        let (votes_for, votes_against) = client.get_proposal_votes(&proposal_id);
+        assert_eq!(votes_for, 5, "only the first vote should be counted");
+        assert_eq!(votes_against, 0, "second vote must not have been recorded");
+    }
 }
 
 /// ============================================================================

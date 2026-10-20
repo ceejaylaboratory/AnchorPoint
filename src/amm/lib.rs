@@ -14,6 +14,8 @@ use soroban_sdk::{
 pub enum AmmError {
     /// The calculated output amount is below the caller's minimum threshold.
     SlippageExceeded = 1,
+    /// The caller does not hold enough LP shares to satisfy the withdrawal.
+    InsufficientShares = 2,
 }
 
 #[contracttype]
@@ -317,8 +319,11 @@ impl AMM {
             .persistent()
             .get(&DataKey::Shares(from.clone()))
             .unwrap_or(0);
-        if user_shares < shares {
-            panic!("insufficient shares");
+        // Guard against zero-share withdrawals and underflow: both `shares == 0`
+        // and `user_shares < shares` are rejected with a typed contract error so
+        // callers can distinguish this case from a generic panic.
+        if shares <= 0 || user_shares < shares {
+            panic_with_error!(env, AmmError::InsufficientShares);
         }
 
         let amount_a = shares.checked_mul(reserve_a).expect("withdraw overflow") / total_shares;
@@ -948,6 +953,56 @@ mod tests {
         let (client2, _cid2, token_id2) = setup_amm_with_reserves(&env, 1_000_000, 1_000_000);
         let out = client2.swap(&user, &token_id2, &amount_in, &true_out);
         assert_eq!(out, true_out, "exact boundary swap must succeed");
+    }
+
+    /// Regression test for #1535: withdraw with zero or insufficient share balance
+    /// must return ContractError::InsufficientShares instead of panicking with an
+    /// arithmetic underflow.
+    #[test]
+    fn test_withdraw_zero_shares_returns_insufficient_shares_error() {
+        let (env, client, _admin, _token_a, _token_b) = setup();
+        let user = Address::generate(&env);
+
+        // User has never deposited — share balance is 0.
+        // Attempting to withdraw 0 shares must fail with InsufficientShares (not underflow).
+        assert_eq!(
+            client.try_withdraw(&user, &0),
+            Err(Ok(AmmError::InsufficientShares.into()))
+        );
+    }
+
+    /// Regression test for #1535: withdraw more shares than the user holds must
+    /// return ContractError::InsufficientShares.
+    #[test]
+    fn test_withdraw_more_than_held_returns_insufficient_shares_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        let mock_token = env.register(MockTokenContract, ());
+
+        let contract_id = env.register(AMM, ());
+        let client = AMMClient::new(&env, &contract_id);
+        client.initialize(&admin, &mock_token, &mock_token);
+
+        // Manually plant a small share balance so the "more than held" path fires.
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Shares(user.clone()), &10_i128);
+            env.storage()
+                .instance()
+                .set(&DataKey::TotalShares, &1000_i128);
+            env.storage().instance().set(&DataKey::ReserveA, &1000_i128);
+            env.storage().instance().set(&DataKey::ReserveB, &1000_i128);
+        });
+
+        // Requesting more shares than held must return InsufficientShares.
+        assert_eq!(
+            client.try_withdraw(&user, &11),
+            Err(Ok(AmmError::InsufficientShares.into()))
+        );
     }
 
     #[test]
