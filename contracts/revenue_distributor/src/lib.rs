@@ -1,7 +1,9 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env, Vec,
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token, vec, Address,
+    Env, IntoVal, Vec,
 };
 
 #[contracttype]
@@ -16,10 +18,9 @@ pub enum DataKey {
     MaxDepositCap,
     /// Running total of all tokens deposited into the contract.
     TotalDeposits,
+    /// Addresses (besides the admin) allowed to call `sweep_amm`.
+    SweepOperators,
 }
-
-#[contract]
-pub struct RevenueDistributor;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -27,6 +28,8 @@ pub struct RevenueDistributor;
 pub enum Error {
     /// Incoming deposit would push the pool total over the configured cap.
     DepositCapExceeded = 1,
+    /// Caller is neither the admin nor a registered sweep operator.
+    UnauthorizedSweep = 2,
 }
 
 #[contract]
@@ -269,12 +272,71 @@ impl RevenueDistributor {
         );
     }
 
+    /// Grant `operator` permission to call `sweep_amm` (admin only).
+    ///
+    /// Adding an address that is already an operator is a no-op.
+    pub fn add_sweep_operator(env: Env, admin: Address, operator: Address) {
+        Self::require_admin(&env, &admin);
+
+        let mut operators = Self::read_sweep_operators(&env);
+        if operators.contains(&operator) {
+            return;
+        }
+        operators.push_back(operator.clone());
+        env.storage().instance().set(&DataKey::SweepOperators, &operators);
+
+        env.events()
+            .publish((symbol_short!("sweep_add"),), (admin, operator));
+    }
+
+    /// Revoke `operator`'s permission to call `sweep_amm` (admin only).
+    ///
+    /// Removing an address that is not an operator is a no-op.
+    pub fn remove_sweep_operator(env: Env, admin: Address, operator: Address) {
+        Self::require_admin(&env, &admin);
+
+        let mut operators = Self::read_sweep_operators(&env);
+        let Some(index) = operators.first_index_of(&operator) else {
+            return;
+        };
+        operators.remove(index);
+        env.storage().instance().set(&DataKey::SweepOperators, &operators);
+
+        env.events()
+            .publish((symbol_short!("sweep_rm"),), (admin, operator));
+    }
+
+    /// Return the addresses currently allowed to sweep (excluding the admin).
+    pub fn get_sweep_operators(env: Env) -> Vec<Address> {
+        Self::read_sweep_operators(&env)
+    }
+
+    /// Return whether `addr` may call `sweep_amm` (admin or sweep operator).
+    pub fn is_sweep_authorized(env: Env, addr: Address) -> bool {
+        Self::can_sweep(&env, &addr)
+    }
+
     /// Sweep accrued swap fees from an AMM pool into the protocol treasury.
     ///
     /// Queries the distributor's balance of `token_a` (assumed to be the fee
     /// token), swaps it into `token_b` via the AMM's `swap` function, and
     /// forwards the proceeds to the treasury.
-    pub fn sweep_amm(env: Env, amm_contract: Address, token_a: Address, token_b: Address) {
+    ///
+    /// `caller` must authorize the call and be either the admin or a
+    /// registered sweep operator; otherwise `Error::UnauthorizedSweep` is
+    /// raised before any balance is read or moved.
+    pub fn sweep_amm(
+        env: Env,
+        caller: Address,
+        amm_contract: Address,
+        token_a: Address,
+        token_b: Address,
+    ) {
+        caller.require_auth();
+        if !Self::can_sweep(&env, &caller) {
+            panic_with_error!(env, Error::UnauthorizedSweep);
+        }
+
         let treasury: Address = env.storage().instance().get(&DataKey::Treasury).unwrap();
 
         let token_a_client = token::Client::new(&env, &token_a);
@@ -283,6 +345,21 @@ impl RevenueDistributor {
         if balance_a == 0 {
             return;
         }
+
+        // The AMM pulls token_a from this contract with a nested
+        // `token_a.transfer(self, amm, balance_a)`. That call is not invoked
+        // directly by this contract, so it must be pre-authorized here.
+        env.authorize_as_current_contract(vec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: token_a.clone(),
+                    fn_name: symbol_short!("transfer"),
+                    args: (env.current_contract_address(), amm_contract.clone(), balance_a).into_val(&env),
+                },
+                sub_invocations: vec![&env],
+            }),
+        ]);
 
         // Execute swap: token_a → token_b through the AMM pool.
         // The AMM pulls token_a from this contract, validates min_amount_out,
@@ -324,14 +401,82 @@ impl RevenueDistributor {
         let gov_share_bps: u32 = env.storage().instance().get(&DataKey::GovShareBps).unwrap();
         (treasury, gov_stakers, gov_share_bps)
     }
+
+    fn require_admin(env: &Env, admin: &Address) {
+        admin.require_auth();
+        let current_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert_eq!(*admin, current_admin, "not authorized");
+    }
+
+    fn read_sweep_operators(env: &Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::SweepOperators)
+            .unwrap_or_else(|| Vec::new(env))
+    }
+
+    fn can_sweep(env: &Env, addr: &Address) -> bool {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        *addr == admin || Self::read_sweep_operators(env).contains(addr)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::{Address as _};
-    use soroban_sdk::{token, Address, Env};
-    use anchorpoint_amm::AMM;
+    use soroban_sdk::testutils::{Address as _, Events as _};
+    use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
+
+    /// Minimal constant-product pool exposing the same `swap` entry point the
+    /// distributor invokes on a real AMM. Kept in-crate because the
+    /// `anchorpoint-amm` crate targets a different soroban-sdk major version
+    /// and cannot be linked into these tests.
+    #[contracttype]
+    enum MockAmmKey {
+        Tokens,
+    }
+
+    #[contract]
+    struct MockAmm;
+
+    #[contractimpl]
+    impl MockAmm {
+        pub fn initialize(env: Env, token_a: Address, token_b: Address) {
+            env.storage().instance().set(&MockAmmKey::Tokens, &(token_a, token_b));
+        }
+
+        pub fn swap(env: Env, from: Address, token_in: Address, amount_in: i128, min_amount_out: i128) -> i128 {
+            from.require_auth();
+            let (token_a, token_b): (Address, Address) =
+                env.storage().instance().get(&MockAmmKey::Tokens).unwrap();
+            let token_out = if token_in == token_a {
+                token_b
+            } else if token_in == token_b {
+                token_a
+            } else {
+                panic!("invalid token for pool");
+            };
+
+            let pool = env.current_contract_address();
+            let in_client = token::Client::new(&env, &token_in);
+            let out_client = token::Client::new(&env, &token_out);
+            let reserve_in = in_client.balance(&pool);
+            let reserve_out = out_client.balance(&pool);
+
+            in_client.transfer(&from, &pool, &amount_in);
+            let amount_in_with_fee = amount_in * 997;
+            let amount_out = amount_in_with_fee * reserve_out / (reserve_in * 1000 + amount_in_with_fee);
+            assert!(amount_out >= min_amount_out, "slippage exceeded");
+            out_client.transfer(&pool, &from, &amount_out);
+            amount_out
+        }
+    }
+
+    fn register_mock_amm(env: &Env, token_a: &Address, token_b: &Address) -> Address {
+        let amm_id = env.register_contract(None, MockAmm);
+        MockAmmClient::new(env, &amm_id).initialize(token_a, token_b);
+        amm_id
+    }
 
     fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let env = Env::default();
@@ -606,14 +751,14 @@ mod tests {
 
     // ── Sweep AMM tests ──
 
-    fn sweep_setup() -> (Env, RevenueDistributorClient<'static>, Address, Address, Address, Address, Address, Address) {
+    #[allow(clippy::type_complexity)]
+    fn sweep_setup() -> (Env, RevenueDistributorClient<'static>, Address, Address, Address, Address, Address, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
 
         let admin = Address::generate(&env);
         let treasury = Address::generate(&env);
         let gov_stakers = Address::generate(&env);
-        let lp = Address::generate(&env);
 
         // Register tokens using Stellar asset contracts
         let token_admin = Address::generate(&env);
@@ -625,17 +770,10 @@ mod tests {
         let token_a_sac = token::StellarAssetClient::new(&env, &token_a);
         let token_b_sac = token::StellarAssetClient::new(&env, &token_b);
 
-        // Register and initialize the AMM
-        let amm_id = env.register(AMM, ());
-        let amm_client = anchorpoint_amm::AMMClient::new(&env, &amm_id);
-        amm_client.initialize(&admin, &token_a, &token_b);
-
-        // Mint tokens to LP for liquidity provision
-        token_a_sac.mint(&lp, &100_000_000);
-        token_b_sac.mint(&lp, &100_000_000);
-
-        // LP deposits liquidity into the AMM pool
-        amm_client.deposit(&lp, &50_000_000, &50_000_000);
+        // Register the AMM and seed its pool with liquidity
+        let amm_id = register_mock_amm(&env, &token_a, &token_b);
+        token_a_sac.mint(&amm_id, &50_000_000);
+        token_b_sac.mint(&amm_id, &50_000_000);
 
         // Register and initialize the revenue distributor
         let distributor_id = env.register_contract(None, RevenueDistributor);
@@ -645,14 +783,14 @@ mod tests {
         // Mint token_a fees to the distributor (simulating accrued swap revenue)
         token_a_sac.mint(&distributor_id, &10_000);
 
-        (env, client, distributor_id, amm_id, token_a, token_b, treasury, gov_stakers)
+        (env, client, distributor_id, amm_id, token_a, token_b, treasury, gov_stakers, admin)
     }
 
     #[test]
     fn test_sweep_amm_swaps_and_transfers_to_treasury() {
-        let (env, client, distributor_id, amm_id, token_a, token_b, treasury, _gov_stakers) = sweep_setup();
+        let (env, client, distributor_id, amm_id, token_a, token_b, treasury, _gov_stakers, admin) = sweep_setup();
 
-        client.sweep_amm(&amm_id, &token_a, &token_b);
+        client.sweep_amm(&admin, &amm_id, &token_a, &token_b);
 
         let token_b_client = token::Client::new(&env, &token_b);
         // Treasury should have received token_b from the swap
@@ -678,12 +816,10 @@ mod tests {
         let token_admin = Address::generate(&env);
         let token_a_id = env.register_stellar_asset_contract_v2(token_admin.clone());
         let token_b_id = env.register_stellar_asset_contract_v2(token_admin);
-        let amm_id = env.register(AMM, ());
-        let amm_client = anchorpoint_amm::AMMClient::new(&env, &amm_id);
-        amm_client.initialize(&admin, &token_a_id.address(), &token_b_id.address());
+        let amm_id = register_mock_amm(&env, &token_a_id.address(), &token_b_id.address());
 
         // No tokens minted to distributor — balance is 0
-        client.sweep_amm(&amm_id, &token_a_id.address(), &token_b_id.address());
+        client.sweep_amm(&admin, &amm_id, &token_a_id.address(), &token_b_id.address());
 
         let token_b_client = token::Client::new(&env, &token_b_id.address());
         assert_eq!(token_b_client.balance(&treasury), 0);
@@ -691,13 +827,118 @@ mod tests {
 
     #[test]
     fn test_sweep_amm_emits_revenue_swept_event() {
-        let (env, client, _distributor_id, amm_id, token_a, token_b, _treasury, _gov_stakers) = sweep_setup();
+        let (env, client, _distributor_id, amm_id, token_a, token_b, _treasury, _gov_stakers, admin) = sweep_setup();
 
         let events_before = env.events().all().len();
-        client.sweep_amm(&amm_id, &token_a, &token_b);
+        client.sweep_amm(&admin, &amm_id, &token_a, &token_b);
         let events_after = env.events().all().len();
 
         // At least one new event should have been emitted
         assert!(events_after > events_before, "RevenueSwept event should be emitted");
+    }
+
+    // ── Sweep authorization tests (Issue #1514) ──
+
+    #[test]
+    fn test_unauthorized_caller_cannot_sweep() {
+        let (env, client, distributor_id, amm_id, token_a, token_b, treasury, _gov_stakers, _admin) = sweep_setup();
+        let outsider = Address::generate(&env);
+
+        assert!(!client.is_sweep_authorized(&outsider));
+        assert_eq!(
+            client.try_sweep_amm(&outsider, &amm_id, &token_a, &token_b),
+            Err(Ok(Error::UnauthorizedSweep.into()))
+        );
+
+        // Nothing moved: fees stay in the distributor, treasury untouched.
+        let token_a_client = token::Client::new(&env, &token_a);
+        let token_b_client = token::Client::new(&env, &token_b);
+        assert_eq!(token_a_client.balance(&distributor_id), 10_000);
+        assert_eq!(token_b_client.balance(&treasury), 0);
+    }
+
+    #[test]
+    fn test_sweep_operator_can_sweep() {
+        let (env, client, distributor_id, amm_id, token_a, token_b, treasury, _gov_stakers, admin) = sweep_setup();
+        let operator = Address::generate(&env);
+
+        client.add_sweep_operator(&admin, &operator);
+        assert!(client.is_sweep_authorized(&operator));
+        assert_eq!(client.get_sweep_operators(), soroban_sdk::vec![&env, operator.clone()]);
+
+        client.sweep_amm(&operator, &amm_id, &token_a, &token_b);
+
+        // The operator's own signature is what authorized the sweep.
+        assert_eq!(env.auths()[0].0, operator);
+        let token_a_client = token::Client::new(&env, &token_a);
+        let token_b_client = token::Client::new(&env, &token_b);
+        assert_eq!(token_a_client.balance(&distributor_id), 0);
+        assert!(token_b_client.balance(&treasury) > 0);
+    }
+
+    #[test]
+    fn test_admin_is_always_sweep_authorized() {
+        let (_env, client, _distributor_id, _amm_id, _token_a, _token_b, _treasury, _gov_stakers, admin) = sweep_setup();
+        assert!(client.is_sweep_authorized(&admin));
+        assert_eq!(client.get_sweep_operators().len(), 0);
+    }
+
+    #[test]
+    fn test_removed_operator_cannot_sweep() {
+        let (env, client, _distributor_id, amm_id, token_a, token_b, _treasury, _gov_stakers, admin) = sweep_setup();
+        let operator = Address::generate(&env);
+
+        client.add_sweep_operator(&admin, &operator);
+        client.remove_sweep_operator(&admin, &operator);
+
+        assert!(!client.is_sweep_authorized(&operator));
+        assert_eq!(client.get_sweep_operators().len(), 0);
+        assert_eq!(
+            client.try_sweep_amm(&operator, &amm_id, &token_a, &token_b),
+            Err(Ok(Error::UnauthorizedSweep.into()))
+        );
+    }
+
+    #[test]
+    fn test_add_and_remove_sweep_operator_are_idempotent() {
+        let (env, client, _distributor_id, _amm_id, _token_a, _token_b, _treasury, _gov_stakers, admin) = sweep_setup();
+        let operator = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        client.add_sweep_operator(&admin, &operator);
+        client.add_sweep_operator(&admin, &operator);
+        assert_eq!(client.get_sweep_operators().len(), 1);
+
+        // Removing an address that was never added leaves the list intact.
+        client.remove_sweep_operator(&admin, &other);
+        assert_eq!(client.get_sweep_operators(), soroban_sdk::vec![&env, operator]);
+    }
+
+    #[test]
+    #[should_panic(expected = "not authorized")]
+    fn test_non_admin_cannot_add_sweep_operator() {
+        let (env, client, _distributor_id, _amm_id, _token_a, _token_b, _treasury, _gov_stakers, _admin) = sweep_setup();
+        let outsider = Address::generate(&env);
+        client.add_sweep_operator(&outsider, &outsider);
+    }
+
+    #[test]
+    #[should_panic(expected = "not authorized")]
+    fn test_non_admin_cannot_remove_sweep_operator() {
+        let (env, client, _distributor_id, _amm_id, _token_a, _token_b, _treasury, _gov_stakers, admin) = sweep_setup();
+        let operator = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        client.add_sweep_operator(&admin, &operator);
+        client.remove_sweep_operator(&outsider, &operator);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_sweep_requires_caller_signature() {
+        let (env, client, _distributor_id, amm_id, token_a, token_b, _treasury, _gov_stakers, admin) = sweep_setup();
+        // Drop the blanket auth mock: naming the admin without its
+        // signature must not be enough to sweep.
+        env.set_auths(&[]);
+        client.sweep_amm(&admin, &amm_id, &token_a, &token_b);
     }
 }

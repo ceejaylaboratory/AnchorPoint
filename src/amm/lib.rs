@@ -2,6 +2,9 @@
 
 pub mod reentrancy_guard;
 
+#[cfg(test)]
+mod constant_product_fuzz;
+
 use reentrancy_guard::ReentrancyGuard;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
@@ -508,7 +511,7 @@ mod tests {
         assert_eq!(client.get_admin(), admin);
         assert!(!client.is_paused());
         assert_eq!(
-            _env.events().all().len(),
+            _env.events().all().events().len(),
             1,
             "initialization emits one pool event"
         );
@@ -867,14 +870,18 @@ mod tests {
 
         // The mock pool is initialised with the same token on both sides, so
         // token_in and token_out are both the mock.
-        let events = env.events().all();
+        // `all()` holds the events of the last invocation; the no-op mock
+        // token emits none, so the pool's swap event is the only one.
         assert_eq!(
-            events.get(events.len() - 1).unwrap(),
-            (
-                contract_id,
-                svec![&env, symbol_short!("swap").into_val(&env)],
-                (user, token_id.clone(), token_id, amount_in, expected_out).into_val(&env),
-            )
+            env.events().all().filter_by_contract(&contract_id),
+            svec![
+                &env,
+                (
+                    contract_id,
+                    svec![&env, symbol_short!("swap").into_val(&env)],
+                    (user, token_id.clone(), token_id, amount_in, expected_out).into_val(&env),
+                )
+            ]
         );
     }
 

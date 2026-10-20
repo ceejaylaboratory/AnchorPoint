@@ -189,6 +189,32 @@ describe('Auth Controller', () => {
       });
     });
 
+    it('returns 401 challenge_expired when the challenge timeBounds have passed', async () => {
+      mockRequest.body = { transaction: 'expired-challenge' };
+      const mockChallenge = {
+        challenge: 'expired-challenge',
+        publicKey: 'GBAD_PUBLIC_KEY',
+        createdAt: Date.now()
+      };
+
+      (authService.getChallenge as jest.Mock).mockResolvedValue(mockChallenge);
+      (sep10Stellar.extractAccountFromSep10Transaction as jest.Mock).mockReturnValue('GBAD_PUBLIC_KEY');
+      (authService.verifySep10ChallengeTransaction as jest.Mock).mockReturnValue({
+        isValid: false,
+        account: 'GBAD_PUBLIC_KEY',
+        error: 'challenge_expired'
+      });
+
+      await getToken(mockRequest as Request, mockResponse as Response, mockRedisService as RedisService);
+
+      expect(mockResponse.status).toHaveBeenCalledWith(401);
+      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'challenge_expired' });
+      expect(authService.removeChallenge).toHaveBeenCalledWith(mockRedisService, 'GBAD_PUBLIC_KEY');
+      expect(mockRedisService.getJSON).not.toHaveBeenCalled();
+      expect(authService.signToken).not.toHaveBeenCalled();
+      expect(authService.issueTokenPair).not.toHaveBeenCalled();
+    });
+
     it('rejects replayed challenge when nonce was already consumed', async () => {
       mockRequest.body = { transaction: 'valid-challenge' };
       const mockChallenge = {
