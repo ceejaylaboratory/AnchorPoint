@@ -89,31 +89,38 @@ export class AdminPasswordResetService {
       include: { adminUser: true },
     });
 
-    if (!existingToken || existingToken.usedAt || existingToken.expiresAt.getTime() <= Date.now()) {
+    const now = Date.now();
+
+    if (!existingToken || existingToken.usedAt || existingToken.expiresAt.getTime() <= now) {
       throw new InvalidResetTokenError();
     }
 
     const passwordHash = await hashPassword(newPassword);
-    const now = new Date();
 
     await prisma.$transaction(async (tx: any) => {
+      // Consume the token by deleting it. The conditional delete makes the
+      // token single-use even if the same token is submitted concurrently:
+      // only one request can remove the row.
+      const consumed = await tx.adminPasswordResetToken.deleteMany({
+        where: {
+          id: existingToken.id,
+          usedAt: null,
+          expiresAt: { gt: new Date(now) },
+        },
+      });
+
+      if (consumed.count !== 1) {
+        throw new InvalidResetTokenError();
+      }
+
       await tx.adminUser.update({
         where: { id: existingToken.adminUserId },
         data: { passwordHash },
       });
 
-      await tx.adminPasswordResetToken.update({
-        where: { id: existingToken.id },
-        data: { usedAt: now },
-      });
-
-      await tx.adminPasswordResetToken.updateMany({
-        where: {
-          adminUserId: existingToken.adminUserId,
-          usedAt: null,
-          id: { not: existingToken.id },
-        },
-        data: { usedAt: now },
+      // Invalidate every other outstanding reset token for this admin.
+      await tx.adminPasswordResetToken.deleteMany({
+        where: { adminUserId: existingToken.adminUserId },
       });
     });
   }

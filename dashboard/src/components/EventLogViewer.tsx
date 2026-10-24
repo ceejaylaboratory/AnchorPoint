@@ -23,6 +23,8 @@ export interface RawContractEvent {
   contractId?: string;
   xdr?: string;
   timestamp?: string;
+  /** Monotonic stream sequence, used to resume after a reconnect. */
+  sequence?: number;
 }
 
 export type Severity = 'INFO' | 'WARN' | 'ERROR';
@@ -36,9 +38,12 @@ export interface LogEntry {
   contractId?: string;
   /** Severity derived from the event topic name. */
   severity: Severity;
+  sequence?: number;
 }
 
 const MAX_ENTRIES = 200;
+/** Delay before re-opening the stream after it drops. */
+const RECONNECT_DELAY_MS = 3000;
 
 // ---------------------------------------------------------------------------
 // Severity helpers
@@ -206,8 +211,41 @@ export const toLogEntry = (raw: RawContractEvent): LogEntry => {
     topic,
     contractId,
     severity: deriveSeverity(topic),
+    ...(typeof raw.sequence === 'number' ? { sequence: raw.sequence } : {}),
   };
 };
+
+/**
+ * Appends `incoming` to `prev`, skipping entries whose id is already in the
+ * log (or repeated within `incoming`), and keeps only the newest `maxEntries`.
+ * A reconnecting stream may replay history, so this keeps ids unique.
+ */
+export const mergeEvents = (
+  prev: LogEntry[],
+  incoming: LogEntry[],
+  maxEntries: number,
+): LogEntry[] => {
+  const seen = new Set(prev.map((entry) => entry.id));
+  const additions = incoming.filter((entry) => {
+    if (seen.has(entry.id)) return false;
+    seen.add(entry.id);
+    return true;
+  });
+  if (additions.length === 0) return prev;
+
+  const next = [...prev, ...additions];
+  return next.length > maxEntries ? next.slice(next.length - maxEntries) : next;
+};
+
+/** Highest stream sequence present in `entries`, or null when none carry one. */
+const maxSequence = (entries: LogEntry[]): number | null =>
+  entries.reduce<number | null>(
+    (max, entry) =>
+      typeof entry.sequence === 'number' && (max === null || entry.sequence > max)
+        ? entry.sequence
+        : max,
+    null,
+  );
 
 // ---------------------------------------------------------------------------
 // useDebounce
@@ -254,7 +292,7 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
   initialEvents,
 }) => {
   const [events, setEvents] = useState<LogEntry[]>(() =>
-    (initialEvents ?? []).map(toLogEntry),
+    mergeEvents([], (initialEvents ?? []).map(toLogEntry), maxEntries),
   );
   const [contractFilter, setContractFilter] = useState<string>('all');
   const [severityFilter, setSeverityFilter] = useState<Severity | 'all'>('all');
@@ -263,6 +301,9 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
+  /** Highest sequence received so far; frames at or below it are replays. */
+  const [seedSequence] = useState(() => maxSequence(events));
+  const lastSequenceRef = useRef<number | null>(seedSequence);
 
   const debouncedSearch = useDebounce(searchInput, 300);
 
@@ -270,31 +311,65 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
     // jsdom and older webviews have no EventSource; the seeded log still works.
     if (typeof EventSource === 'undefined') return undefined;
 
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = () => {
+      // Resume from the last sequence we saw so the server can skip history
+      // the log already holds; replays are still filtered below.
+      const since = lastSequenceRef.current;
+      const url =
+        since === null
+          ? `${apiBaseUrl}/api/events`
+          : `${apiBaseUrl}/api/events?since=${encodeURIComponent(String(since))}`;
+      const es = new EventSource(url);
+      esRef.current = es;
+
+      es.onopen = () => {
+        setConnected(true);
+        setError(null);
+      };
+
+      es.onmessage = (message) => {
+        let parsed: RawContractEvent;
+        try {
+          parsed = JSON.parse(message.data as string) as RawContractEvent;
+        } catch {
+          // Keep-alive comments and other non-JSON frames are not events.
+          return;
+        }
+
+        if (typeof parsed.sequence === 'number') {
+          const last = lastSequenceRef.current;
+          if (last !== null && parsed.sequence <= last) return;
+          lastSequenceRef.current = parsed.sequence;
+        }
+
+        const entry = toLogEntry(parsed);
+        setEvents((prev) => mergeEvents(prev, [entry], maxEntries));
+      };
+
+      es.onerror = () => {
+        setConnected(false);
+        setError('Stream disconnected. Reconnecting…');
+        // Reconnect ourselves (rather than letting EventSource retry the
+        // original URL) so the resume point is sent with the new request.
+        es.close();
+        if (esRef.current === es) esRef.current = null;
+        if (!disposed) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+        }
+      };
+    };
+
     setError(null);
-    const es = new EventSource(`${apiBaseUrl}/api/events`);
-    esRef.current = es;
-
-    es.onopen = () => setConnected(true);
-
-    es.onmessage = (message) => {
-      try {
-        const parsed = JSON.parse(message.data as string) as RawContractEvent;
-        setEvents((prev) => {
-          const next = [...prev, toLogEntry(parsed)];
-          return next.length > maxEntries ? next.slice(next.length - maxEntries) : next;
-        });
-      } catch {
-        // Keep-alive comments and other non-JSON frames are not events.
-      }
-    };
-
-    es.onerror = () => {
-      setConnected(false);
-      setError('Stream disconnected. Reconnecting…');
-    };
+    connect();
 
     return () => {
-      es.close();
+      disposed = true;
+      clearTimeout(reconnectTimer);
+      esRef.current?.close();
       esRef.current = null;
       setConnected(false);
     };

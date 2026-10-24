@@ -75,6 +75,8 @@ const ServiceStatusPanel: React.FC = () => {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [latencyHistory, setLatencyHistory] = useState<LatencyDataPoint[]>([]);
+  const [selectedService, setSelectedService] = useState<string | null>(null);
+  const [uptimeStats, setUptimeStats] = useState<Record<string, { up: number; total: number }>>({});
 
   const fetchHealth = useCallback(async () => {
     setLoading(true);
@@ -82,7 +84,7 @@ const ServiceStatusPanel: React.FC = () => {
     const now = new Date();
     try {
       const start = Date.now();
-      const res = await fetch('/api/health');
+      const res = await fetch('/health');
       const elapsed = Date.now() - start;
 
       if (!res.ok) {
@@ -137,6 +139,17 @@ const ServiceStatusPanel: React.FC = () => {
 
       setServices(list);
       setLastRefresh(now);
+      setUptimeStats((prev) => {
+        const next = { ...prev };
+        for (const svc of list) {
+          const entry = next[svc.name] ?? { up: 0, total: 0 };
+          next[svc.name] = {
+            up: entry.up + (svc.state === 'offline' ? 0 : 1),
+            total: entry.total + 1,
+          };
+        }
+        return next;
+      });
     } catch (err) {
       setFetchError('Failed to reach health endpoint');
       setServices([
@@ -151,10 +164,16 @@ const ServiceStatusPanel: React.FC = () => {
 
   useEffect(() => {
     void fetchHealth();
-    // Fetch every 30 seconds
-    const interval = setInterval(fetchHealth, 30000);
+    // Poll the live health endpoint every 60 seconds
+    const interval = setInterval(fetchHealth, 60000);
     return () => clearInterval(interval);
   }, [fetchHealth]);
+
+  const getUptimePercent = (name: string): string => {
+    const stats = uptimeStats[name];
+    if (!stats || stats.total === 0) return '—';
+    return `${((stats.up / stats.total) * 100).toFixed(1)}%`;
+  };
 
   return (
     <div className="glass-card p-6">
@@ -179,23 +198,48 @@ const ServiceStatusPanel: React.FC = () => {
       )}
 
       <ul className="space-y-3" aria-label="Service health status">
-        {services.map((svc) => (
-          <li
-            key={svc.name}
-            className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-3"
-          >
-            <div className="flex items-center gap-3">
-              <StateDot state={svc.state} />
-              <span className="text-sm font-medium">{svc.name}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              {svc.latencyMs !== undefined && (
-                <span className="text-xs text-slate-500">{svc.latencyMs}ms</span>
+        {services.map((svc) => {
+          const expanded = selectedService === svc.name;
+          return (
+            <li key={svc.name}>
+              <button
+                type="button"
+                onClick={() => setSelectedService(expanded ? null : svc.name)}
+                aria-expanded={expanded}
+                className="flex w-full items-center justify-between rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-3 text-left transition-colors hover:border-slate-700"
+              >
+                <div className="flex items-center gap-3">
+                  <StateDot state={svc.state} />
+                  <span className="text-sm font-medium">{svc.name}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  {svc.latencyMs !== undefined && (
+                    <span className="text-xs text-slate-500">{svc.latencyMs}ms</span>
+                  )}
+                  <StateBadge state={svc.state} />
+                </div>
+              </button>
+              {expanded && (
+                <div className="mt-1 rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
+                  <div className="flex justify-between">
+                    <span>Latency</span>
+                    <span className="font-mono text-slate-200">
+                      {svc.latencyMs !== undefined ? `${svc.latencyMs}ms` : '—'}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex justify-between">
+                    <span>24h uptime</span>
+                    <span className="font-mono text-emerald-400">{getUptimePercent(svc.name)}</span>
+                  </div>
+                  <div className="mt-1 flex justify-between">
+                    <span>Last checked</span>
+                    <span className="font-mono text-slate-200">{svc.lastChecked.toLocaleTimeString()}</span>
+                  </div>
+                </div>
               )}
-              <StateBadge state={svc.state} />
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
 
       {latencyHistory.length > 1 && (

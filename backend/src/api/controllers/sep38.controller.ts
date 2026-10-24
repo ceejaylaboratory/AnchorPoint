@@ -2,6 +2,7 @@ import { Redis } from 'ioredis';
 import BigNumber from 'bignumber.js';
 import { PriceAggregationService, PriceFetchOptions } from '../../services/price-aggregation.service';
 import { AdvancedCacheService } from '../../services/advanced-cache.service';
+import { Sep38QuoteCacheService } from '../../services/sep38-quote-cache.service';
 import {
   buildQuoteExpirationTime,
   getSep38QuotesCacheConfig,
@@ -138,12 +139,14 @@ const SUPPORTED_ASSETS: AssetInfo[] = [
 export class Sep38Controller {
   private priceService: PriceAggregationService;
   private cache: AdvancedCacheService;
+  private quoteCache: Sep38QuoteCacheService;
   private assetsCacheKey = 'sep38:supported_assets';
   private cacheConfig: Sep38QuotesCacheConfig;
 
   constructor(redis: Redis, cacheConfig: Sep38QuotesCacheConfig = getSep38QuotesCacheConfig()) {
     this.priceService = new PriceAggregationService(redis);
     this.cache = new AdvancedCacheService(redis);
+    this.quoteCache = new Sep38QuoteCacheService(redis);
     this.cacheConfig = cacheConfig;
   }
 
@@ -194,7 +197,7 @@ export class Sep38Controller {
       };
     }
 
-    const cacheKey = `quote:${source}:${dest}:${sourceAmount}:${context || 'default'}`;
+    const cacheKey = this.quoteCache.buildPriceKey(source, dest, sourceAmount, context);
 
     // Use cache-aside pattern to get or compute quote
     const fetchQuote = async (): Promise<PriceQuote> => {
@@ -519,8 +522,8 @@ export class Sep38Controller {
     const asset = assetCode.toUpperCase();
     await Promise.all([
       this.priceService.invalidatePrice(asset),
-      this.cache.invalidatePattern(`quote:${asset}:*`),
-      this.cache.invalidatePattern(`quote:*:${asset}:*`),
+      this.cache.invalidatePattern(`sep38:quote:price:${asset}:*`),
+      this.cache.invalidatePattern(`sep38:quote:price:*:${asset}:*`),
     ]);
 
     logger.info(`Updated price for ${assetCode} to ${priceUSD}, invalidated related caches`);

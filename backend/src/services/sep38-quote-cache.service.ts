@@ -68,6 +68,23 @@ export class Sep38QuoteCacheService {
     return expiredIds.length;
   }
 
+  /**
+   * Build a cache key for an indicative price quote.
+   *
+   * Keying by (source, destination, amount, context) guarantees that changing
+   * any part of the asset pair produces a distinct key, so a cached USDC→XLM
+   * price is never returned for a BTC→XLM request.
+   */
+  buildPriceKey(
+    sourceAsset: string,
+    destinationAsset: string,
+    sourceAmount: string,
+    context?: string,
+  ): string {
+    const ctx = context || 'default';
+    return `${QUOTE_KEY_PREFIX}price:${sourceAsset.toUpperCase()}:${destinationAsset.toUpperCase()}:${sourceAmount}:${ctx}`;
+  }
+
   private buildKey(id: string): string {
     return `${QUOTE_KEY_PREFIX}${id}`;
   }

@@ -5,8 +5,9 @@ import { smtpService } from '../lib/smtp.service';
 import prisma from '../lib/prisma';
 import type { AlertPayload } from '../types/alerts';
 import logger from '../utils/logger';
-import promClient, { Gauge } from 'prom-client';
+import promClient, { Counter, Gauge } from 'prom-client';
 import { type AlertEmailService, SmtpAlertEmailService } from './alert-email.service';
+import { notificationService } from './notification.service';
 
 export type { AlertPayload } from '../types/alerts';
 
@@ -39,6 +40,8 @@ export interface AlertChannelConfig {
   emailRecipients?: string;
   /** Any custom HTTP endpoint that accepts POST { alert: AlertPayload } */
   customWebhookUrl?: string;
+  /** Comma-separated list of user ids notified via the notification service (email/SMS/push) */
+  notificationUserIds?: string;
 }
 
 export interface HotWalletMonitorConfig {
@@ -48,7 +51,7 @@ export interface HotWalletMonitorConfig {
   intervalMs?: number;
   /** Alert channel configuration */
   alertChannels?: AlertChannelConfig;
-  /** Redis key TTL for de-duplication, in seconds (default: 3600) */
+  /** Redis key TTL for de-duplication, in seconds (default: 1800) */
   alertCooldownSeconds?: number;
   /** SMTP-backed alert email delivery */
   alertEmailService?: AlertEmailService;
@@ -70,6 +73,13 @@ const walletBelowThresholdGauge = new Gauge({
   registers: [metricsService.getRegistry()],
 });
 
+const lowBalanceAlertsCounter = new Counter({
+  name: 'hot_wallet_low_balance_alerts_total',
+  help: 'Total number of hot wallet low-balance alerts dispatched',
+  labelNames: ['wallet_label', 'asset_code'],
+  registers: [metricsService.getRegistry()],
+});
+
 const slaBreachTransactionsGauge = new Gauge({
   name: 'sla_breach_transactions_count',
   help: 'Number of transactions stuck in PENDING_EXTERNAL for over 2 hours',
@@ -85,15 +95,19 @@ export class HotWalletMonitorService {
   private readonly alertEmailService: AlertEmailService;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly COOLDOWN_KEY_PREFIX = 'hot_wallet_alert:';
+  private readonly BREACH_KEY_PREFIX = 'hot_wallet_breach:';
+  /** Balance must recover above this multiple of the threshold before an all-clear is sent. */
+  private readonly RECOVERY_THRESHOLD_MULTIPLIER = 1.1;
 
   private constructor(config: HotWalletMonitorConfig) {
     this.config = {
       intervalMs: 60_000,
-      alertCooldownSeconds: 3_600,
+      alertCooldownSeconds: 1_800,
       alertChannels: {
         slackWebhookUrl: process.env.ALERT_SLACK_WEBHOOK_URL,
         emailRecipients: process.env.ALERT_EMAIL_RECIPIENTS,
         customWebhookUrl: process.env.ALERT_WEBHOOK_URL,
+        notificationUserIds: process.env.ALERT_NOTIFICATION_USER_IDS,
       },
       alertEmailService: config.alertEmailService ?? new SmtpAlertEmailService(),
       ...config,
@@ -186,6 +200,8 @@ export class HotWalletMonitorService {
 
       if (belowThreshold) {
         await this.handleAlert(snapshot);
+      } else if (balance >= wallet.thresholdAmount * this.RECOVERY_THRESHOLD_MULTIPLIER) {
+        await this.handleRecovery(snapshot);
       }
 
       return snapshot;
@@ -396,10 +412,44 @@ export class HotWalletMonitorService {
       channels.slackWebhookUrl ? this.sendSlackAlert(channels.slackWebhookUrl, payload) : Promise.resolve(),
       channels.emailRecipients ? this.sendEmailAlert(channels.emailRecipients, payload) : Promise.resolve(),
       channels.customWebhookUrl ? this.sendCustomWebhook(channels.customWebhookUrl, payload) : Promise.resolve(),
+      this.sendNotification(
+        `[AnchorPoint] Low balance on ${payload.walletLabel}: ${payload.currentBalance} ${payload.assetCode} ` +
+          `(threshold ${payload.thresholdAmount}). Detected at ${payload.checkedAt}.`
+      ),
     ]);
 
-    // Mark as alerted — suppress duplicates for cooldown period
+    lowBalanceAlertsCounter.inc({ wallet_label: payload.walletLabel, asset_code: payload.assetCode });
+
+    // Mark as alerted — suppress duplicates for cooldown period, and remember
+    // the breach so an all-clear can be sent once the balance recovers.
     await redis.set(cooldownKey, '1', 'EX', this.config.alertCooldownSeconds!);
+    await redis.set(this.breachKey(snapshot.wallet), '1');
+  }
+
+  /** Send an all-clear once a previously alerted wallet recovers above 110% of its threshold. */
+  private async handleRecovery(snapshot: WalletBalanceSnapshot): Promise<void> {
+    const breachKey = this.breachKey(snapshot.wallet);
+    const inBreach = await redis.get(breachKey);
+    if (!inBreach) {
+      return;
+    }
+
+    logger.info('[HotWalletMonitor] Balance recovered — sending all-clear', {
+      wallet: snapshot.wallet.label,
+      balance: snapshot.balance,
+    });
+
+    await this.sendNotification(
+      `[AnchorPoint] All clear: ${snapshot.wallet.label} balance recovered to ${snapshot.balance} ` +
+        `${snapshot.wallet.assetCode} (threshold ${snapshot.wallet.thresholdAmount}). Checked at ${snapshot.checkedAt}.`
+    );
+
+    await redis.del(breachKey);
+    await redis.del(`${this.COOLDOWN_KEY_PREFIX}${snapshot.wallet.publicKey}:${snapshot.wallet.assetCode}`);
+  }
+
+  private breachKey(wallet: HotWallet): string {
+    return `${this.BREACH_KEY_PREFIX}${wallet.publicKey}:${wallet.assetCode}`;
   }
 
   // ── Alert channels ──────────────────────────────────────────────────────────
@@ -459,6 +509,16 @@ export class HotWalletMonitorService {
     logger.info('[HotWalletMonitor] Email alert dispatched', { wallet: alert.walletLabel });
   }
 
+  /** Dispatch a message to every configured user via the notification service. */
+  private async sendNotification(message: string): Promise<void> {
+    const userIds = (this.config.alertChannels?.notificationUserIds ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+
+    await Promise.all(userIds.map((userId) => notificationService.notify(userId, message)));
+  }
+
   private async sendCustomWebhook(url: string, alert: AlertPayload): Promise<void> {
     const response = await fetch(url, {
       method: 'POST',
@@ -479,17 +539,25 @@ export class HotWalletMonitorService {
 export function createMonitorFromEnv(): HotWalletMonitorService {
   // Wallets are supplied via environment in JSON, e.g.:
   // HOT_WALLETS='[{"label":"Main XLM","publicKey":"G...","assetCode":"XLM","thresholdAmount":100}]'
+  // XLM wallets without an explicit thresholdAmount fall back to
+  // LOW_BALANCE_THRESHOLD_XLM (default: 100 XLM).
   const walletsRaw = process.env.HOT_WALLETS;
-  const wallets: HotWallet[] = walletsRaw ? JSON.parse(walletsRaw) : [];
+  const lowBalanceThresholdXlm = parseFloat(process.env.LOW_BALANCE_THRESHOLD_XLM ?? '100');
+  const wallets: HotWallet[] = (walletsRaw ? (JSON.parse(walletsRaw) as HotWallet[]) : []).map((w) =>
+    w.thresholdAmount === undefined && w.assetCode === 'XLM' && (!w.assetIssuer || w.assetIssuer === 'native')
+      ? { ...w, thresholdAmount: lowBalanceThresholdXlm }
+      : w
+  );
 
   return HotWalletMonitorService.getInstance({
     wallets,
     intervalMs: parseInt(process.env.HOT_WALLET_CHECK_INTERVAL_MS ?? '60000', 10),
-    alertCooldownSeconds: parseInt(process.env.HOT_WALLET_ALERT_COOLDOWN_SEC ?? '3600', 10),
+    alertCooldownSeconds: parseInt(process.env.HOT_WALLET_ALERT_COOLDOWN_SEC ?? '1800', 10),
     alertChannels: {
       slackWebhookUrl: process.env.ALERT_SLACK_WEBHOOK_URL,
       emailRecipients: process.env.ALERT_EMAIL_RECIPIENTS,
       customWebhookUrl: process.env.ALERT_WEBHOOK_URL,
+      notificationUserIds: process.env.ALERT_NOTIFICATION_USER_IDS,
     },
   });
 }

@@ -18,6 +18,7 @@ This is a monorepo containing:
 
 - **SEP-24 Wizard**: A multi-step UI flow for handling deposits and withdrawals.
 - **Transaction Management**: A detailed view of pending and historical transactions.
+- **Keyboard Shortcuts**: Press `?` for help, `N` for a new transaction, `T` for transactions, `S` for settings (disabled while typing in inputs).
 - **Interactive KYC**: Placeholder integration for SEP-12 interactive flows.
 - **Institutional Branding**: Easily customizable via CSS variables.
 
@@ -85,7 +86,11 @@ Quickly deploy the backend with all dependencies using Docker Compose.
 ### Quick Start
 
 ```bash
-# Start all services (backend, Redis, SQLite)
+# Create your local env file and set strong values for
+# POSTGRES_PASSWORD and REDIS_PASSWORD
+cp .env.example .env
+
+# Start all services (backend, Postgres, Redis)
 docker-compose up -d
 
 # View logs
@@ -119,6 +124,13 @@ docker compose -f docker-compose.testnet.yml down
 |-----------|------|--------------------------------|
 | Backend   | 3002 | Node.js/TypeScript API server  |
 | Redis     | 6379 | Cache and session store        |
+
+### Environment Variables
+
+| Variable            | Required | Description |
+|---------------------|----------|-------------|
+| `POSTGRES_PASSWORD` | Yes      | Password for the Postgres `anchorpoint` user. |
+| `REDIS_PASSWORD`    | Yes      | Password Redis requires via `--requirepass`. Compose injects it into the backend's `REDIS_URL` (`redis://:<password>@redis:6379`). When running the backend outside Docker, set the same password in `backend/.env`'s `REDIS_URL`. |
 
 ### Health Check
 

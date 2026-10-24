@@ -1,5 +1,6 @@
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import logger from '../utils/logger';
+import { UploadStorageError, isStorageNotFoundError } from './upload-store.service';
 
 /**
  * StorageProvider handles operations related to object storage (e.g. AWS S3 / MinIO).
@@ -26,10 +27,13 @@ export class StorageProvider {
   /**
    * Verifies if an object exists in the storage bucket using a light metadata query (HEAD request).
    * Does NOT download file content.
-   * Handles missing objects and other S3 errors gracefully, returning false instead of throwing.
+   * A missing object resolves to false. Any other S3 failure (e.g. AccessDenied
+   * from misconfigured credentials, network errors) is rethrown as an
+   * {@link UploadStorageError} so callers do not mistake it for a missing upload.
    *
    * @param key - The key (path) of the object in S3.
-   * @returns A promise that resolves to true if the object exists, or false if it does not or if there was an error.
+   * @returns A promise that resolves to true if the object exists, or false if it does not.
+   * @throws {UploadStorageError} When S3 fails for a reason other than "not found".
    */
   public async objectExists(key: string): Promise<boolean> {
     if (!key) {
@@ -47,20 +51,13 @@ export class StorageProvider {
       logger.info(`Object confirmed to exist: ${key}`);
       return true;
     } catch (error: unknown) {
-      const s3Error = error as { name?: string; Code?: string; statusCode?: number; $metadata?: { httpStatusCode?: number } };
-      const statusCode = s3Error.$metadata?.httpStatusCode || s3Error.statusCode || s3Error.Code;
-
-      if (
-        s3Error.name === 'NotFound' ||
-        s3Error.name === 'NoSuchKey' ||
-        statusCode === 404
-      ) {
+      if (isStorageNotFoundError(error)) {
         logger.info(`Object not found in storage (graceful check): ${key}`);
         return false;
       }
 
       logger.error(`Error querying object metadata for key "${key}":`, error);
-      return false;
+      throw new UploadStorageError('objectExists', error);
     }
   }
 }

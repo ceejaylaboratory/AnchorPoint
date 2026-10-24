@@ -234,3 +234,35 @@ describe('WalletModal accessibility', () => {
     expect(await axe(container)).toHaveNoViolations();
   });
 });
+
+describe('Modal preventClose (#1528)', () => {
+  const GuardedModal = ({ onClose, onCloseBlocked }: { onClose: () => void; onCloseBlocked: () => void }) => (
+    <Modal isOpen title="Uploading" onClose={onClose} preventClose onCloseBlocked={onCloseBlocked}>
+      <button type="button">Inside</button>
+    </Modal>
+  );
+
+  it('does not close on backdrop click, Escape or the close button while preventClose is set', () => {
+    const onClose = vi.fn();
+    const onCloseBlocked = vi.fn();
+    const { container } = render(<GuardedModal onClose={onClose} onCloseBlocked={onCloseBlocked} />);
+
+    const backdrop = container.ownerDocument.querySelector('.backdrop-blur-sm') as HTMLElement;
+    fireEvent.click(backdrop);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close Uploading' }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onCloseBlocked).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('closes normally once preventClose is cleared', () => {
+    const onClose = vi.fn();
+    render(<Modal isOpen title="Done" onClose={onClose} preventClose={false} />);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

@@ -16,6 +16,8 @@ export interface DecodedValue {
   type: string | null;
   /** Set when the input was not decodable base64 XDR. */
   error?: string;
+  /** Raw discriminant for unknown operation types, when available. */
+  discriminant?: number;
 }
 
 export interface DecodedEvent {
@@ -44,6 +46,19 @@ export const jsonReplacer = (_key: string, value: unknown): unknown => {
 export const toDecodedJson = (value: unknown): string =>
   JSON.stringify(value, jsonReplacer, 2);
 
+/** Formats unknown XDR operation errors with the raw discriminant value. */
+export const unknownOperationError = (discriminant: number): string =>
+  `unknown XDR operation type: ${discriminant}`;
+
+/** Extracts a numeric discriminant from an XDR value when available. */
+export const discriminantOf = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  const maybe = value as { value?: unknown; discriminant?: unknown } | null;
+  if (maybe && typeof maybe.discriminant === 'number') return maybe.discriminant;
+  if (maybe && typeof maybe.value === 'number' && Number.isInteger(maybe.value)) return maybe.value as number;
+  return null;
+};
+
 /** Decodes one base64 ScVal. Returns an error entry rather than throwing. */
 export const decodeScVal = (base64: string): DecodedValue => {
   if (typeof base64 !== 'string' || base64.trim() === '') {
@@ -62,10 +77,19 @@ export const decodeScVal = (base64: string): DecodedValue => {
 
     return { value: scValToNative(scVal), type };
   } catch (err) {
+    const raw = err instanceof Error ? err.message : 'Failed to decode XDR';
+    const match = raw.match(/discriminant[^0-9-]*(-?\d+)/i);
+    if (match) {
+      const discriminant = Number.parseInt(match[1], 10);
+      return { value: null, type: null, error: unknownOperationError(discriminant), discriminant };
+    }
+    if (/unknown (operation|op)/i.test(raw)) {
+      return { value: null, type: null, error: 'unknown XDR operation type: see discriminant in value', discriminant: undefined };
+    }
     return {
       value: null,
       type: null,
-      error: err instanceof Error ? err.message : 'Failed to decode XDR',
+      error: raw,
     };
   }
 };

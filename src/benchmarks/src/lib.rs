@@ -1,5 +1,10 @@
 #![no_std]
 
+pub use anchorpoint_amm::{AMM, AMMClient};
+pub use sep41_token::{TokenContract, TokenContractClient};
+pub use staking::{StakingContract, StakingContractClient};
+pub use staking::snapshot::{SnapshotStaking, SnapshotStakingClient};
+
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {

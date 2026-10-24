@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol, Val, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env, Symbol, Val, Vec,
 };
 
 #[contracttype]
@@ -76,12 +76,67 @@ pub struct BatchResult {
     pub nonce: u64,
 }
 
-/// Deterministic lower-bound gas estimate for a batch operation.
+/// Errors returned by the batch executor.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum BatchError {
+    /// The operation cannot be estimated or executed by this contract.
+    UnsupportedOperation = 1,
+    /// The batch has no operations or more than `MAX_ESTIMATE_OPS`.
+    InvalidBatchSize = 2,
+}
+
+/// An operation submitted to `estimate_batch`.
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct BatchGasEstimate {
-    pub operations: u32,
-    pub units: u64,
+pub enum BatchOp {
+    /// A single cross-contract call, as executed by `execute_batch`.
+    Call(Call),
+    /// A cross-contract call with retries, as executed by `execute_batch_with_retry`.
+    RetryCall(CallWithRetry),
+    /// A token transfer, as executed by `execute_transfers`.
+    Transfer(TransferOp),
+}
+
+/// Estimated resource usage of a single batch operation.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpEstimate {
+    pub index: u32,
+    pub cpu_insns: u64,
+    pub mem_bytes: u64,
+}
+
+/// Estimated resource usage of a whole batch: per-operation estimates plus
+/// the batch total (which includes a fixed per-invocation overhead).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchEstimate {
+    pub ops: Vec<OpEstimate>,
+    pub total_cpu_insns: u64,
+    pub total_mem_bytes: u64,
+}
+
+/// Maximum number of operations accepted by `estimate_batch`.
+pub const MAX_ESTIMATE_OPS: u32 = 50;
+
+// Static cost model (CPU instructions / memory bytes). These are deliberately
+// conservative upper-bound figures for planning, not metered values.
+const BASE_CPU: u64 = 50_000;
+const BASE_MEM: u64 = 10_000;
+const CALL_CPU: u64 = 100_000;
+const CALL_MEM: u64 = 20_000;
+const ARG_CPU: u64 = 5_000;
+const ARG_MEM: u64 = 1_000;
+const TRANSFER_CPU: u64 = 250_000;
+const TRANSFER_MEM: u64 = 40_000;
+
+/// Overflow-checked `a * b + c`; panics on arithmetic overflow.
+pub fn checked_cost(a: u64, b: u64, c: u64) -> u64 {
+    a.checked_mul(b)
+        .and_then(|v| v.checked_add(c))
+        .expect("estimate overflow")
 }
 
 #[contracttype]
@@ -96,14 +151,61 @@ pub struct BatchExecutor;
 #[allow(deprecated)]
 #[contractimpl]
 impl BatchExecutor {
-    /// Estimate batch cost without invoking target contracts or changing state.
-    pub fn estimate_batch(env: Env, calls: Vec<Call>) -> BatchGasEstimate {
-        let operations = calls.len();
-        let units = 1_000u64
-            .checked_add((operations as u64).checked_mul(500).expect("estimate overflow"))
-            .expect("estimate overflow");
-        let _ = env;
-        BatchGasEstimate { operations, units }
+    /// Estimate the CPU and memory cost of a batch without executing it.
+    ///
+    /// Read-only: no target contract is invoked, no auth is required and no
+    /// state (including nonces) is written.
+    ///
+    /// # Panics
+    /// * `BatchError::InvalidBatchSize` if `ops` is empty or exceeds `MAX_ESTIMATE_OPS`.
+    /// * `BatchError::UnsupportedOperation` for operations this contract cannot
+    ///   execute: calls back into the batch executor itself, or non-positive transfers.
+    /// * `"estimate overflow"` on arithmetic overflow.
+    pub fn estimate_batch(env: Env, ops: Vec<BatchOp>) -> BatchEstimate {
+        let len = ops.len();
+        if len == 0 || len > MAX_ESTIMATE_OPS {
+            panic_with_error!(&env, BatchError::InvalidBatchSize);
+        }
+
+        let self_address = env.current_contract_address();
+        let mut estimates = Vec::new(&env);
+        let mut total_cpu = BASE_CPU;
+        let mut total_mem = BASE_MEM;
+
+        for (raw_index, op) in ops.iter().enumerate() {
+            let (cpu_insns, mem_bytes) = match op {
+                BatchOp::Call(call) => {
+                    Self::check_call_supported(&env, &self_address, &call);
+                    Self::call_cost(&call)
+                }
+                BatchOp::RetryCall(item) => {
+                    Self::check_call_supported(&env, &self_address, &item.call);
+                    let attempts = item.retry.validated().max_attempts as u64;
+                    let (cpu, mem) = Self::call_cost(&item.call);
+                    (checked_cost(cpu, attempts, 0), checked_cost(mem, attempts, 0))
+                }
+                BatchOp::Transfer(transfer) => {
+                    if transfer.amount <= 0 || transfer.token == self_address {
+                        panic_with_error!(&env, BatchError::UnsupportedOperation);
+                    }
+                    (TRANSFER_CPU, TRANSFER_MEM)
+                }
+            };
+
+            total_cpu = total_cpu.checked_add(cpu_insns).expect("estimate overflow");
+            total_mem = total_mem.checked_add(mem_bytes).expect("estimate overflow");
+            estimates.push_back(OpEstimate {
+                index: raw_index as u32,
+                cpu_insns,
+                mem_bytes,
+            });
+        }
+
+        BatchEstimate {
+            ops: estimates,
+            total_cpu_insns: total_cpu,
+            total_mem_bytes: total_mem,
+        }
     }
 
     pub fn initialize(env: Env, admin: Address) {
@@ -112,7 +214,7 @@ impl BatchExecutor {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Nonce(admin), &0u64);
+        env.storage().instance().set(&DataKey::Nonce(admin.clone()), &0u64);
         env.events()
             .publish((symbol_short!("init"),), admin);
     }
@@ -290,6 +392,23 @@ impl BatchExecutor {
         );
 
         executed
+    }
+}
+
+impl BatchExecutor {
+    fn check_call_supported(env: &Env, self_address: &Address, call: &Call) {
+        // Re-entrant batches are not supported by the executor.
+        if call.contract == *self_address {
+            panic_with_error!(env, BatchError::UnsupportedOperation);
+        }
+    }
+
+    fn call_cost(call: &Call) -> (u64, u64) {
+        let args = call.args.len() as u64;
+        (
+            checked_cost(ARG_CPU, args, CALL_CPU),
+            checked_cost(ARG_MEM, args, CALL_MEM),
+        )
     }
 }
 

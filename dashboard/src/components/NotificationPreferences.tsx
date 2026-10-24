@@ -30,6 +30,33 @@ const isSamePreferences = (a: Preferences, b: Preferences): boolean =>
   a.pushEnabled === b.pushEnabled &&
   (a.phone ?? '') === (b.phone ?? '');
 
+/**
+ * Coerces every channel to a strict boolean so a disabled channel is always
+ * sent as an explicit `false`. An `undefined` channel is dropped by
+ * JSON.stringify and the API leaves omitted channels unchanged, so without
+ * this an "all off" save could leave previous values in place.
+ */
+export const toPreferencesPayload = (prefs: Partial<Preferences>): Preferences => ({
+  emailEnabled: prefs.emailEnabled === true,
+  smsEnabled: prefs.smsEnabled === true,
+  pushEnabled: prefs.pushEnabled === true,
+  phone: prefs.phone ?? '',
+});
+
+/** Fills channels the API omitted (or returned as null) with the defaults. */
+const normalizePreferences = (
+  data: Partial<Record<keyof Preferences, unknown>> | null | undefined,
+): Preferences =>
+  toPreferencesPayload({
+    emailEnabled:
+      typeof data?.emailEnabled === 'boolean' ? data.emailEnabled : DEFAULT_PREFERENCES.emailEnabled,
+    smsEnabled:
+      typeof data?.smsEnabled === 'boolean' ? data.smsEnabled : DEFAULT_PREFERENCES.smsEnabled,
+    pushEnabled:
+      typeof data?.pushEnabled === 'boolean' ? data.pushEnabled : DEFAULT_PREFERENCES.pushEnabled,
+    phone: typeof data?.phone === 'string' ? data.phone : DEFAULT_PREFERENCES.phone,
+  });
+
 export const NotificationPreferences: React.FC<NotificationPreferencesProps> = ({
   apiBaseUrl = 'http://localhost:3002',
 }) => {
@@ -71,7 +98,7 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
       const body = await response.json();
       // Merge over the defaults: a response missing a channel would otherwise
       // leave that toggle undefined and make it an uncontrolled input.
-      const next: Preferences = { ...DEFAULT_PREFERENCES, ...(body?.data ?? {}) };
+      const next = normalizePreferences(body?.data);
       setPreferences(next);
       setSavedPreferences(next);
     } catch (err) {
@@ -87,7 +114,9 @@ export const NotificationPreferences: React.FC<NotificationPreferencesProps> = (
   }, [fetchPreferences]);
 
   const savePreferences = useCallback(
-    async (next: Preferences = preferences) => {
+    async (current: Preferences = preferences) => {
+      // Always send every channel, including when all of them are off.
+      const next = toPreferencesPayload(current);
       setSaving(true);
       setError(null);
       setSuccess(false);

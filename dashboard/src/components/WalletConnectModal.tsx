@@ -21,6 +21,7 @@ export const WalletConnectModal = ({ isOpen, onClose }: WalletConnectModalProps)
   const [error, setError] = useState<string | null>(null);
 
   const handleSelect = async (provider: WalletProviderId) => {
+    // A retry must not show the previous attempt's failure next to the new one.
     setError(null);
     setPending(provider);
     try {
@@ -34,10 +35,16 @@ export const WalletConnectModal = ({ isOpen, onClose }: WalletConnectModalProps)
     }
   };
 
+  // Closing discards the last failure so reopening starts from a clean state.
+  const handleClose = () => {
+    setError(null);
+    onClose();
+  };
+
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="Connect a wallet"
       description="Choose Freighter, Albedo, or Rabet to share your public key with this dashboard."
       size="lg"

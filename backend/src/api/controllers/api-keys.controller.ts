@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { ApiKeyService } from "../../services/api-key.service";
+import { ApiKeyFormatError, ApiKeyService } from "../../services/api-key.service";
 import { Tier } from "../../services/tier-config.service";
 import prisma from "../../lib/prisma";
 
@@ -27,8 +27,15 @@ export const createKey =
         });
     }
 
-    const record = await apiKeyService.createKey(user.id, tier as Tier);
-    return res.status(201).json(record);
+    try {
+      const record = await apiKeyService.createKey(user.id, tier as Tier);
+      return res.status(201).json(record);
+    } catch (err) {
+      if (err instanceof ApiKeyFormatError) {
+        return res.status(500).json({ error: "Failed to generate a valid API key" });
+      }
+      throw err;
+    }
   };
 
 export const listKeys =
@@ -72,6 +79,9 @@ export const rotateKeyHandler =
       const result = await apiKeyService.rotateKey(user.id, keyId, overlapDays ?? 7);
       return res.status(200).json(result);
     } catch (err: any) {
+      if (err instanceof ApiKeyFormatError) {
+        return res.status(500).json({ error: "Failed to generate a valid API key" });
+      }
       return res.status(400).json({ error: err.message || "Failed to rotate key" });
     }
   };

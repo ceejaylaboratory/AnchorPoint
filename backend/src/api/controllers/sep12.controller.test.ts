@@ -94,7 +94,7 @@ jest.mock('@stellar/stellar-sdk', () => {
 });
 
 import { sep12Controller } from './sep12.controller';
-import { uploadStore } from '../../services/upload-store.service';
+import { UploadStorageError, uploadStore } from '../../services/upload-store.service';
 import { storageProvider } from '../../services/storage-provider.service';
 
 const storageProviderMock = storageProvider;
@@ -150,6 +150,34 @@ describe('Sep12Controller', () => {
       }));
       expect(storageProviderMock.generatePresignedPutUrl).toHaveBeenCalled();
       expect(uploadStoreMock.create).toHaveBeenCalled();
+    });
+
+    it('returns 500 storage_provider_error and discards the record when S3 rejects the presign', async () => {
+      const accessDenied = Object.assign(new Error('Access Denied'), {
+        name: 'AccessDenied',
+        $metadata: { httpStatusCode: 403 },
+      });
+      (storageProviderMock.generatePresignedPutUrl as jest.Mock).mockRejectedValueOnce(
+        new UploadStorageError('generatePresignedPutUrl', accessDenied)
+      );
+      const req = {
+        method: 'POST',
+        body: {
+          account: VALID_ACCOUNT,
+          field_name: 'id_photo_front',
+          content_type: 'image/jpeg',
+          file_size: '1000000',
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'storage_provider_error' });
+      const created = (uploadStoreMock.create as jest.Mock).mock.results[0].value;
+      expect(uploadStore.get(created.uploadId)).toBeUndefined();
     });
 
     it('returns 400 when required parameters are missing', async () => {
@@ -291,6 +319,33 @@ describe('Sep12Controller', () => {
       await sep12Controller.confirmUpload(req, res);
 
       expect(res.status).toHaveBeenCalledWith(422);
+    });
+
+    it('returns 500 storage_provider_error instead of 422 when S3 denies the existence check', async () => {
+      const expiresAt = new Date(Date.now() + 60_000);
+      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', 'image/jpeg', expiresAt);
+      const accessDenied = Object.assign(new Error('Access Denied'), {
+        name: 'AccessDenied',
+        $metadata: { httpStatusCode: 403 },
+      });
+      (storageProviderMock.objectExists as jest.Mock).mockRejectedValueOnce(
+        new UploadStorageError('objectExists', accessDenied)
+      );
+      const req = {
+        body: {
+          upload_id: record.uploadId,
+          account: VALID_ACCOUNT,
+        },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'storage_provider_error' });
+      expect(uploadStore.get(record.uploadId)?.status).toBe('PENDING');
+      expect(uploadStoreMock.setStatus).not.toHaveBeenCalled();
     });
   });
 

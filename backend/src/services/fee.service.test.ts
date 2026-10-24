@@ -1,6 +1,18 @@
 import { FeeService, computeAssetFee } from './fee.service';
 import { RedisService } from './redis.service';
 import type { AssetConfig } from '../config/assets';
+import prisma from '../lib/prisma';
+
+jest.mock('../lib/prisma', () => ({
+  __esModule: true,
+  default: {
+    feeSchedule: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+    },
+  },
+}));
 
 // p95/p50 ratio = 1.5 (< 2.0 threshold), capacity 50% → no surge
 const mockHorizonStats = {
@@ -32,7 +44,10 @@ function makeRedisService(cached: unknown = null): RedisService {
 global.fetch = jest.fn();
 
 describe('FeeService', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.feeSchedule.findFirst as jest.Mock).mockResolvedValue(null);
+  });
 
   it('returns cached stats without hitting Horizon', async () => {
     const cachedStats = { surgeActive: false, recommendedFeeStroops: 200, fetchedAt: new Date().toISOString() };
@@ -158,29 +173,158 @@ describe('computeAssetFee', () => {
 describe('FeeService.calculateAssetFee', () => {
   const service = new FeeService(makeRedisService(null));
 
-  it('returns correct result for a known asset (USDC / flat)', () => {
-    const result = service.calculateAssetFee('USDC', 500);
+  beforeEach(() => {
+    (prisma.feeSchedule.findFirst as jest.Mock).mockResolvedValue(null);
+  });
+
+  it('returns correct result for a known asset (USDC / flat)', async () => {
+    const result = await service.calculateAssetFee('USDC', 500);
     expect(result.assetCode).toBe('USDC');
     expect(result.feeType).toBe('flat');
     expect(result.inputAmount).toBe(500);
     expect(result.feeAmount).toBe(0.5); // flat $0.50
   });
 
-  it('returns correct result for a known asset (USD / tiered)', () => {
-    const result = service.calculateAssetFee('USD', 1000);
+  it('returns correct result for a known asset (USD / tiered)', async () => {
+    const result = await service.calculateAssetFee('USD', 1000);
     expect(result.assetCode).toBe('USD');
     expect(result.feeType).toBe('tiered');
     // 0.5 + (1000 * 0.005) = 5.5
     expect(result.feeAmount).toBe(5.5);
   });
 
-  it('is case-insensitive for asset codes', () => {
-    const result = service.calculateAssetFee('usdc', 100);
+  it('is case-insensitive for asset codes', async () => {
+    const result = await service.calculateAssetFee('usdc', 100);
     expect(result.assetCode).toBe('USDC');
   });
 
-  it('throws for unknown asset codes', () => {
-    expect(() => service.calculateAssetFee('NOPE', 100)).toThrow('Unknown asset: NOPE');
+  it('throws for unknown asset codes', async () => {
+    await expect(service.calculateAssetFee('NOPE', 100)).rejects.toThrow('Unknown asset: NOPE');
+  });
+
+  it('synchronously calculates fee using calculateAssetFeeSync', () => {
+    const result = service.calculateAssetFeeSync('USDC', 200);
+    expect(result.assetCode).toBe('USDC');
+    expect(result.feeAmount).toBe(0.5);
+  });
+});
+
+// ─── Versioned fee schedule tests (#1348) ──────────────────────────────────────
+
+describe('FeeService.versionedFeeSchedules', () => {
+  const service = new FeeService(makeRedisService(null));
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('uses the fee schedule version active at the transaction createdAt timestamp', async () => {
+    const olderSchedule = {
+      id: 'sched-1',
+      assetCode: 'USDC',
+      feeType: 'flat',
+      feeFixed: 0.25,
+      feePercent: 0,
+      feeMinimum: 0,
+      effectiveFrom: new Date('2026-01-01T00:00:00Z'),
+    };
+
+    (prisma.feeSchedule.findFirst as jest.Mock).mockResolvedValue(olderSchedule);
+
+    // Transaction created back in February 2026
+    const txCreatedAt = new Date('2026-02-15T12:00:00Z');
+    const result = await service.calculateAssetFee('USDC', 100, txCreatedAt);
+
+    expect(prisma.feeSchedule.findFirst).toHaveBeenCalledWith({
+      where: {
+        assetCode: 'USDC',
+        effectiveFrom: { lte: txCreatedAt },
+      },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+
+    expect(result.feeAmount).toBe(0.25);
+    expect(result.scheduleId).toBe('sched-1');
+  });
+
+  it('getFeeForTransaction queries active schedule based on tx.createdAt', async () => {
+    const activeSchedule = {
+      id: 'sched-2',
+      assetCode: 'USD',
+      feeType: 'percentage',
+      feeFixed: 0,
+      feePercent: 0.02,
+      feeMinimum: 1.0,
+      effectiveFrom: new Date('2026-06-01T00:00:00Z'),
+    };
+
+    (prisma.feeSchedule.findFirst as jest.Mock).mockResolvedValue(activeSchedule);
+
+    const tx = {
+      assetCode: 'USD',
+      amount: '500',
+      createdAt: new Date('2026-07-01T00:00:00Z'),
+    };
+
+    const result = await service.getFeeForTransaction(tx);
+    // 500 * 0.02 = 10
+    expect(result.feeAmount).toBe(10);
+    expect(result.scheduleId).toBe('sched-2');
+  });
+
+  it('addFeeSchedule creates a new schedule when effective date is in the future', async () => {
+    const futureDate = new Date(Date.now() + 86400 * 1000 * 7); // 7 days in future
+    const createdSchedule = {
+      id: 'sched-future',
+      assetCode: 'USDC',
+      feeType: 'flat',
+      feeFixed: 1.0,
+      feePercent: 0,
+      feeMinimum: 0,
+      effectiveFrom: futureDate,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    (prisma.feeSchedule.create as jest.Mock).mockResolvedValue(createdSchedule);
+
+    const result = await service.addFeeSchedule({
+      assetCode: 'usdc',
+      feeType: 'flat',
+      feeFixed: 1.0,
+      effectiveFrom: futureDate,
+    });
+
+    expect(result.id).toBe('sched-future');
+    expect(prisma.feeSchedule.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        assetCode: 'USDC',
+        feeType: 'flat',
+        feeFixed: 1.0,
+        effectiveFrom: futureDate,
+      }),
+    });
+  });
+
+  it('addFeeSchedule rejects effective dates in the past', async () => {
+    const pastDate = new Date(Date.now() - 86400 * 1000); // 1 day ago
+
+    await expect(
+      service.addFeeSchedule({
+        assetCode: 'USDC',
+        feeType: 'flat',
+        feeFixed: 1.0,
+        effectiveFrom: pastDate,
+      })
+    ).rejects.toThrow('effectiveFrom must be a future date');
+  });
+
+  it('falls back to static asset config if no DB record exists', async () => {
+    (prisma.feeSchedule.findFirst as jest.Mock).mockResolvedValue(null);
+
+    const result = await service.calculateAssetFee('USDC', 100);
+    expect(result.feeAmount).toBe(0.5); // static USDC feeFixed
+    expect(result.scheduleId).toBeUndefined();
   });
 });
 

@@ -84,6 +84,16 @@ jest.mock('../lib/redis', () => ({
     incr: jest.fn().mockResolvedValue(1),
     expire: jest.fn().mockResolvedValue(1),
   },
+  // #1525: provide a redlock stub so SequenceNumberManager can acquire/release
+  // distributed locks without a real Redis connection during unit tests.
+  redlock: {
+    acquire: jest.fn().mockResolvedValue({
+      resources: ['stellar:seq:lock:mock'],
+      value: 'mock-lock-value',
+      release: jest.fn().mockResolvedValue(undefined),
+    }),
+    release: jest.fn().mockResolvedValue(undefined),
+  },
 }));
 
 // Mock logger
@@ -92,6 +102,13 @@ jest.mock('../utils/logger', () => ({
   error: jest.fn(),
   warn: jest.fn(),
   debug: jest.fn(),
+}));
+
+// Mock metrics service so batch-payment counter calls are no-ops in tests.
+jest.mock('./metrics.service', () => ({
+  metricsService: {
+    incrementBatchPaymentOperation: jest.fn(),
+  },
 }));
 
 describe('BatchPaymentService', () => {

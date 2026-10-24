@@ -143,6 +143,26 @@ export function pollCircuitBreakerStatus(
   })();
 }
 
+/** Border/text/background classes per pause tier. Unknown tiers fail red. */
+function tierTone(tier: string | null): string {
+  const normalized = (tier ?? '').toLowerCase();
+  if (normalized.includes('swap')) {
+    return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300';
+  }
+  if (normalized.includes('withdraw')) {
+    return 'border-orange-500/30 bg-orange-500/10 text-orange-300';
+  }
+  return 'border-red-500/30 bg-red-500/10 text-red-300';
+}
+
+/** Sub-text tone matching the tier border. */
+function tierSubTone(tier: string | null): string {
+  const normalized = (tier ?? '').toLowerCase();
+  if (normalized.includes('swap')) return 'text-yellow-200/80';
+  if (normalized.includes('withdraw')) return 'text-orange-200/80';
+  return 'text-red-200/80';
+}
+
 /** `m:ss` / `h:mm:ss` formatting for the cool-off countdown. */
 export function formatCooldown(totalSeconds: number): string {
   const safe = Math.max(0, Math.floor(totalSeconds));
@@ -170,6 +190,9 @@ export const CircuitBreakerBanner: React.FC<CircuitBreakerBannerProps> = ({
     error: null,
   });
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  // The verification warning (unavailable/clear) is dismissible; an active
+  // pause is never dismissible so users cannot hide a live protocol halt.
+  const [dismissed, setDismissed] = useState(false);
   const mounted = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -181,6 +204,7 @@ export const CircuitBreakerBanner: React.FC<CircuitBreakerBannerProps> = ({
     if (mounted.current) {
       setStatus(next);
       setNow(Math.floor(Date.now() / 1000));
+      setDismissed(false);
     }
   }, [contractId, rpcUrl, networkPassphrase]);
 
@@ -213,6 +237,9 @@ export const CircuitBreakerBanner: React.FC<CircuitBreakerBannerProps> = ({
   }
 
   if (status.state === 'unavailable') {
+    if (dismissed) {
+      return null;
+    }
     return (
       <div
         role="alert"
@@ -231,6 +258,14 @@ export const CircuitBreakerBanner: React.FC<CircuitBreakerBannerProps> = ({
           <RefreshCw size={12} aria-hidden="true" />
           Retry
         </button>
+        <button
+          type="button"
+          onClick={() => setDismissed(true)}
+          aria-label="Dismiss circuit breaker warning"
+          className="inline-flex items-center rounded border border-transparent px-2 py-1 font-medium hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+        >
+          Dismiss
+        </button>
       </div>
     );
   }
@@ -244,13 +279,13 @@ export const CircuitBreakerBanner: React.FC<CircuitBreakerBannerProps> = ({
     <div
       role="alert"
       aria-live="polite"
-      className="flex flex-wrap items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300"
+      className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm ${tierTone(status.tier)}`}
     >
       <AlertOctagon size={16} className="shrink-0" aria-hidden="true" />
       <span className="font-semibold">
         Protocol paused{status.tier ? ` (${status.tier})` : ''}
       </span>
-      <span className="text-xs text-red-200/80">
+      <span className={`text-xs ${tierSubTone(status.tier)}`}>
         Swaps and withdrawals are temporarily disabled.
       </span>
       {secondsRemaining !== null ? (
@@ -259,7 +294,7 @@ export const CircuitBreakerBanner: React.FC<CircuitBreakerBannerProps> = ({
           Cool-off {formatCooldown(secondsRemaining)}
         </span>
       ) : (
-        <span className="ml-auto text-xs text-red-200/80">Cool-off pending</span>
+        <span className={`ml-auto text-xs ${tierSubTone(status.tier)}`}>Cool-off pending</span>
       )}
     </div>
   );

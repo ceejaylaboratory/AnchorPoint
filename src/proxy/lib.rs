@@ -35,6 +35,21 @@ const UPGRADE_TIMELOCK_SECONDS: u64 = 86_400;
 /// Maximum number of authorized approvers.
 const MAX_APPROVERS: u32 = 10;
 
+// ── Error types ───────────────────────────────────────────────────────────────
+
+/// Errors that the proxy contract can emit.
+///
+/// The `#[contracttype]` attribute makes these variants available to callers
+/// as typed contract errors via the Soroban SDK error-handling primitives.
+#[contracttype]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContractError {
+    /// The supplied WASM hash is invalid (e.g. all-zero bytes) or the
+    /// candidate implementation does not satisfy the proxy's interface
+    /// requirements.  The current implementation is left unchanged.
+    InvalidImplementation = 1,
+}
+
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -266,10 +281,7 @@ impl ProxyContract {
             .expect("not initialized");
         admin.require_auth();
 
-        assert!(
-            wasm_hash != BytesN::from_array(&env, &[0u8; 32]),
-            "wasm hash must not be zero"
-        );
+        Self::validate_wasm_hash(&env, &wasm_hash);
 
         let unlocks_at = env
             .ledger()
@@ -506,6 +518,19 @@ impl ProxyContract {
             soroban_sdk::vec![env],
         );
         assert!(version == 1, "incompatible implementation interface");
+    }
+
+    /// Validate a candidate WASM hash before it is accepted into the upgrade
+    /// pipeline.  An all-zero hash is a sentinel that indicates "no hash
+    /// provided", so it is explicitly rejected.
+    ///
+    /// # Panics
+    /// Panics with `ContractError::InvalidImplementation` if `wasm_hash` is
+    /// the zero hash.  The current contract state is left entirely unchanged.
+    fn validate_wasm_hash(env: &Env, wasm_hash: &BytesN<32>) {
+        if *wasm_hash == BytesN::from_array(env, &[0u8; 32]) {
+            panic!("{:?}", ContractError::InvalidImplementation);
+        }
     }
 }
 
@@ -822,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "wasm hash must not be zero")]
+    #[should_panic(expected = "InvalidImplementation")]
     fn test_request_upgrade_zero_hash_panics() {
         let env = Env::default();
         env.mock_all_auths();
@@ -833,6 +858,50 @@ mod tests {
         proxy.initialize(&admin, &impl_id);
         let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
         proxy.request_upgrade(&zero_hash);
+    }
+
+    /// `validate_wasm_hash` rejects the all-zero sentinel and leaves the
+    /// contract state completely unchanged.
+    #[test]
+    #[should_panic(expected = "InvalidImplementation")]
+    fn test_validate_wasm_hash_rejects_zero_hash() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let impl_id = env.register(MockImpl, ());
+        let proxy_id = env.register(ProxyContract, ());
+        let proxy = ProxyContractClient::new(&env, &proxy_id);
+        proxy.initialize(&admin, &impl_id);
+
+        // A non-zero hash must be accepted without panic.
+        let valid_hash = BytesN::from_array(&env, &[0xab; 32]);
+        proxy.request_upgrade(&valid_hash);
+        // Pending hash recorded — current implementation unchanged.
+        assert_eq!(proxy.get_pending_wasm_hash(), Some(valid_hash));
+        assert_eq!(proxy.get_implementation(), impl_id);
+
+        // The zero hash must be rejected with ContractError::InvalidImplementation.
+        let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+        proxy.request_upgrade(&zero_hash); // <-- must panic here
+    }
+
+    /// Non-zero hashes must be accepted by `validate_wasm_hash`.
+    #[test]
+    fn test_validate_wasm_hash_accepts_nonzero_hash() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let impl_id = env.register(MockImpl, ());
+        let proxy_id = env.register(ProxyContract, ());
+        let proxy = ProxyContractClient::new(&env, &proxy_id);
+        proxy.initialize(&admin, &impl_id);
+
+        // Any non-zero hash should be stored without error.
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        proxy.request_upgrade(&hash);
+        assert_eq!(proxy.get_pending_wasm_hash(), Some(hash));
+        // Current implementation must not have changed.
+        assert_eq!(proxy.get_implementation(), impl_id);
     }
 
     #[test]

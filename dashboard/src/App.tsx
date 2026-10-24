@@ -27,11 +27,13 @@ import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { WalletModal } from './components/WalletModal';
 import { NetworkSelector, NetworkBanner } from './components/NetworkSelector';
+import { NetworkFeeIndicator } from './components/NetworkFeeIndicator';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { SessionTimeoutModal } from './components/Auth/SessionTimeoutModal';
 import { WalletManager } from './lib/wallet';
 import { I18nProvider, useTranslation, type Language } from './i18n/config';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { ToastContainer, useToastQueue } from './components/NotificationCenter';
 
 export { useTheme };
 
@@ -430,6 +432,7 @@ const AppShell = () => {
                 {loadingState === 'error' ? 'Fallback Theme Active' : 'Config Connected'}
               </span>
             </div>
+            <NetworkFeeIndicator apiBaseUrl={apiBaseUrl} />
             <NotificationBell
               apiBaseUrl={apiBaseUrl}
               onViewAll={() => setActiveTab('notifications')}
@@ -543,8 +546,8 @@ const AppShell = () => {
                 {activeTab === 'dashboard' && (
                   <DashboardOverview uiConfig={uiConfig} isLoading={loadingState === 'loading'} />
                 )}
-                {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />}
-                {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />}
+                {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}
+                {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}
                 {activeTab === 'history' && <TransactionHistory />}
                 {activeTab === 'sep38' && <Sep38QuotePanel />}
                 {activeTab === 'status' && <ServiceStatusPanel />}
@@ -601,11 +604,32 @@ const ThemeToggle = () => {
   );
 };
 
+/**
+ * Global toast stack rendered at the application root so that any component
+ * in the tree can dispatch toasts without prop-drilling.
+ *
+ * The queue is managed by `useToastQueue` from NotificationCenter. Async
+ * operations throughout the app import `useToastQueue` or consume the context
+ * created here to push feedback to this stack.
+ */
+const ToastStack: React.FC = () => {
+  const { toasts, push: _push, dismiss, pause, resume } = useToastQueue();
+  return (
+    <ToastContainer
+      toasts={toasts}
+      onDismiss={dismiss}
+      onPause={pause}
+      onResume={resume}
+    />
+  );
+};
+
 const AppRoot = () => (
   <ThemeProvider>
     <I18nProvider>
       <NetworkProvider apiBaseUrl={apiBaseUrl}>
         <App />
+        <ToastStack />
       </NetworkProvider>
     </I18nProvider>
   </ThemeProvider>

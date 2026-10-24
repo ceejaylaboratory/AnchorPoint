@@ -3,6 +3,7 @@ import { ZodSchema, ZodError } from 'zod';
 
 /**
  * Middleware for validating Express request segments (body, query, params)
+ * Standardized to produce RFC 7807-compatible error response format with per-field details.
  * @param schema - An object containing Zod schemas for body, query, and params
  */
 export const validate = (schema: {
@@ -24,18 +25,32 @@ export const validate = (schema: {
       return next();
     } catch (error) {
       if (error instanceof ZodError) {
+        const fields: Record<string, string> = {};
+        for (const issue of error.issues) {
+          const fieldPath = issue.path.join('.');
+          if (fieldPath) {
+            fields[fieldPath] = issue.message;
+          }
+        }
         return res.status(400).json({
-          status: 'error',
-          message: 'Validation failed',
-          details: error.issues.map(issue => ({
-            path: issue.path,
-            message: issue.message
-          }))
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Validation failed',
+            details: {
+              fields,
+              issues: error.issues.map(issue => ({
+                path: issue.path,
+                message: issue.message,
+              })),
+            },
+          },
         });
       }
       return res.status(500).json({
-        status: 'error',
-        message: 'Internal server error during validation'
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Internal server error during validation',
+        },
       });
     }
   };

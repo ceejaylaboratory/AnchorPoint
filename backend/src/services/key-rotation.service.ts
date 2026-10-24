@@ -10,6 +10,7 @@ import {
   KeyRotationResult,
 } from '../lib/key-management.types';
 import { config } from '../config/env';
+import { reencryptStoredDocuments } from './upload-store.service';
 import logger from '../utils/logger';
 
 const HOT_WALLET_KEYS_CACHE_KEY = 'hot_wallet_keys';
@@ -62,6 +63,11 @@ export class KeyRotationService {
 
     await cache.del(HOT_WALLET_KEYS_CACHE_KEY);
     this.refreshKeyMaterialInMemory();
+
+    const reencryptedDocuments = await reencryptStoredDocuments();
+    logger.info('Re-encrypted stored KYC documents after key rotation', {
+      count: reencryptedDocuments,
+    });
 
     logger.info('Automated key rotation completed', {
       backend: result.backend,

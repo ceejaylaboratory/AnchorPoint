@@ -15,16 +15,26 @@ export function calculateEstimatedApy(lockDurationDays: LockDurationDays): numbe
   return Number((BASE_APY * LOCK_MULTIPLIERS[lockDurationDays]).toFixed(2));
 }
 
+/**
+ * Clamps a deposit to a usable amount: zero, negative, empty or non-numeric
+ * input all count as nothing staked rather than propagating NaN.
+ */
+export function normalizeDepositAmount(depositAmount: number): number {
+  return Number.isFinite(depositAmount) && depositAmount > 0 ? depositAmount : 0;
+}
+
 export function calculateProjectedRewards(
   depositAmount: number,
   lockDurationDays: LockDurationDays,
 ): number {
+  const amount = normalizeDepositAmount(depositAmount);
+  if (amount === 0) return 0;
   const apy = calculateEstimatedApy(lockDurationDays) / 100;
-  return Number((depositAmount * apy * (lockDurationDays / 365)).toFixed(2));
+  return Number((amount * apy * (lockDurationDays / 365)).toFixed(2));
 }
 
 const formatTokenAmount = (amount: number) =>
-  amount.toLocaleString('en-US', {
+  (Number.isFinite(amount) ? amount : 0).toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -38,7 +48,7 @@ export const StakingCalculator = () => {
     () => calculateProjectedRewards(depositAmount, lockDuration),
     [depositAmount, lockDuration],
   );
-  const projectedBalance = depositAmount + projectedRewards;
+  const projectedBalance = normalizeDepositAmount(depositAmount) + projectedRewards;
 
   return (
     <section aria-labelledby="staking-calculator-title" className="space-y-5">
@@ -75,11 +85,11 @@ export const StakingCalculator = () => {
         <input
           id="staking-deposit-amount"
           type="range"
-          min={100}
+          min={0}
           max={100_000}
           step={100}
           value={depositAmount}
-          onChange={(event) => setDepositAmount(Number(event.target.value))}
+          onChange={(event) => setDepositAmount(normalizeDepositAmount(Number(event.target.value)))}
           className="w-full accent-[var(--primary)]"
         />
       </div>

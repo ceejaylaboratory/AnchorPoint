@@ -14,8 +14,11 @@ use soroban_sdk::{
 /// Default voting credits allocated to each user
 const DEFAULT_VOTING_CREDITS: i128 = 10_000;
 
-/// Default quorum percentage (20% of total possible votes)
-const DEFAULT_QUORUM_PERCENTAGE: i128 = 20;
+/// Default minimum quorum: 20% of total credits issued, in basis points.
+const DEFAULT_MIN_QUORUM_BPS: u32 = 2_000;
+
+/// 100% in basis points.
+const BPS_DENOMINATOR: i128 = 10_000;
 
 /// Minimum voting period (1 day)
 const MIN_TIMELOCK: u64 = 86400;
@@ -42,8 +45,8 @@ pub enum DataKey {
     VotingCredits(Address),
     /// Total voting credits issued (for quorum calculation)
     TotalCreditsIssued,
-    /// Quorum percentage required (stored as basis points, e.g., 2000 = 20%)
-    QuorumPercentage,
+    /// Minimum quorum in basis points of total credits issued (e.g. 2000 = 20%)
+    MinQuorumBps,
     /// Total quadratic cost spent on a proposal (for analytics)
     ProposalQuadraticCost(u32),
     /// User's quadratic cost spent on a proposal
@@ -53,13 +56,17 @@ pub enum DataKey {
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum Error {
+pub enum ContractError {
     InvalidTimelockDuration = 1,
+    /// Total participation is below the minimum quorum.
+    QuorumNotMet = 2,
+    /// `min_quorum_bps` must be in `1..=10_000`.
+    InvalidQuorum = 3,
 }
 
 /// Proposal lifecycle states
 #[contracttype]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProposalStatus {
     /// Proposal is open for voting
     OPEN,
@@ -148,7 +155,7 @@ impl GovernanceContract {
             .set(&DataKey::TotalCreditsIssued, &0i128);
         env.storage()
             .instance()
-            .set(&DataKey::QuorumPercentage, &DEFAULT_QUORUM_PERCENTAGE);
+            .set(&DataKey::MinQuorumBps, &DEFAULT_MIN_QUORUM_BPS);
         env.events()
             .publish((symbol_short!("gov_init"),), (admin, token_contract));
     }
@@ -283,16 +290,17 @@ impl GovernanceContract {
             .unwrap_or(DEFAULT_VOTING_CREDITS)
     }
 
-    /// Set the quorum percentage
+    /// Set the minimum quorum, in basis points of total credits issued.
     ///
     /// # Arguments
-    /// * `env` - The environment
     /// * `caller` - Address calling (must be admin)
-    /// * `percentage` - Quorum percentage (0-100)
+    /// * `min_quorum_bps` - Minimum quorum in basis points (1-10,000)
     ///
     /// # Panics
-    /// Panics if caller is not admin or percentage is invalid
-    pub fn set_quorum_percentage(env: Env, caller: Address, percentage: i128) {
+    /// Panics if caller is not admin, or with `ContractError::InvalidQuorum`
+    /// if `min_quorum_bps` is 0 or above 10,000. A zero quorum is rejected so
+    /// that proposals can never be executed without participation.
+    pub fn set_min_quorum_bps(env: Env, caller: Address, min_quorum_bps: u32) {
         caller.require_auth();
 
         let admin: Address = env
@@ -302,17 +310,45 @@ impl GovernanceContract {
             .expect("admin not found");
 
         assert!(caller == admin, "only admin can set quorum");
-        assert!((0..=100).contains(&percentage), "invalid quorum percentage");
+        if min_quorum_bps == 0 || min_quorum_bps as i128 > BPS_DENOMINATOR {
+            panic_with_error!(&env, ContractError::InvalidQuorum);
+        }
 
         env.storage()
             .instance()
-            .set(&DataKey::QuorumPercentage, &percentage);
+            .set(&DataKey::MinQuorumBps, &min_quorum_bps);
 
-        // Topic: event name only; caller + percentage in data.
+        // Topic: event name only; caller + bps in data.
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("quorum")),
-            (caller, percentage),
+            (caller, min_quorum_bps),
         );
+    }
+
+    /// Set the minimum quorum as a whole percentage (1-100).
+    ///
+    /// Convenience wrapper around `set_min_quorum_bps`.
+    pub fn set_quorum_percentage(env: Env, caller: Address, percentage: i128) {
+        assert!((1..=100).contains(&percentage), "invalid quorum percentage");
+        Self::set_min_quorum_bps(env, caller, (percentage * 100) as u32);
+    }
+
+    /// Get the minimum quorum in basis points of total credits issued.
+    pub fn get_min_quorum_bps(env: Env) -> u32 {
+        Self::min_quorum_bps(&env)
+    }
+
+    /// Get the number of votes a proposal currently needs to meet quorum.
+    ///
+    /// This is the larger of the quorum snapshotted at proposal creation and
+    /// `min_quorum_bps` applied to the credits issued now, and is at least 1.
+    pub fn get_required_quorum(env: Env, proposal_id: u32) -> i128 {
+        let proposal: Proposal = env
+            .storage()
+            .instance()
+            .get(&DataKey::Proposal(proposal_id))
+            .expect("proposal not found");
+        Self::required_quorum(&env, &proposal)
     }
 
     /// Create a new proposal
@@ -340,7 +376,7 @@ impl GovernanceContract {
         assert!(voting_period > 0, "voting period must be positive");
 
         if voting_period < MIN_TIMELOCK || voting_period > MAX_TIMELOCK {
-            panic_with_error!(&env, Error::InvalidTimelockDuration);
+            panic_with_error!(&env, ContractError::InvalidTimelockDuration);
         }
 
         let counter: u32 = env
@@ -356,18 +392,8 @@ impl GovernanceContract {
             .instance()
             .get(&DataKey::TotalCreditsIssued)
             .unwrap_or(0);
-        let quorum_percentage: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::QuorumPercentage)
-            .unwrap_or(DEFAULT_QUORUM_PERCENTAGE);
-
-        // Quorum is percentage of total credits that must participate
-        // Using integer math: quorum = (total_credits * quorum_percentage) / 100
-        let quorum = total_credits
-            .checked_mul(quorum_percentage)
-            .expect("quorum overflow")
-            / 100;
+        // Snapshot the quorum implied by the credits issued at creation time.
+        let quorum = Self::quorum_for_credits(total_credits, Self::min_quorum_bps(&env));
 
         let proposal = Proposal {
             id: new_id,
@@ -514,12 +540,6 @@ impl GovernanceContract {
             "insufficient snapshot token balance"
         );
 
-        // Deduct credits from user
-        env.storage().instance().set(
-            &DataKey::VotingCredits(voter.clone()),
-            &(user_credits - quadratic_cost),
-        );
-
         // Update proposal vote totals
         if support {
             proposal.votes_for = proposal
@@ -558,6 +578,15 @@ impl GovernanceContract {
         env.storage().instance().set(
             &DataKey::UserQuadraticCost(proposal_id, voter.clone()),
             &quadratic_cost,
+        );
+
+        // Deduct the credits spent now that the vote is recorded
+        let remaining_credits = user_credits
+            .checked_sub(quadratic_cost)
+            .expect("credits underflow");
+        env.storage().instance().set(
+            &DataKey::VotingCredits(voter.clone()),
+            &remaining_credits,
         );
 
         // Update proposal with new vote totals
@@ -636,8 +665,7 @@ impl GovernanceContract {
         );
 
         // Check quorum is met
-        let total_votes = proposal.votes_for + proposal.votes_against;
-        if proposal.quorum > 0 && total_votes < proposal.quorum {
+        if !Self::meets_quorum(&env, &proposal) {
             return false;
         }
 
@@ -659,8 +687,7 @@ impl GovernanceContract {
             .get(&DataKey::Proposal(proposal_id))
             .expect("proposal not found");
 
-        let total_votes = proposal.votes_for + proposal.votes_against;
-        total_votes >= proposal.quorum
+        Self::meets_quorum(&env, &proposal)
     }
 
     /// Execute a proposal (can only be called by admin or creator)
@@ -680,7 +707,7 @@ impl GovernanceContract {
     /// - voting period has not ended (if proposal is still OPEN)
     /// - proposal status is not CLOSED before execution
     /// - proposal did not pass the vote
-    /// - quorum was not reached
+    /// - quorum was not reached (`ContractError::QuorumNotMet`)
     pub fn execute_proposal(env: Env, executor: Address, proposal_id: u32) {
         executor.require_auth();
 
@@ -717,12 +744,10 @@ impl GovernanceContract {
             "proposal must be closed before execution"
         );
 
-        // Check quorum
-        let total_votes = proposal.votes_for + proposal.votes_against;
-        assert!(
-            proposal.quorum == 0 || total_votes >= proposal.quorum,
-            "quorum not reached"
-        );
+        // Enforce minimum quorum
+        if !Self::meets_quorum(&env, &proposal) {
+            panic_with_error!(&env, ContractError::QuorumNotMet);
+        }
 
         assert!(
             proposal.votes_for > proposal.votes_against,
@@ -907,6 +932,43 @@ impl GovernanceContract {
     }
 }
 
+impl GovernanceContract {
+    fn min_quorum_bps(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinQuorumBps)
+            .unwrap_or(DEFAULT_MIN_QUORUM_BPS)
+    }
+
+    /// `ceil(total_credits * bps / 10_000)`, and never less than 1 vote.
+    fn quorum_for_credits(total_credits: i128, bps: u32) -> i128 {
+        let scaled = total_credits
+            .checked_mul(bps as i128)
+            .expect("quorum overflow");
+        let quorum = scaled / BPS_DENOMINATOR
+            + if scaled % BPS_DENOMINATOR > 0 { 1 } else { 0 };
+        quorum.max(1)
+    }
+
+    fn required_quorum(env: &Env, proposal: &Proposal) -> i128 {
+        let total_credits: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalCreditsIssued)
+            .unwrap_or(0);
+        let current = Self::quorum_for_credits(total_credits, Self::min_quorum_bps(env));
+        current.max(proposal.quorum)
+    }
+
+    fn meets_quorum(env: &Env, proposal: &Proposal) -> bool {
+        let total_votes = proposal
+            .votes_for
+            .checked_add(proposal.votes_against)
+            .expect("votes overflow");
+        total_votes >= Self::required_quorum(env, proposal)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -1011,9 +1073,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "proposal must be closed before execution")]
     fn test_cancelled_proposal_cannot_be_executed() {
-        let (env, _, _) = setup();
+        let (env, admin, token_contract) = setup();
         let id = env.register(GovernanceContract, ());
         let client = GovernanceContractClient::new(&env, &id);
+        client.initialize(&admin, &token_contract);
         let creator = Address::generate(&env);
         let proposal_id = client.create_proposal(
             &creator,
@@ -1126,6 +1189,51 @@ mod tests {
         );
         client.vote(&voter, &proposal_id, &true, &10i128);
         client.vote(&voter, &proposal_id, &true, &10i128);
+    }
+
+    #[test]
+    fn test_double_vote_rejected_without_spending_credits() {
+        let (env, admin, _) = setup();
+        let id = env.register(GovernanceContract, ());
+        let client = GovernanceContractClient::new(&env, &id);
+        let token_contract = env.register(MockToken, ());
+        client.initialize(&admin, &token_contract);
+
+        let creator = Address::generate(&env);
+        let voter = Address::generate(&env);
+        client.allocate_credits(&admin, &voter, &1000);
+
+        let proposal_id = client.create_proposal(
+            &creator,
+            &String::from_str(&env, "Test Proposal"),
+            &String::from_str(&env, "A proposal for testing"),
+            &86400u64,
+        );
+        client.vote(&voter, &proposal_id, &true, &10i128);
+        assert_eq!(client.get_credits(&voter), 900);
+
+        // Second attempt on the same proposal, in either direction, is rejected.
+        assert!(client
+            .try_vote(&voter, &proposal_id, &true, &5i128)
+            .is_err());
+        assert!(client
+            .try_vote(&voter, &proposal_id, &false, &1i128)
+            .is_err());
+
+        // Neither the credits nor the tally moved.
+        assert_eq!(client.get_credits(&voter), 900);
+        assert_eq!(client.get_proposal_votes(&proposal_id), (10, 0));
+        assert_eq!(client.get_voter_count(&proposal_id), 1);
+
+        // Credits keep decrementing across separate proposals.
+        let second_id = client.create_proposal(
+            &creator,
+            &String::from_str(&env, "Second Proposal"),
+            &String::from_str(&env, "Another proposal"),
+            &86400u64,
+        );
+        client.vote(&voter, &second_id, &false, &20i128);
+        assert_eq!(client.get_credits(&voter), 500);
     }
 
     #[test]
@@ -1403,6 +1511,156 @@ mod quadratic_voting_tests {
         let (votes_for, _) = client.get_proposal_votes(&proposal_id);
         assert_eq!(votes_for, 50);
         assert!(!client.quorum_reached(&proposal_id));
+    }
+}
+
+/// ============================================================================
+/// Minimum Quorum Enforcement Tests
+/// ============================================================================
+#[cfg(test)]
+mod quorum_enforcement_tests {
+    use super::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+
+    const VOTING_PERIOD: u64 = 86_400;
+
+    fn setup() -> (Env, GovernanceContractClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let id = env.register(GovernanceContract, ());
+        let client = GovernanceContractClient::new(&env, &id);
+        let token_contract = env.register(MockToken, ());
+        client.initialize(&admin, &token_contract);
+        (env, client, admin)
+    }
+
+    fn propose(env: &Env, client: &GovernanceContractClient, creator: &Address) -> u32 {
+        client.create_proposal(
+            creator,
+            &String::from_str(env, "Quorum"),
+            &String::from_str(env, "Quorum enforcement"),
+            &VOTING_PERIOD,
+        )
+    }
+
+    fn end_voting(env: &Env) {
+        env.ledger().with_mut(|l| l.timestamp += VOTING_PERIOD + 1);
+    }
+
+    #[test]
+    fn test_default_min_quorum_bps_is_stored() {
+        let (_env, client, _admin) = setup();
+        assert_eq!(client.get_min_quorum_bps(), DEFAULT_MIN_QUORUM_BPS);
+    }
+
+    #[test]
+    fn test_execute_passes_when_quorum_met() {
+        let (env, client, admin) = setup();
+        let creator = Address::generate(&env);
+        let voter = Address::generate(&env);
+        // 10_000 credits issued, 1% quorum => 100 votes required.
+        client.allocate_credits(&admin, &voter, &10_000);
+        client.set_min_quorum_bps(&admin, &100);
+
+        let proposal_id = propose(&env, &client, &creator);
+        assert_eq!(client.get_required_quorum(&proposal_id), 100);
+        client.vote(&voter, &proposal_id, &true, &100);
+        end_voting(&env);
+
+        assert!(client.quorum_reached(&proposal_id));
+        client.execute_proposal(&admin, &proposal_id);
+        assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::EXECUTED);
+    }
+
+    #[test]
+    fn test_execute_fails_when_quorum_not_met() {
+        let (env, client, admin) = setup();
+        let creator = Address::generate(&env);
+        let voter = Address::generate(&env);
+        client.allocate_credits(&admin, &voter, &10_000);
+        client.set_min_quorum_bps(&admin, &100);
+
+        let proposal_id = propose(&env, &client, &creator);
+        // One vote short of the 100-vote quorum, but unanimously in favour.
+        client.vote(&voter, &proposal_id, &true, &99);
+        end_voting(&env);
+
+        assert!(!client.quorum_reached(&proposal_id));
+        assert_eq!(
+            client.try_execute_proposal(&admin, &proposal_id),
+            Err(Ok(ContractError::QuorumNotMet.into()))
+        );
+        assert_eq!(client.get_proposal(&proposal_id).status, ProposalStatus::OPEN);
+    }
+
+    #[test]
+    fn test_zero_participation_cannot_execute_without_credits() {
+        // Creating a proposal before any credits are issued must not yield a
+        // zero quorum that lets an unvoted proposal through.
+        let (env, client, admin) = setup();
+        let creator = Address::generate(&env);
+        let proposal_id = propose(&env, &client, &creator);
+        assert_eq!(client.get_required_quorum(&proposal_id), 1);
+        end_voting(&env);
+
+        assert_eq!(
+            client.try_execute_proposal(&admin, &proposal_id),
+            Err(Ok(ContractError::QuorumNotMet.into()))
+        );
+    }
+
+    #[test]
+    fn test_quorum_uses_credits_issued_after_creation() {
+        let (env, client, admin) = setup();
+        let creator = Address::generate(&env);
+        let early = Address::generate(&env);
+        client.set_min_quorum_bps(&admin, &100);
+        client.allocate_credits(&admin, &early, &100);
+
+        // Snapshot quorum: 1% of 100 credits => 1 vote.
+        let proposal_id = propose(&env, &client, &creator);
+        assert_eq!(client.get_proposal(&proposal_id).quorum, 1);
+        client.vote(&early, &proposal_id, &true, &10);
+
+        // Issuing more credits raises the bar: 1% of 100_100 => 1_001 votes.
+        client.allocate_credits(&admin, &Address::generate(&env), &100_000);
+        assert_eq!(client.get_required_quorum(&proposal_id), 1_001);
+        end_voting(&env);
+
+        assert_eq!(
+            client.try_execute_proposal(&admin, &proposal_id),
+            Err(Ok(ContractError::QuorumNotMet.into()))
+        );
+    }
+
+    #[test]
+    fn test_set_min_quorum_bps_rejects_out_of_range() {
+        let (_env, client, admin) = setup();
+        assert_eq!(
+            client.try_set_min_quorum_bps(&admin, &0),
+            Err(Ok(ContractError::InvalidQuorum.into()))
+        );
+        assert_eq!(
+            client.try_set_min_quorum_bps(&admin, &10_001),
+            Err(Ok(ContractError::InvalidQuorum.into()))
+        );
+        client.set_min_quorum_bps(&admin, &10_000);
+        assert_eq!(client.get_min_quorum_bps(), 10_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "only admin can set quorum")]
+    fn test_set_min_quorum_bps_requires_admin() {
+        let (env, client, _admin) = setup();
+        client.set_min_quorum_bps(&Address::generate(&env), &500);
+    }
+
+    #[test]
+    fn test_set_quorum_percentage_maps_to_bps() {
+        let (_env, client, admin) = setup();
+        client.set_quorum_percentage(&admin, &35);
+        assert_eq!(client.get_min_quorum_bps(), 3_500);
     }
 }
 

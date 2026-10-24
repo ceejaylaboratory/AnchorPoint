@@ -57,7 +57,7 @@ export class RedisWithMemoryFallbackStore implements Store {
   }
 }
 
-const HEALTH_SKIP_PATHS = ['/health', '/api-docs', '/api-docs.json'];
+const HEALTH_SKIP_PATHS = ['/health', '/health/live', '/health/ready', '/api-docs', '/api-docs.json'];
 
 export type Tier = 'Free' | 'Pro' | 'Enterprise';
 

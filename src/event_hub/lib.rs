@@ -115,11 +115,7 @@ impl EventHub {
             .instance()
             .set(&DataKey::RegisteredContracts, &contracts);
 
-        anchorpointutils::storage::extend_instance_ttl(
-            &env,
-            anchorpointutils::storage::INSTANCE_THRESHOLD,
-            anchorpointutils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpointutils::storage::extend_instance_ttl(&env);
 
         // Emit initialized event with standardized topic structure
         // Topics: (event_hub, init, contract_address)
@@ -435,11 +431,7 @@ impl EventHub {
             .expect("hub not initialized");
         assert_eq!(*admin, expected_admin, "unauthorized");
 
-        anchorpointutils::storage::extend_instance_ttl(
-            env,
-            anchorpointutils::storage::INSTANCE_THRESHOLD,
-            anchorpointutils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpointutils::storage::extend_instance_ttl(env);
     }
 
     /// Require that a source is registered and authorizes the capture.
@@ -501,7 +493,7 @@ mod tests {
         assert_eq!(client.get_event_count(), 0);
 
         let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
-        assert!(initial_ttl >= anchorpointutils::storage::INSTANCE_EXTEND_TO);
+        assert!(initial_ttl >= anchorpointutils::storage::TTL_EXTENSION);
     }
 
     #[test]
@@ -520,7 +512,7 @@ mod tests {
         assert!(client.is_registered(&source_contract));
 
         let register_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
-        assert!(register_ttl >= anchorpointutils::storage::INSTANCE_EXTEND_TO);
+        assert!(register_ttl >= anchorpointutils::storage::TTL_EXTENSION);
     }
 
     #[test]

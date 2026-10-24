@@ -158,6 +158,14 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
     fetchPosition();
   }, [fetchPosition]);
 
+  // Keep the staking position view live with periodic background refresh.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchPosition(true);
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [fetchPosition]);
+
   // Derived calculations
   const parsedStakeAmount = useMemo(() => {
     const val = Number.parseFloat(stakeAmountInput);

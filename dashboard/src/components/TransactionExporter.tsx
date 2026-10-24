@@ -76,6 +76,49 @@ export function filterTransactions(
   });
 }
 
+/** Page filter keys treated as a free-text search across every column. */
+const SEARCH_FILTER_KEYS = new Set(['query', 'search', 'q']);
+
+const isActiveFilter = (value: string | undefined): value is string =>
+  Boolean(value) && value !== 'All';
+
+/**
+ * Applies the page's active filters (the ones the transaction list is
+ * currently showing) so the export matches what the user sees. Recognised
+ * keys: `from`/`to`/`status` (same semantics as {@link filterTransactions}),
+ * `query`/`search`/`q` (case-insensitive substring over every column), and any
+ * other CSV column name (case-insensitive exact match). Unknown keys are
+ * ignored here but still recorded in the export metadata.
+ */
+export function applyActiveFilters(
+  transactions: ExportableTransaction[],
+  filters: Record<string, string> = {},
+): ExportableTransaction[] {
+  const active = Object.entries(filters).filter(([, value]) => isActiveFilter(value));
+  if (active.length === 0) return transactions;
+
+  const ranged = filterTransactions(transactions, {
+    from: isActiveFilter(filters.from) ? filters.from : undefined,
+    to: isActiveFilter(filters.to) ? filters.to : undefined,
+    status: isActiveFilter(filters.status) ? filters.status : undefined,
+  });
+
+  return ranged.filter((tx) =>
+    active.every(([key, value]) => {
+      const wanted = value.toLowerCase();
+      if (SEARCH_FILTER_KEYS.has(key)) {
+        return CSV_COLUMNS.some((col) => String(tx[col] ?? '').toLowerCase().includes(wanted));
+      }
+      if (key === 'from' || key === 'to' || key === 'status') return true;
+      if (key === 'date') return toDayStamp(tx.date) === value;
+      if ((CSV_COLUMNS as string[]).includes(key)) {
+        return String(tx[key as keyof ExportableTransaction] ?? '').toLowerCase() === wanted;
+      }
+      return true;
+    }),
+  );
+}
+
 const buildMetadataLines = (
   exportedCount: number,
   totalCount: number,
@@ -168,9 +211,16 @@ export const TransactionExporter = ({
   const [to, setTo] = useState('');
   const [status, setStatus] = useState<string>('All');
 
+  // Start from the rows the page's active filters select, then apply this
+  // panel's own narrowing, so the export never includes filtered-out rows.
+  const pageFiltered = useMemo(
+    () => applyActiveFilters(transactions, filters),
+    [transactions, filters],
+  );
+
   const selected = useMemo(
-    () => filterTransactions(transactions, { from, to, status }),
-    [transactions, from, to, status],
+    () => filterTransactions(pageFiltered, { from, to, status }),
+    [pageFiltered, from, to, status],
   );
 
   // The page's own filters plus whatever this panel narrowed further, so the
