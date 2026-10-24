@@ -24,7 +24,6 @@ const submitSchema = z.object({
   xdr: z.string().min(1, 'Transaction XDR is required'),
 });
 
-const escapeLikePattern = (value: string) => value.replace(/'/g, "''");
 
 
 /**
@@ -123,29 +122,22 @@ router.get('/', authMiddleware, validate({ query: querySchema }), async (req: Au
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    const eventSearchClauses: string[] = [];
-
-    if (sender) {
-      const senderPattern = `'%${escapeLikePattern(sender)}%'`;
-      eventSearchClauses.push(`(topics LIKE ${senderPattern} OR value LIKE ${senderPattern})`);
-    }
-
-    if (receiver) {
-      const receiverPattern = `'%${escapeLikePattern(receiver)}%'`;
-      eventSearchClauses.push(`(topics LIKE ${receiverPattern} OR value LIKE ${receiverPattern})`);
-    }
-
-    if (memo) {
-      const memoPattern = `'%${escapeLikePattern(memo)}%'`;
-      eventSearchClauses.push(`(topics LIKE ${memoPattern} OR value LIKE ${memoPattern})`);
-    }
+    // Each filter term must appear in the event's topics or value. Prisma's
+    // query builder binds these as parameters, so user input never reaches SQL text.
+    const eventSearchClauses = [sender, receiver, memo]
+      .filter((term): term is string => Boolean(term))
+      .map((term) => ({
+        OR: [{ topics: { contains: term } }, { value: { contains: term } }],
+      }));
 
     let matchingTxHashes: string[] = [];
 
     if (eventSearchClauses.length > 0) {
-      const eventRows = (await prisma.$queryRawUnsafe(
-        `SELECT DISTINCT txHash FROM "ContractEvent" WHERE ${eventSearchClauses.join(' AND ')}`
-      )) as { txHash: string }[];
+      const eventRows = await prisma.contractEvent.findMany({
+        where: { AND: eventSearchClauses },
+        select: { txHash: true },
+        distinct: ['txHash'],
+      });
 
       matchingTxHashes = eventRows.map((row: { txHash: string }) => row.txHash).filter(Boolean);
       if (matchingTxHashes.length === 0) {

@@ -100,4 +100,29 @@ describe('KycDocumentUpload', () => {
     expect(await screen.findByText('Invalid file type. Accepted formats: JPEG, PNG, or PDF.')).toBeTruthy();
     expect(mockedUpload).not.toHaveBeenCalled();
   });
+
+  it('clears uploaded file references after documents are submitted', async () => {
+    const onComplete = vi.fn();
+    render(
+      <KycDocumentUpload
+        apiBaseUrl="http://localhost:3002"
+        account="GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567"
+        fields={fields}
+        onComplete={onComplete}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/browse/i), {
+      target: { files: [createFile('id-front.jpg', 'image/jpeg')] },
+    });
+    expect(await screen.findByText('Uploaded successfully')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Documents' }));
+
+    expect(onComplete).toHaveBeenCalledWith({ id_photo_front: 'upload-1' });
+    expect(screen.queryByText('id-front.jpg')).toBeNull();
+    expect(screen.queryByAltText('Government ID (Front) preview')).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-preview');
+    expect((screen.getByRole('button', { name: 'Submit Documents' }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });

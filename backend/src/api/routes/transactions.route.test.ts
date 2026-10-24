@@ -14,6 +14,9 @@ jest.mock('../../lib/prisma', () => ({
   user: {
     findUnique: jest.fn().mockResolvedValue({ id: 'user_123', publicKey: 'GBXP...' }),
   },
+  contractEvent: {
+    findMany: jest.fn(),
+  },
   $queryRaw: jest.fn(),
   $queryRawUnsafe: jest.fn(),
 }));
@@ -96,7 +99,7 @@ describe('Transactions Router', () => {
 
   it('should search transactions by indexed sender value', async () => {
     const eventRows = [{ txHash: 'tx123' }];
-    (prisma.$queryRawUnsafe as jest.Mock).mockResolvedValue(eventRows);
+    (prisma.contractEvent.findMany as jest.Mock).mockResolvedValue(eventRows);
     (prisma.transaction.findMany as jest.Mock).mockResolvedValue([{ id: '1', stellarTxId: 'tx123', amount: '100' }]);
     (prisma.transaction.count as jest.Mock).mockResolvedValue(1);
 
@@ -106,13 +109,41 @@ describe('Transactions Router', () => {
       .query({ sender: 'GABC', page: '1', limit: '10' });
 
     expect(res.statusCode).toEqual(200);
-    expect(prisma.$queryRawUnsafe).toHaveBeenCalled();
+    expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(prisma.contractEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        AND: [{ OR: [{ topics: { contains: 'GABC' } }, { value: { contains: 'GABC' } }] }],
+      },
+    }));
     expect(prisma.transaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         stellarTxId: { in: ['tx123'] },
       }),
     }));
     expect(res.body.data.transactions).toEqual([{ id: '1', stellarTxId: 'tx123', amount: '100' }]);
+  });
+
+  it('should pass SQL injection payloads in search filters as bound values', async () => {
+    const payload = "x' OR '1'='1'; DROP TABLE \"Transaction\"; --";
+    (prisma.contractEvent.findMany as jest.Mock).mockResolvedValue([]);
+
+    const res = await request(app)
+      .get('/api/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ sender: payload, memo: '%_\\' });
+
+    expect(res.statusCode).toEqual(200);
+    expect(res.body.data.transactions).toEqual([]);
+    expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(prisma.contractEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        AND: [
+          { OR: [{ topics: { contains: payload } }, { value: { contains: payload } }] },
+          { OR: [{ topics: { contains: '%_\\' } }, { value: { contains: '%_\\' } }] },
+        ],
+      },
+    }));
   });
 
   it('should return 500 on database error', async () => {
