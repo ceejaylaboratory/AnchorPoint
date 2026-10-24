@@ -23,7 +23,7 @@
     "@tanstack/react-virtual": "^3.14.13",
     "axios": "^1.13.6",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.40.0",
+    "framer-motion": "^14.0.0",
     "lucide-react": "^1.47.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
