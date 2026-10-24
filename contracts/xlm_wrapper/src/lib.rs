@@ -192,32 +192,34 @@ impl XLMWrapper {
     /// Amount of native XLM withdrawn
     pub fn withdraw(env: Env, from: Address, amount: i128) -> i128 {
         from.require_auth();
-        
-        Self::check_not_paused(&env);
-        assert!(amount > 0, "amount must be positive");
-        
-        let bal = Self::balance_of(env.clone(), from.clone());
-        assert!(bal >= amount, "insufficient balance");
-        
-        // Burn wXLM from user
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(from.clone()), &(bal - amount));
-        
-        let supply: i128 = env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalSupply, &(supply - amount));
-        
-        // Send native XLM back to user
-        let native_asset: Address = env.storage().instance().get(&DataKey::NativeAsset).expect("native asset not set");
-        let contract_addr = env.current_contract_address();
-        token::Client::new(&env, &native_asset)
-            .transfer(&contract_addr, &from, &amount);
-        
+        Self::burn_and_release(&env, &from, amount);
+
         env.events()
             .publish((symbol_short!("withdraw"), from), amount);
-        
+
+        amount
+    }
+
+    /// Unwrap wXLM back into native XLM (1:1 ratio).
+    ///
+    /// Burns `amount` wXLM from `from`, decrements the total supply and
+    /// transfers the same amount of native XLM from the contract's reserve
+    /// back to `from`. State is updated before the native transfer so a
+    /// failing transfer reverts the burn as well.
+    ///
+    /// # Arguments
+    /// * `from` - Address unwrapping wXLM (must authorize the call)
+    /// * `amount` - Amount of wXLM to burn, in stroops
+    ///
+    /// # Returns
+    /// Amount of native XLM released (always equal to `amount` — 1:1 peg)
+    pub fn unwrap(env: Env, from: Address, amount: i128) -> i128 {
+        from.require_auth();
+        Self::burn_and_release(&env, &from, amount);
+
+        env.events()
+            .publish((symbol_short!("unwrap"), from), amount);
+
         amount
     }
 
@@ -610,12 +612,43 @@ impl XLMWrapper {
     fn check_not_paused(env: &Env) {
         assert!(!Self::is_paused(env.clone()), "contract is paused");
     }
+
+    /// Burn `amount` wXLM from `from`, decrement total supply and send the
+    /// matching native XLM back. Shared by `withdraw` and `unwrap`; callers
+    /// must have already checked `from.require_auth()`.
+    fn burn_and_release(env: &Env, from: &Address, amount: i128) {
+        Self::check_not_paused(env);
+        assert!(amount > 0, "amount must be positive");
+
+        let bal = Self::balance_of(env.clone(), from.clone());
+        assert!(bal >= amount, "insufficient balance");
+
+        let supply: i128 = env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0);
+        let new_supply = supply.checked_sub(amount).expect("supply underflow");
+
+        // Burn wXLM from user
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(from.clone()), &(bal - amount));
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalSupply, &new_supply);
+
+        // Send native XLM back to user
+        let native_asset: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::NativeAsset)
+            .expect("native asset not set");
+        token::Client::new(env, &native_asset)
+            .transfer(&env.current_contract_address(), from, &amount);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, AuthorizedFunction};
     use soroban_sdk::token::StellarAssetClient;
 
     struct TestEnv {
@@ -999,6 +1032,109 @@ mod tests {
         te.client.withdraw(&user, &1000);
         assert_eq!(te.client.balance_of(&user), 0);
         assert_eq!(te.client.total_supply(), 0);
+    }
+
+    // ── Unwrap tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_wrap_unwrap_round_trip() {
+        let te = setup();
+        let user = Address::generate(&te.env);
+        let native = token::Client::new(&te.env, &te.sac.address);
+
+        fund_user(&te, &user, 1_000);
+        let native_start = native.balance(&user);
+
+        // Wrap: native XLM moves into the contract, wXLM is minted.
+        te.client.deposit(&user, &1_000);
+        assert_eq!(te.client.balance_of(&user), 1_000);
+        assert_eq!(te.client.total_supply(), 1_000);
+        assert_eq!(native.balance(&user), native_start - 1_000);
+        assert_eq!(native.balance(&te.client.address), 1_000);
+
+        // Partial unwrap burns wXLM and releases the same amount of XLM.
+        assert_eq!(te.client.unwrap(&user, &400), 400);
+        assert_eq!(te.client.balance_of(&user), 600);
+        assert_eq!(te.client.total_supply(), 600);
+        assert_eq!(native.balance(&user), native_start - 600);
+        assert_eq!(native.balance(&te.client.address), 600);
+
+        // Unwrapping the rest restores the starting balances exactly.
+        te.client.unwrap(&user, &600);
+        assert_eq!(te.client.balance_of(&user), 0);
+        assert_eq!(te.client.total_supply(), 0);
+        assert_eq!(native.balance(&user), native_start);
+        assert_eq!(native.balance(&te.client.address), 0);
+    }
+
+    #[test]
+    fn test_unwrap_only_burns_callers_balance() {
+        let te = setup();
+        let alice = Address::generate(&te.env);
+        let bob = Address::generate(&te.env);
+
+        fund_user(&te, &alice, 1_000);
+        fund_user(&te, &bob, 500);
+        te.client.deposit(&alice, &1_000);
+        te.client.deposit(&bob, &500);
+
+        te.client.unwrap(&alice, &250);
+
+        assert_eq!(te.client.balance_of(&alice), 750);
+        assert_eq!(te.client.balance_of(&bob), 500);
+        assert_eq!(te.client.total_supply(), 1_250);
+    }
+
+    #[test]
+    fn test_unwrap_requires_holder_auth() {
+        let te = setup();
+        let user = Address::generate(&te.env);
+        fund_user(&te, &user, 1_000);
+        te.client.deposit(&user, &1_000);
+
+        te.client.unwrap(&user, &100);
+
+        let auths = te.env.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, user);
+        match &auths[0].1.function {
+            AuthorizedFunction::Contract((contract, func, _)) => {
+                assert_eq!(*contract, te.client.address);
+                assert_eq!(*func, soroban_sdk::Symbol::new(&te.env, "unwrap"));
+            }
+            _ => panic!("expected a contract invocation"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "insufficient balance")]
+    fn test_unwrap_more_than_balance_rejected() {
+        let te = setup();
+        let user = Address::generate(&te.env);
+        fund_user(&te, &user, 100);
+        te.client.deposit(&user, &100);
+        te.client.unwrap(&user, &101);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be positive")]
+    fn test_unwrap_zero_rejected() {
+        let te = setup();
+        let user = Address::generate(&te.env);
+        fund_user(&te, &user, 100);
+        te.client.deposit(&user, &100);
+        te.client.unwrap(&user, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_unwrap_when_paused() {
+        let te = setup();
+        let user = Address::generate(&te.env);
+        fund_user(&te, &user, 100);
+        te.client.deposit(&user, &100);
+        te.client.pause(&te.admin);
+        te.client.unwrap(&user, &100);
     }
 
     // ── Minimum reserve tests ────────────────────────────────────────────────

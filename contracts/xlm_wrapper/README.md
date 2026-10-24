@@ -23,6 +23,7 @@ The XLM Wrapper Contract provides a 1:1 peg between native Stellar (XLM) and wra
 - `initialize(admin, name, symbol)`: Initialize the contract with admin and metadata
 - `deposit(from, amount)`: Deposit native XLM to mint wXLM (1:1)
 - `withdraw(from, amount)`: Burn wXLM to withdraw native XLM (1:1)
+- `unwrap(from, amount)`: Burn wXLM, decrement total supply and release the same amount of native XLM back to `from` (1:1)
 
 ### SEP-41 Token Interface
 
@@ -93,7 +94,7 @@ let user = Address::generate(&env);
 let amount = 500_i128;
 
 // Burn wXLM to receive native XLM
-client.withdraw(&user, &amount);
+client.unwrap(&user, &amount);
 
 // Check remaining wXLM balance
 let balance = client.balance_of(&user);

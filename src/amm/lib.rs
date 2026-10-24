@@ -2,6 +2,9 @@
 
 pub mod reentrancy_guard;
 
+#[cfg(test)]
+mod constant_product_fuzz;
+
 use reentrancy_guard::ReentrancyGuard;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
@@ -572,6 +575,7 @@ mod tests {
         assert_eq!(r_b, 0);
         assert_eq!(client.get_admin(), admin);
         assert!(!client.is_paused());
+
     }
 
     #[test]
@@ -948,6 +952,7 @@ mod tests {
 
         // The mock pool is initialised with the same token on both sides, so
         // token_in and token_out are both the mock.
+
         assert_eq!(
             env.events().all().filter_by_contract(&contract_id),
             svec![
