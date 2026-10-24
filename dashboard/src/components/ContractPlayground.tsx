@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Play, 
   Terminal, 
@@ -233,6 +233,26 @@ export function parseContractSpec(specJson: string): ContractSpec {
   return parsed as ContractSpec;
 }
 
+export interface InvocationRecord {
+  id: string;
+  contractAddress: string;
+  method: string;
+  args: Record<string, any>;
+  result: ExecutionResult;
+  timestamp: string;
+}
+
+const HISTORY_KEY = 'soroban-playground-history';
+
+export function loadInvocationHistory(): InvocationRecord[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? (JSON.parse(raw) as InvocationRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 interface ContractPlaygroundProps {
   apiBaseUrl?: string;
   initialSpecs?: ContractSpec[];
@@ -258,6 +278,16 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
   const [activeTab, setActiveTab] = useState<'params' | 'specJson'>('params');
   const [rawSpecInput, setRawSpecInput] = useState<string>('');
   const [copiedTx, setCopiedTx] = useState<boolean>(false);
+  const [customAddress, setCustomAddress] = useState<string>('');
+  const [history, setHistory] = useState<InvocationRecord[]>(() => loadInvocationHistory());
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 20)));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [history]);
 
   const currentContract = useMemo(() => {
     return specs.find(c => c.id === selectedContractId) || specs[0];
@@ -330,39 +360,70 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
 
     setIsExecuting(true);
     try {
+      const contractAddress = (customAddress.trim() || currentContract.contractAddress).trim();
+      let result: ExecutionResult;
       if (onExecuteMethod) {
-        const res = await onExecuteMethod(currentMethod.name, formValues);
-        setExecutionResult(res);
+        result = await onExecuteMethod(currentMethod.name, formValues);
       } else {
-        // Simulate realistic Soroban invocation delay and output
-        await new Promise(resolve => setTimeout(resolve, 800));
+        // Invoke via backend; fall back to local simulation if unreachable.
+        try {
+          const res = await fetch(`${apiBaseUrl}/contracts/invoke`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contractAddress, method: currentMethod.name, args: formValues, source: connectedAddress }),
+          });
+          if (!res.ok) throw new Error(`Backend responded ${res.status}`);
+          const data = await res.json();
+          result = {
+            status: data.status ?? 'SUCCESS',
+            method: currentMethod.name,
+            contractId: contractAddress,
+            txHash: data.txHash ?? data.hash ?? '0x00',
+            returnValue: data.returnValue ?? data.result ?? data,
+            cpuInstructions: data.cpuInstructions ?? 0,
+            memoryBytes: data.memoryBytes ?? 0,
+            events: data.events ?? [],
+            rawXdr: data.rawXdr,
+          };
+        } catch {
+          // Simulate realistic Soroban invocation delay and output
+          await new Promise(resolve => setTimeout(resolve, 800));
 
-        let mockReturn: any = '()';
-        if (currentMethod.returnType === 'i128') {
-          mockReturn = formValues['amount'] ? `${formValues['amount']}0000000` : '1500000000';
-        } else if (currentMethod.returnType === 'Address') {
-          mockReturn = connectedAddress;
+          let mockReturn: any = '()';
+          if (currentMethod.returnType === 'i128') {
+            mockReturn = formValues['amount'] ? `${formValues['amount']}0000000` : '1500000000';
+          } else if (currentMethod.returnType === 'Address') {
+            mockReturn = connectedAddress;
+          }
+
+          result = {
+            status: 'SUCCESS',
+            method: currentMethod.name,
+            contractId: contractAddress,
+            txHash: `0x${Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`,
+            returnValue: mockReturn,
+            cpuInstructions: Math.floor(25000 + Math.random() * 15000),
+            memoryBytes: Math.floor(1200 + Math.random() * 600),
+            events: [
+              {
+                topic: [currentContract.name, currentMethod.name],
+                data: { ...formValues, invoker: connectedAddress },
+                timestamp: new Date().toISOString()
+              }
+            ],
+            rawXdr: 'AAAAAgAAAAAQm9ycm93ZXIAAA=='
+          };
         }
-
-        const mockResult: ExecutionResult = {
-          status: 'SUCCESS',
-          method: currentMethod.name,
-          contractId: currentContract.contractAddress,
-          txHash: `0x${Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`,
-          returnValue: mockReturn,
-          cpuInstructions: Math.floor(25000 + Math.random() * 15000),
-          memoryBytes: Math.floor(1200 + Math.random() * 600),
-          events: [
-            {
-              topic: [currentContract.name, currentMethod.name],
-              data: { ...formValues, invoker: connectedAddress },
-              timestamp: new Date().toISOString()
-            }
-          ],
-          rawXdr: 'AAAAAgAAAAAQm9ycm93ZXIAAA=='
-        };
-        setExecutionResult(mockResult);
       }
+      setExecutionResult(result);
+      setHistory(prev => [{
+        id: `${Date.now()}`,
+        contractAddress: result.contractId,
+        method: result.method,
+        args: { ...formValues },
+        result,
+        timestamp: new Date().toISOString(),
+      }, ...prev].slice(0, 20));
     } catch (err: any) {
       setExecutionResult({
         status: 'FAILED',
@@ -486,6 +547,19 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
             </div>
 
             {/* Contract Address Bar */}
+            <div>
+              <label htmlFor="contract-address-input" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                Contract Address
+              </label>
+              <input
+                id="contract-address-input"
+                value={customAddress}
+                onChange={e => setCustomAddress(e.target.value)}
+                placeholder={currentContract?.contractAddress}
+                className="input-field w-full text-xs font-mono"
+                data-testid="contract-address-input"
+              />
+            </div>
             <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-lg flex items-center justify-between gap-2 text-xs">
               <span className="text-slate-400 flex items-center gap-1.5">
                 <Code size={14} className="text-blue-400" /> Contract ID:
@@ -754,14 +828,53 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
                   <span className="text-xs font-semibold text-slate-400 block mb-1.5">
                     Return Value ({currentMethod?.returnType}):
                   </span>
-                  <div 
+                  <div
                     data-testid="return-value-display"
                     className="p-3 bg-slate-950 rounded-lg border border-slate-800 font-mono text-xs text-emerald-400 overflow-x-auto"
                   >
-                    <pre>{JSON.stringify(executionResult.returnValue, null, 2)}</pre>
+                    <pre>{JSON.stringify(executionResult, null, 2)}</pre>
                   </div>
                 </div>
               </div>
+            )}
+          </div>
+
+          {/* Invocation History (localStorage) */}
+          <div className="glass-card p-6 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+                Invocation History
+              </h3>
+              {history.length > 0 && (
+                <button
+                  onClick={() => setHistory([])}
+                  className="text-[11px] text-slate-400 hover:text-rose-400"
+                  data-testid="clear-history-btn"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {history.length === 0 ? (
+              <p className="text-xs text-slate-500">No invocations yet this session.</p>
+            ) : (
+              <ul className="space-y-2 max-h-64 overflow-y-auto" data-testid="invocation-history">
+                {history.map(h => (
+                  <li key={h.id} className="p-2.5 bg-slate-950/60 rounded-lg border border-slate-800 text-[11px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-bold text-slate-200">{h.method}()</span>
+                      <span className="text-slate-500">{new Date(h.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div className="font-mono text-slate-400 truncate">{h.contractAddress}</div>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-primary">View JSON</summary>
+                      <pre className="mt-1 p-2 bg-slate-900 rounded font-mono text-[10px] text-emerald-300 overflow-x-auto">
+                        {JSON.stringify(h.result, null, 2)}
+                      </pre>
+                    </details>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 

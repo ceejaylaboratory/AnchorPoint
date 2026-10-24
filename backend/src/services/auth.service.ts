@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
 
 import { RedisService } from './redis.service';
 import { redis } from '../lib/redis';
@@ -13,7 +14,7 @@ import {
   verifySep10Challenge,
   type Sep10Challenge
 } from '../utils/sep10-stellar';
-import { NetworkType } from '../config/networks';
+import { NETWORKS, NetworkType } from '../config/networks';
 
 export interface VerifiedToken {
   sub: string;
@@ -606,8 +607,45 @@ export const storeSep10Challenge = async (
   );
 };
 
+/** Error code returned when a signed challenge is past its `timeBounds.maxTime`. */
+export const SEP10_CHALLENGE_EXPIRED = 'challenge_expired' as const;
+
+export interface Sep10VerificationResult {
+  isValid: boolean;
+  account: string;
+  error?: typeof SEP10_CHALLENGE_EXPIRED;
+}
+
+/**
+ * Returns true when the challenge transaction's `timeBounds.maxTime` is not
+ * strictly in the future. A challenge without a finite upper bound (absent
+ * time bounds, or `maxTime` of 0 which Stellar treats as "no limit") cannot
+ * be proven fresh and is treated as expired, as is unparseable XDR.
+ */
+export const isSep10ChallengeExpired = (
+  signedTransactionXdr: string,
+  networkType: NetworkType = NetworkType.TESTNET,
+  nowMs: number = Date.now()
+): boolean => {
+  try {
+    const tx = TransactionBuilder.fromXDR(
+      signedTransactionXdr,
+      NETWORKS[networkType].passphrase
+    ) as Transaction;
+    const maxTime = Number(tx.timeBounds?.maxTime ?? 0);
+    return !(maxTime > 0 && maxTime > nowMs / 1000);
+  } catch {
+    return true;
+  }
+};
+
 /**
  * Verifies a signed SEP-10 challenge transaction.
+ *
+ * After the signature and challenge value check, the transaction's
+ * `timeBounds.maxTime` must still be in the future; otherwise the result is
+ * invalid with `error: 'challenge_expired'` so expired challenges cannot be
+ * replayed for a JWT.
  *
  * For accounts with multiple signers the function fetches the account's live
  * threshold data from Stellar Horizon and validates that the combined weight of
@@ -625,7 +663,7 @@ export const verifySep10ChallengeTransaction = (
   storedChallenge: Challenge,
   networkType: NetworkType = NetworkType.TESTNET,
   thresholdLevel: 'low' | 'med' | 'high' = 'med'
-): { isValid: boolean; account: string } => {
+): Sep10VerificationResult => {
   return traceSync(
     'auth.verify_sep10_challenge',
     (span) => {
@@ -636,6 +674,16 @@ export const verifySep10ChallengeTransaction = (
         storedChallenge.challenge,
         networkType
       );
+
+      if (verification.isValid && isSep10ChallengeExpired(signedTransactionXdr, networkType)) {
+        span.setAttribute('auth.verification_valid', false);
+        span.setAttribute('auth.challenge_expired', true);
+        return {
+          isValid: false,
+          account: verification.account,
+          error: SEP10_CHALLENGE_EXPIRED
+        };
+      }
 
       span.setAttribute('auth.verification_valid', verification.isValid);
       if (verification.isValid) {
@@ -675,7 +723,7 @@ export const verifySep10ChallengeTransactionMultiSig = async (
   networkType: NetworkType = NetworkType.TESTNET,
   thresholdLevel: 'low' | 'med' | 'high' = 'med',
   horizonUrl?: string
-): Promise<{ isValid: boolean; account: string; totalWeight?: number; requiredWeight?: number }> => {
+): Promise<Sep10VerificationResult & { totalWeight?: number; requiredWeight?: number }> => {
   return traceAsync(
     'auth.verify_sep10_challenge_multisig',
     async (span) => {
@@ -695,6 +743,12 @@ export const verifySep10ChallengeTransactionMultiSig = async (
       }
 
       const account = basicVerification.account;
+
+      if (isSep10ChallengeExpired(signedTransactionXdr, networkType)) {
+        span.setAttribute('auth.challenge_expired', true);
+        return { isValid: false, account, error: SEP10_CHALLENGE_EXPIRED };
+      }
+
       span.setAttribute('auth.verified_account', account);
 
       try {

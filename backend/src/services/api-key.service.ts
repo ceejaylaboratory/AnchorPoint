@@ -24,10 +24,15 @@ export class ApiKeyFormatError extends Error {
   }
 }
 
+export function isValidApiKeyFormat(key: string): boolean {
+  return API_KEY_FORMAT.test(key);
+}
+}
+
 export class ApiKeyService {
   async createKey(ownerId: string, tier: Tier, expiresInDays?: number): Promise<ApiKeyRecord> {
     const key = crypto.randomBytes(24).toString("hex"); // 48 hex chars
-    if (!API_KEY_FORMAT.test(key)) {
+    if (!isValidApiKeyFormat(key)) {
       throw new ApiKeyFormatError();
     }
     const expiresAt = expiresInDays

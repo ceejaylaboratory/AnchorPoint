@@ -186,5 +186,51 @@ describe('TransactionHistory - Virtualized Transaction History Table for 10,000+
       expect(screen.queryByTestId('tx-card-secondary-0')).not.toBeInTheDocument();
     });
   });
+
+  describe('Real-time updates and animation', () => {
+    it('animates row briefly when transaction status update is received', async () => {
+      const sampleTxs = [
+        {
+          id: 'TX-ANIM-1',
+          hash: '0x123',
+          type: 'Deposit' as const,
+          asset: 'USDC',
+          amount: '100.00',
+          counterparty: 'GABC',
+          status: 'Pending' as const,
+          date: '2024-03-21',
+          timestamp: 1710500000,
+          fee: '0.00001 XLM'
+        }
+      ];
+
+      render(<TransactionHistory initialData={sampleTxs} totalInitialCount={1} />);
+
+      const row = screen.getByTestId('tx-row-0');
+      expect(row).not.toHaveAttribute('data-animating');
+
+      // Trigger store status update
+      const { useTransactionStore } = await import('../store/transactionStore');
+      const { act } = await import('@testing-library/react');
+      await act(async () => {
+        useTransactionStore.getState().applyStatusUpdate({
+          id: 'TX-ANIM-1',
+          status: 'COMPLETED'
+        });
+      });
+
+      // Row now has animating attribute and animation class
+      const updatedRow = screen.getByTestId('tx-row-0');
+      expect(updatedRow).toHaveAttribute('data-animating', 'true');
+      expect(updatedRow.className).toContain('animate-pulse');
+    });
+
+    it('renders the connection mode badge', () => {
+      render(<TransactionHistory totalInitialCount={10} />);
+      const badge = screen.getByTestId('connection-mode-badge');
+      expect(badge).toBeInTheDocument();
+    });
+  });
 });
+
 

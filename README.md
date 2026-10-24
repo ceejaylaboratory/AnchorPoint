@@ -18,6 +18,7 @@ This is a monorepo containing:
 
 - **SEP-24 Wizard**: A multi-step UI flow for handling deposits and withdrawals.
 - **Transaction Management**: A detailed view of pending and historical transactions.
+- **Keyboard Shortcuts**: Press `?` for help, `N` for a new transaction, `T` for transactions, `S` for settings (disabled while typing in inputs).
 - **Interactive KYC**: Placeholder integration for SEP-12 interactive flows.
 - **Institutional Branding**: Easily customizable via CSS variables.
 

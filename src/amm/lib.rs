@@ -2,6 +2,9 @@
 
 pub mod reentrancy_guard;
 
+#[cfg(test)]
+mod constant_product_fuzz;
+
 use reentrancy_guard::ReentrancyGuard;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
@@ -11,7 +14,7 @@ use soroban_sdk::{
 /// Errors returned by the AMM contract.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum AmmError {
+pub enum ContractError {
     /// The calculated output amount is below the caller's minimum threshold.
     SlippageExceeded = 1,
 }
@@ -200,6 +203,13 @@ impl AMM {
     }
 
     /// Swaps tokens using the constant product formula (x * y = k) with a 0.3% fee.
+    ///
+    /// `min_amount_out` is the least amount of the output token the caller
+    /// will accept. Pass a value derived from an off-chain quote to protect
+    /// against price movement and sandwich attacks.
+    ///
+    /// # Panics
+    /// * `ContractError::SlippageExceeded` if the output is below `min_amount_out`.
     pub fn swap(
         env: Env,
         from: Address,
@@ -232,15 +242,6 @@ impl AMM {
             panic!("invalid token for pool");
         };
 
-        // Transfer token_in from user to contract
-        transfer(
-            &env,
-            &token_in,
-            &from,
-            &env.current_contract_address(),
-            amount_in,
-        );
-
         // Constant product formula with 0.3% fee: dy = (reserve_out * dx * 997) / (reserve_in * 1000 + dx * 997)
         let amount_in_with_fee = amount_in.checked_mul(997).expect("swap overflow");
         let numerator = amount_in_with_fee
@@ -253,9 +254,20 @@ impl AMM {
             .expect("swap overflow");
         let amount_out = numerator / denominator;
 
+        // Slippage protection: reject before any funds move if the trade
+        // would return less than the caller is willing to accept.
         if amount_out < min_amount_out {
-            panic_with_error!(env, AmmError::SlippageExceeded);
+            panic_with_error!(env, ContractError::SlippageExceeded);
         }
+
+        // Transfer token_in from user to contract
+        transfer(
+            &env,
+            &token_in,
+            &from,
+            &env.current_contract_address(),
+            amount_in,
+        );
 
         // Update state
         if token_in == token_a {
@@ -393,6 +405,52 @@ impl AMM {
             .unwrap_or(0)
     }
 
+    /// Returns the geometric mean NAV per LP share.
+    ///
+    /// The price is defined as:
+    ///   get_share_price = sqrt(reserve_a * reserve_b) / total_shares
+    ///
+    /// This gives a manipulation-resistant value suitable for collateral
+    /// calculations because it is the geometric mean of the two reserves, not
+    /// a simple arithmetic average that can be skewed by a single-sided deposit.
+    ///
+    /// Panics if the pool has no shares outstanding (pool not yet seeded).
+    pub fn get_share_price(env: Env) -> u128 {
+        let reserve_a: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReserveA)
+            .unwrap_or(0);
+        let reserve_b: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReserveB)
+            .unwrap_or(0);
+        let total_shares: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares)
+            .unwrap_or(0);
+
+        assert!(total_shares > 0, "no shares outstanding");
+        assert!(reserve_a >= 0 && reserve_b >= 0, "invalid reserves");
+
+        // geometric_mean = sqrt(reserve_a * reserve_b)
+        let product = reserve_a
+            .checked_mul(reserve_b)
+            .expect("reserve product overflow");
+        let geometric_mean = sqrt(product);
+
+        // price per share = geometric_mean / total_shares
+        // Multiply by a precision factor (1e7) to retain sub-unit resolution.
+        let precision: i128 = 10_000_000;
+        let numerator = geometric_mean
+            .checked_mul(precision)
+            .expect("share price overflow");
+
+        (numerator / total_shares) as u128
+    }
+
     /// Returns the administrator authorized to pause and unpause this pool.
     pub fn get_admin(env: Env) -> Address {
         env.storage()
@@ -500,18 +558,24 @@ mod tests {
 
     #[test]
     fn test_initialization() {
-        let (_env, client, admin, _token_a, _token_b) = setup();
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(AMM, ());
+        let client = AMMClient::new(&env, &contract_id);
+        client.initialize(&admin, &Address::generate(&env), &Address::generate(&env));
+        assert_eq!(
+            env.events().all().filter_by_contract(&contract_id).events().len(),
+            1,
+            "initialization emits one pool event"
+        );
 
         let (r_a, r_b) = client.get_reserves();
         assert_eq!(r_a, 0);
         assert_eq!(r_b, 0);
         assert_eq!(client.get_admin(), admin);
         assert!(!client.is_paused());
-        assert_eq!(
-            _env.events().all().len(),
-            1,
-            "initialization emits one pool event"
-        );
+
     }
 
     #[test]
@@ -827,7 +891,7 @@ mod tests {
         assert_eq!(actual_out, expected_dy);
     }
 
-    /// Verify that swap reverts with `AmmError::SlippageExceeded` when
+    /// Verify that swap reverts with `ContractError::SlippageExceeded` when
     /// min_amount_out is set higher than what the CPMM formula would produce.
     ///
     /// The revert is a typed contract error raised through `panic_with_error!`,
@@ -845,8 +909,29 @@ mod tests {
         // Demanding exactly 10 out must trigger slippage protection.
         assert_eq!(
             client.try_swap(&user, &token_id, &10, &10),
-            Err(Ok(AmmError::SlippageExceeded.into()))
+            Err(Ok(ContractError::SlippageExceeded.into()))
         );
+    }
+
+    /// Boundary: `min_amount_out == quote` passes, `quote + 1` fails with the
+    /// typed error and leaves the pool reserves untouched.
+    #[test]
+    fn test_min_amount_out_boundary() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _cid, token_id) = setup_amm_with_reserves(&env, 50_000, 80_000);
+        let user = Address::generate(&env);
+
+        let dx: i128 = 2_500;
+        let quote = (dx * 997 * 80_000) / (50_000 * 1000 + dx * 997);
+
+        assert_eq!(
+            client.try_swap(&user, &token_id, &dx, &(quote + 1)),
+            Err(Ok(ContractError::SlippageExceeded.into()))
+        );
+        assert_eq!(client.get_reserves(), (50_000, 80_000));
+
+        assert_eq!(client.swap(&user, &token_id, &dx, &quote), quote);
     }
 
     /// Verify the swap event reports the trader, both tokens and the amounts, so
@@ -867,14 +952,17 @@ mod tests {
 
         // The mock pool is initialised with the same token on both sides, so
         // token_in and token_out are both the mock.
-        let events = env.events().all();
+
         assert_eq!(
-            events.get(events.len() - 1).unwrap(),
-            (
-                contract_id,
-                svec![&env, symbol_short!("swap").into_val(&env)],
-                (user, token_id.clone(), token_id, amount_in, expected_out).into_val(&env),
-            )
+            env.events().all().filter_by_contract(&contract_id),
+            svec![
+                &env,
+                (
+                    contract_id.clone(),
+                    svec![&env, symbol_short!("swap").into_val(&env)],
+                    (user, token_id.clone(), token_id, amount_in, expected_out).into_val(&env),
+                )
+            ]
         );
     }
 
@@ -916,7 +1004,7 @@ mod tests {
         assert!(result.is_err(), "slippage guard must reject out+1");
     }
 
-    /// Verify that swap rejects with AmmError::SlippageExceeded when
+    /// Verify that swap rejects with ContractError::SlippageExceeded when
     /// min_amount_out exceeds the CPMM output for the given trade.
     /// This simulates price slippage: the pool moved and the user gets less
     /// than they specified.
@@ -956,8 +1044,8 @@ mod tests {
         env.mock_all_auths();
 
         let admin = Address::generate(&env);
-        let token_a = env.register(SlippageMockToken, ());
-        let token_b = env.register(SlippageMockToken, ());
+        let token_a = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let token_b = env.register_stellar_asset_contract_v2(admin.clone()).address();
 
         let contract_id = env.register(AMM, ());
         let client = AMMClient::new(&env, &contract_id);
@@ -966,11 +1054,17 @@ mod tests {
 
         let lp_user = Address::generate(&env);
         let swapper = Address::generate(&env);
+        for token in [&token_a, &token_b] {
+            let sac = soroban_sdk::token::StellarAssetClient::new(&env, token);
+            sac.mint(&lp_user, &10_000_000);
+            sac.mint(&swapper, &10_000_000);
+        }
 
         // Initial deposit to establish shares and reserves
         client.deposit(&lp_user, &10_000_000, &10_000_000);
 
         let k_before = 10_000_000_i128 * 10_000_000_i128;
+        let initial_total_shares = client.get_total_shares();
 
         for i in 0..100 {
             // Swap alternately A->B and B->A to keep reserves roughly balanced
@@ -985,7 +1079,6 @@ mod tests {
         assert!(k_after > k_before, "LP token value (k) should grow due to fee compounding");
 
         // Verify the value per share increased
-        let initial_total_shares = 10_000_000 - 1000;
         let final_total_shares = client.get_total_shares();
         assert_eq!(initial_total_shares, final_total_shares, "Total shares should not change during swaps");
     }
@@ -1226,6 +1319,68 @@ mod fuzz_tests {
 
             assert!(min_shares >= 0, "Shares should never be negative");
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // get_share_price tests
+    // -------------------------------------------------------------------------
+
+    /// Equal-reserve pool: geometric mean = sqrt(1000 * 1000) = 1000.
+    /// With TotalShares also seeded to 1000, price per share = 1000 * 1e7 / 1000 = 1e7.
+    #[test]
+    fn test_get_share_price_equal_reserves() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, contract_id, _token_id) = setup_amm_with_reserves(&env, 1_000, 1_000);
+
+        // Seed total shares so the call is valid.
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::TotalShares, &1_000_i128);
+        });
+
+        let price = client.get_share_price();
+        // geometric_mean = sqrt(1000 * 1000) = 1000
+        // price = (1000 * 10_000_000) / 1000 = 10_000_000
+        assert_eq!(price, 10_000_000u128);
+    }
+
+    /// Unequal-reserve pool: geometric mean < arithmetic mean, confirming the
+    /// manipulation-resistance property.
+    #[test]
+    fn test_get_share_price_unequal_reserves() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // reserve_a = 4_000_000, reserve_b = 1_000_000
+        // geometric_mean = sqrt(4_000_000 * 1_000_000) = sqrt(4e12) = 2_000_000
+        let (client, contract_id, _token_id) =
+            setup_amm_with_reserves(&env, 4_000_000, 1_000_000);
+
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::TotalShares, &1_000_i128);
+        });
+
+        let price = client.get_share_price();
+        // geometric_mean = 2_000_000
+        // price = (2_000_000 * 10_000_000) / 1_000 = 20_000_000_000
+        assert_eq!(price, 20_000_000_000u128);
+    }
+
+    /// get_share_price panics when there are no shares outstanding (uninitialized pool).
+    #[test]
+    #[should_panic(expected = "no shares outstanding")]
+    fn test_get_share_price_no_shares_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _contract_id, _token_id) = setup_amm_with_reserves(&env, 1_000, 1_000);
+        // TotalShares is left at zero (default from setup_amm_with_reserves).
+        client.get_share_price();
     }
 
     static RNG_STATE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(12345);

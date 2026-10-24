@@ -8,7 +8,15 @@ import {
   passwordResetRequestSchema,
   passwordResetConfirmSchema,
   purgeCacheSchema,
+  createFeeScheduleSchema,
+  adminMfaConfirmSchema,
+  adminLoginSchema,
 } from './admin.schemas';
+import {
+  setupAdminMfa,
+  confirmAdminMfa,
+  loginAdmin,
+} from '../controllers/admin.controller';
 import { stellarService } from '../../services/stellar.service';
 import { NetworkType } from '../../config/networks';
 import { SEP31Service } from '../../services/sep31.service';
@@ -34,6 +42,91 @@ const sep31Service = new SEP31Service(createCallbackNotifier());
 // Admin RBAC: read endpoints accept every role, destructive ones need SUPER_ADMIN or OPS
 const requireReadAccess = requireRole('SUPER_ADMIN', 'OPS', 'READ_ONLY');
 const requireWriteAccess = requireRole('SUPER_ADMIN', 'OPS');
+
+/**
+ * @swagger
+ * /api/admin/login:
+ *   post:
+ *     summary: Authenticate an admin user
+ *     description: Logs in an admin with email and password. Requires a TOTP code (or single-use backup code) when MFA is enabled.
+ *     tags: [Admin]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *               totpCode:
+ *                 type: string
+ *                 description: 6-digit TOTP code or single-use backup code when MFA is enabled
+ *               code:
+ *                 type: string
+ *                 description: Alias for totpCode
+ *     responses:
+ *       200:
+ *         description: Admin authenticated successfully
+ *       400:
+ *         description: Invalid request payload
+ *       401:
+ *         description: Invalid credentials, MFA required, or invalid TOTP code
+ */
+router.post('/login', validate({ body: adminLoginSchema }), loginAdmin);
+
+/**
+ * @swagger
+ * /api/admin/mfa/setup:
+ *   post:
+ *     summary: Initialize TOTP MFA setup for the authenticated admin
+ *     description: Generates a Base32 TOTP secret, QR code data URL, and 10 single-use backup codes.
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: TOTP secret, QR code, and backup codes generated
+ *       401:
+ *         description: Authentication required
+ */
+router.post('/mfa/setup', requireReadAccess, setupAdminMfa);
+
+/**
+ * @swagger
+ * /api/admin/mfa/confirm:
+ *   post:
+ *     summary: Verify first TOTP code and enable MFA for the authenticated admin
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - code
+ *             properties:
+ *               code:
+ *                 type: string
+ *                 description: 6-digit TOTP code from authenticator app
+ *     responses:
+ *       200:
+ *         description: MFA verified and enabled
+ *       400:
+ *         description: Invalid or expired TOTP code
+ *       401:
+ *         description: Authentication required
+ */
+router.post('/mfa/confirm', requireReadAccess, validate({ body: adminMfaConfirmSchema }), confirmAdminMfa);
 
 /**
  * @swagger
@@ -97,6 +190,13 @@ router.post('/network', requireWriteAccess, validate({ body: switchNetworkSchema
     });
     res.json({ message: `Switched to ${network} successfully`, network });
   } catch (error: any) {
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_NETWORK_SWITCH',
+      actor: getAuditActor(req),
+      targetEntity: 'stellar_network',
+      result: 'failure',
+      metadata: { network, error: error.message },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -156,6 +256,13 @@ router.patch('/transactions/:id', requireWriteAccess, validate({ body: patchTran
     res.json({ message: 'Transaction status updated successfully', transaction: updatedTransaction });
   } catch (error: any) {
     logger.error('Error updating transaction status', { error: error.message });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_TRANSACTION_STATUS_UPDATE',
+      actor: getAuditActor(req),
+      targetEntity: `transaction:${req.params.id}`,
+      result: 'failure',
+      metadata: { status: req.body?.status, error: error.message },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -247,6 +354,14 @@ router.post('/password-reset/confirm', validate({ body: passwordResetConfirmSche
       message: 'Password has been reset successfully.',
     });
   } catch (error: any) {
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_PASSWORD_RESET_CONFIRM',
+      actor: getAuditActor(req),
+      targetEntity: 'admin_password',
+      result: 'failure',
+      metadata: { error: error?.message },
+    });
+
     if (error instanceof InvalidResetTokenError) {
       return res.status(400).json({
         status: 'error',
@@ -394,6 +509,13 @@ router.post('/cache/purge-toml', requireWriteAccess, validate({ body: purgeCache
     res.json({ purged });
   } catch (error: any) {
     logger.error('Failed to purge TOML cache', { message: error?.message });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_TOML_CACHE_PURGE',
+      actor: getAuditActor(req),
+      targetEntity: parsed.data.homeDomain ?? 'all',
+      result: 'failure',
+      metadata: { error: error?.message },
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -409,6 +531,11 @@ const auditLogsQuerySchema = z.object({
 
 /**
  * @swagger
+ * /admin/audit-log:
+ *   get:
+ *     summary: List administrative audit log entries (alias of /admin/audit-logs)
+ *     tags: [Admin]
+ *     description: Supports the same query parameters, including startDate/endDate range filtering.
  * /admin/audit-logs:
  *   get:
  *     summary: List administrative audit log entries
@@ -447,7 +574,7 @@ const auditLogsQuerySchema = z.object({
  *       400:
  *         description: Invalid query parameters
  */
-router.get('/audit-logs', requireReadAccess, async (req: Request, res: Response) => {
+router.get(['/audit-log', '/audit-logs'], requireReadAccess, async (req: Request, res: Response) => {
   const parsed = auditLogsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({
@@ -584,13 +711,193 @@ router.post('/queues/notification-dlq/:jobId/retry', requireWriteAccess, async (
   try {
     const retried = await retryNotificationDlqJob(req.params.jobId);
     if (!retried) {
+      await adminAuditService.recordConfigChange({
+        action: 'ADMIN_NOTIFICATION_DLQ_RETRY',
+        actor: getAuditActor(req),
+        targetEntity: `notification_dlq_job:${req.params.jobId}`,
+        result: 'failure',
+        metadata: { error: 'DLQ job not found' },
+      });
       return res.status(404).json({ status: 'error', message: 'DLQ job not found' });
     }
     logger.info('Retried notification DLQ job', { dlqJobId: req.params.jobId, jobId: retried.id });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_NOTIFICATION_DLQ_RETRY',
+      actor: getAuditActor(req),
+      targetEntity: `notification_dlq_job:${req.params.jobId}`,
+      after: { jobId: retried.id },
+    });
     res.json({ status: 'success', data: { jobId: retried.id } });
   } catch (error: any) {
     logger.error('Failed to retry notification DLQ job', { message: error?.message });
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_NOTIFICATION_DLQ_RETRY',
+      actor: getAuditActor(req),
+      targetEntity: `notification_dlq_job:${req.params.jobId}`,
+      result: 'failure',
+      metadata: { error: error?.message },
+    });
     res.status(500).json({ status: 'error', message: 'Failed to retry notification DLQ job' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/admin/fees/schedule:
+ *   post:
+ *     summary: Add new fee schedule version with future effective date
+ *     tags: [Admin]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - assetCode
+ *               - feeType
+ *               - effectiveFrom
+ *             properties:
+ *               assetCode:
+ *                 type: string
+ *                 example: USDC
+ *               feeType:
+ *                 type: string
+ *                 enum: [flat, percentage, tiered]
+ *                 example: flat
+ *               feeFixed:
+ *                 type: number
+ *                 example: 0.5
+ *               feePercent:
+ *                 type: number
+ *                 example: 0.005
+ *               feeMinimum:
+ *                 type: number
+ *                 example: 0.5
+ *               effectiveFrom:
+ *                 type: string
+ *                 format: date-time
+ *     responses:
+ *       201:
+ *         description: Fee schedule created successfully
+ *       400:
+ *         description: Validation error or non-future date
+ */
+router.post('/fees/schedule', requireWriteAccess, validate({ body: createFeeScheduleSchema }), async (req: Request, res: Response) => {
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const { assetCode, feeType, feeFixed, feePercent, feeMinimum, effectiveFrom, effective_from } = req.body;
+    const effectiveDate = new Date(effectiveFrom || effective_from);
+
+    const schedule = await prisma.feeSchedule.create({
+      data: {
+        assetCode,
+        feeType,
+        feeFixed: feeFixed ?? 0,
+        feePercent: feePercent ?? 0,
+        feeMinimum: feeMinimum ?? 0,
+        effectiveFrom: effectiveDate,
+      },
+    });
+
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_FEE_SCHEDULE_CREATE' as any,
+      actor: getAuditActor(req),
+      targetEntity: `fee_schedule:${schedule.id}`,
+      after: schedule,
+    });
+
+    res.status(201).json({
+      status: 'success',
+      data: schedule,
+    });
+  } catch (error: any) {
+    logger.error('Failed to create fee schedule', { error: error.message });
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message || 'Failed to create fee schedule',
+      },
+    });
+  }
+});
+
+// Alias for plural endpoint
+router.post('/fee-schedules', requireWriteAccess, validate({ body: createFeeScheduleSchema }), async (req: Request, res: Response) => {
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const { assetCode, feeType, feeFixed, feePercent, feeMinimum, effectiveFrom, effective_from } = req.body;
+    const effectiveDate = new Date(effectiveFrom || effective_from);
+
+    const schedule = await prisma.feeSchedule.create({
+      data: {
+        assetCode,
+        feeType,
+        feeFixed: feeFixed ?? 0,
+        feePercent: feePercent ?? 0,
+        feeMinimum: feeMinimum ?? 0,
+        effectiveFrom: effectiveDate,
+      },
+    });
+
+    await adminAuditService.recordConfigChange({
+      action: 'ADMIN_FEE_SCHEDULE_CREATE' as any,
+      actor: getAuditActor(req),
+      targetEntity: `fee_schedule:${schedule.id}`,
+      after: schedule,
+    });
+
+    res.status(201).json({
+      status: 'success',
+      data: schedule,
+    });
+  } catch (error: any) {
+    logger.error('Failed to create fee schedule', { error: error.message });
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message || 'Failed to create fee schedule',
+      },
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/admin/fees/schedules:
+ *   get:
+ *     summary: List versioned fee schedules
+ *     tags: [Admin]
+ *     parameters:
+ *       - in: query
+ *         name: asset
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of fee schedules
+ */
+router.get('/fees/schedules', requireReadAccess, async (req: Request, res: Response) => {
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const asset = req.query.asset as string | undefined;
+    const schedules = await prisma.feeSchedule.findMany({
+      where: asset ? { assetCode: asset.toUpperCase() } : undefined,
+      orderBy: { effectiveFrom: 'desc' },
+    });
+
+    res.json({
+      status: 'success',
+      data: schedules,
+    });
+  } catch (error: any) {
+    logger.error('Failed to list fee schedules', { error: error.message });
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message || 'Failed to list fee schedules',
+      },
+    });
   }
 });
 

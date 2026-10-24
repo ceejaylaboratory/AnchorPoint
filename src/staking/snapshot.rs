@@ -100,9 +100,7 @@ impl SnapshotStaking {
 
         let key = DataKey::EpochTotal(epoch);
         env.storage().persistent().set(&key, &total);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_BUMP, TTL_BUMP);
+        anchorpoint_utils::storage::extend_persistent_ttl_with(&env, &key, TTL_BUMP, TTL_BUMP);
 
         // Record historic epoch snapshot
         Self::record_epoch_snapshot(env.clone(), epoch);
@@ -266,9 +264,7 @@ impl SnapshotStaking {
 
         let key = DataKey::EpochSnapshot(epoch);
         env.storage().persistent().set(&key, &snapshot);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_BUMP, TTL_BUMP);
+        anchorpoint_utils::storage::extend_persistent_ttl_with(&env, &key, TTL_BUMP, TTL_BUMP);
 
         env.events()
             .publish((symbol_short!("snap"),), (epoch, snapshot.total_staked, snapshot.participant_count));
@@ -289,15 +285,11 @@ impl SnapshotStaking {
     fn _write_checkpoint(env: &Env, user: &Address, epoch: u32, balance: i128) {
         let ck_key = DataKey::UserCheckpoint(user.clone(), epoch);
         env.storage().persistent().set(&ck_key, &balance);
-        env.storage()
-            .persistent()
-            .extend_ttl(&ck_key, TTL_BUMP, TTL_BUMP);
+        anchorpoint_utils::storage::extend_persistent_ttl_with(&env, &ck_key, TTL_BUMP, TTL_BUMP);
 
         let le_key = DataKey::UserLastEpoch(user.clone());
         env.storage().persistent().set(&le_key, &epoch);
-        env.storage()
-            .persistent()
-            .extend_ttl(&le_key, TTL_BUMP, TTL_BUMP);
+        anchorpoint_utils::storage::extend_persistent_ttl_with(&env, &le_key, TTL_BUMP, TTL_BUMP);
     }
 
     /// Resolve a user's balance at `epoch`.

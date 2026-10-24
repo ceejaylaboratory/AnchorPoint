@@ -53,6 +53,19 @@ const interpolate = (template: string, params?: TranslateParams): string => {
   );
 };
 
+const detectBrowserLanguage = (fallback: Language): Language => {
+  try {
+    const tag = typeof navigator !== 'undefined' ? navigator.language ?? '' : '';
+    const base = tag.split('-')[0].toLowerCase();
+    if (base === 'en' || base === 'es' || base === 'pt' || base === 'fr' || base === 'ar' || base === 'he') {
+      return base;
+    }
+  } catch {
+    // Navigator unavailable (SSR) — fall through to the default.
+  }
+  return fallback;
+};
+
 const TranslationContext = createContext<TranslationContextValue>({
   t: (key: string) => key,
   language: 'en',
@@ -68,7 +81,11 @@ export const I18nProvider = ({
   children: ReactNode;
   initialLanguage?: Language;
 }) => {
-  const [language, setLanguage] = useState<Language>(initialLanguage);
+  // An explicitly provided initialLanguage always wins; otherwise the
+  // browser locale picks the first-visit default (en/es/pt/fr/ar/he).
+  const [language, setLanguage] = useState<Language>(() =>
+    initialLanguage !== 'en' ? initialLanguage : detectBrowserLanguage(initialLanguage),
+  );
 
   const isRtl = isRtlLanguage(language);
   const direction: Direction = isRtl ? 'rtl' : 'ltr';

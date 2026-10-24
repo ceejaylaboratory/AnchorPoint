@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractclient, contractimpl, contracttype, symbol_short, token, Address, Env, Map,
-    Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, token,
+    Address, Env, IntoVal, Map, Vec,
 };
 
 fn calculate_fee(amount: i128, fee_bps: u32) -> i128 {
@@ -20,6 +20,14 @@ fn checked_repayment_amount(balance: i128, fee: i128) -> i128 {
         .expect("Repayment calculation overflow")
 }
 
+/// Errors returned by the flash loan contract.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum ContractError {
+    /// The contract (or the global security registry) is paused.
+    ContractPaused = 1,
+}
+
 /// Storage keys for the flash loan provider
 #[derive(Clone)]
 #[contracttype]
@@ -32,6 +40,10 @@ enum DataKey {
     ReentrancyLock,
     /// Liquidity provider reward pool address
     RewardPool,
+    /// Admin address — only set once during initialization
+    Admin,
+    /// Whether this contract instance is locally paused
+    Paused,
 }
 
 /// Loan details for batch operations
@@ -66,6 +78,98 @@ pub struct FlashLoanProvider;
 #[allow(deprecated)]
 #[contractimpl]
 impl FlashLoanProvider {
+    /// Initializes the contract with an admin address. Must be called once.
+    /// The admin is the only address allowed to pause and unpause the contract.
+    pub fn initialize_admin(env: Env, admin: Address) {
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic!("admin already set");
+        }
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events()
+            .publish((symbol_short!("init"),), admin);
+    }
+
+    /// Pauses all flash loan entry points. Admin-only.
+    ///
+    /// While paused, `flash_loan`, `flash_loan_multi`, and `flash_loan_batch`
+    /// all panic with [`ContractError::ContractPaused`].
+    pub fn pause(env: Env) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not set");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events()
+            .publish((symbol_short!("paused"),), admin);
+    }
+
+    /// Unpauses the contract, re-enabling flash loans. Admin-only.
+    pub fn unpause(env: Env) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not set");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events()
+            .publish((symbol_short!("unpaused"),), admin);
+    }
+
+    /// Returns whether this contract instance is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    /// Asserts the contract is not locally paused and not paused via the global
+    /// security registry (if one is configured).
+    ///
+    /// Panics with [`ContractError::ContractPaused`] on either condition.
+    fn check_not_paused(env: &Env) {
+        // 1. Check the local pause flag.
+        let locally_paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
+        if locally_paused {
+            soroban_sdk::panic_with_error!(env, ContractError::ContractPaused);
+        }
+
+        // 2. Check the global security registry pause (if configured).
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::SecurityRegistry)
+        {
+            let globally_paused: bool = env.invoke_contract(
+                &registry,
+                &symbol_short!("is_paused"),
+                soroban_sdk::Vec::new(env),
+            );
+            if globally_paused {
+                soroban_sdk::panic_with_error!(env, ContractError::ContractPaused);
+            }
+
+            // Also check if *this specific contract* is individually paused in the registry.
+            let contract_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(env, "is_contract_paused"),
+                (env.current_contract_address(),).into_val(env),
+            );
+            if contract_paused {
+                soroban_sdk::panic_with_error!(env, ContractError::ContractPaused);
+            }
+        }
+    }
+
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
         if env
             .storage()
@@ -77,6 +181,10 @@ impl FlashLoanProvider {
         env.storage()
             .instance()
             .set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+        // Also store under DataKey::SecurityRegistry for the pause check.
+        env.storage()
+            .instance()
+            .set(&DataKey::SecurityRegistry, &registry);
         env.events()
             .publish((symbol_short!("sec_reg"),), registry);
     }
@@ -128,7 +236,10 @@ impl FlashLoanProvider {
     /// * `token` - The address of the token to be lent.
     /// * `amount` - The amount of tokens to lend.
     pub fn flash_loan(env: Env, receiver: Address, token: Address, amount: i128) {
-        // 0. Acquire the reentrancy lock before any external interaction.
+        // 0. Check pause state before any external interaction.
+        Self::check_not_paused(&env);
+
+        // 1. Acquire the reentrancy lock before any external interaction.
         Self::acquire_reentrancy_lock(&env);
 
         // 1. Calculate the fee (e.g. default 5 bps = 0.05%, or configured fee_bps such as 9 bps = 0.09%)
@@ -182,6 +293,9 @@ impl FlashLoanProvider {
     /// provider.flash_loan_multi(&receiver, &tokens, &amounts);
     /// ```
     pub fn flash_loan_multi(env: Env, receiver: Address, tokens: Vec<Address>, amounts: Vec<i128>) {
+        // Check pause state first.
+        Self::check_not_paused(&env);
+
         if tokens.is_empty() {
             panic!("cannot flash loan zero assets");
         }
@@ -265,6 +379,9 @@ impl FlashLoanProvider {
     /// provider.flash_loan_batch(&receiver, &loans);
     /// ```
     pub fn flash_loan_batch(env: Env, receiver: Address, loans: Vec<(Address, i128)>) {
+        // Check pause state first.
+        Self::check_not_paused(&env);
+
         if loans.is_empty() {
             panic!("cannot flash loan zero assets");
         }

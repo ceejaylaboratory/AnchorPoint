@@ -12,12 +12,19 @@ pub enum Error {
     /// The price data returned by the oracle is older than the configured
     /// `MaxStaleness` threshold and must not be used.
     OraclePriceStale = 2,
+    /// Fewer than 2 ledger-sequence observations are stored; TWAP cannot be
+    /// calculated without at least two data points.
+    InsufficientObservations = 3,
 }
 
 const DEFAULT_TWAP_WINDOW_SECONDS: u64 = 300;
 const DEFAULT_MAX_PRICE_AGE_SECONDS: u64 = 600;
 const DEFAULT_MAX_OBSERVATIONS: u32 = 24;
 const DEFAULT_MAX_STALENESS_SECONDS: u64 = 300;
+
+/// Number of ledgers to extend the TTL of persistent TWAP observation storage.
+/// ~30 days at ~5 s per ledger: 30 * 24 * 3600 / 5 = 518_400 ledgers.
+const TWAP_OBSERVATIONS_TTL: u32 = 518_400;
 
 /// Standardized data structure for price, timestamp, and asset.
 #[contracttype]
@@ -26,6 +33,16 @@ pub struct PriceData {
     pub asset: Address,
     pub price: i128,
     pub timestamp: u64,
+}
+
+/// A single ledger-sequence price observation used for sequence-based TWAP.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LedgerObservation {
+    /// The ledger sequence number at which the price was recorded.
+    pub ledger: u32,
+    /// The price recorded at that ledger.
+    pub price: i128,
 }
 
 #[contracttype]
@@ -39,6 +56,8 @@ pub enum DataKey {
     MaxPriceAge,
     MaxObservations,
     MaxStaleness,
+    /// Persistent storage for ledger-sequence TWAP observations per asset.
+    LedgerObservations(Address),
 }
 
 #[contract]
@@ -374,5 +393,244 @@ impl OracleConsumer {
         env.storage()
             .instance()
             .set(&DataKey::PriceHistory(asset), &history);
+    }
+
+    // -------------------------------------------------------------------------
+    // Ledger-sequence TWAP: record_price / get_twap
+    // -------------------------------------------------------------------------
+
+    /// Record a price observation keyed by the current ledger sequence number.
+    ///
+    /// Observations are stored in persistent storage with a rolling TTL so they
+    /// survive across ledger closures. At most `MaxObservations` entries are kept;
+    /// the oldest is dropped when the cap is reached.
+    ///
+    /// This function is permissionless — any caller can push a new observation,
+    /// which is appropriate because the caller supplies the price that is already
+    /// validated upstream (e.g. by fetching from the oracle via `update_price`).
+    pub fn record_price(env: Env, asset: Address, price: i128) {
+        assert!(price > 0, "price must be positive");
+
+        let current_ledger = env.ledger().sequence();
+        let observation = LedgerObservation {
+            ledger: current_ledger,
+            price,
+        };
+
+        let key = DataKey::LedgerObservations(asset.clone());
+        let mut observations: Vec<LedgerObservation> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        observations.push_back(observation);
+
+        let max_obs: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxObservations)
+            .unwrap_or(DEFAULT_MAX_OBSERVATIONS);
+
+        // Drop the oldest observation when the cap is exceeded.
+        while observations.len() > max_obs {
+            observations.pop_front();
+        }
+
+        env.storage().persistent().set(&key, &observations);
+        // Extend TTL so observations are not evicted between TWAP queries.
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TWAP_OBSERVATIONS_TTL / 2, TWAP_OBSERVATIONS_TTL);
+
+        env.events().publish(
+            (symbol_short!("rec_price"),),
+            (asset, current_ledger, price),
+        );
+    }
+
+    /// Return the arithmetic mean price over the last `period_ledgers` ledgers.
+    ///
+    /// Only observations whose ledger sequence falls within
+    /// `[current_ledger - period_ledgers, current_ledger]` are included.
+    ///
+    /// Returns [`Error::InsufficientObservations`] when fewer than 2 observations
+    /// exist in the requested window (manipulation-resistance requires at least
+    /// two independent data points).
+    pub fn get_twap(env: Env, asset: Address, period_ledgers: u32) -> Result<i128, Error> {
+        assert!(period_ledgers > 0, "period_ledgers must be positive");
+
+        let current_ledger = env.ledger().sequence();
+        let window_start = current_ledger.saturating_sub(period_ledgers);
+
+        let key = DataKey::LedgerObservations(asset.clone());
+        let observations: Vec<LedgerObservation> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Collect observations within the window.
+        let mut sum: i128 = 0;
+        let mut count: u32 = 0;
+        for i in 0..observations.len() {
+            let obs = observations.get(i).unwrap();
+            if obs.ledger >= window_start && obs.ledger <= current_ledger {
+                sum = sum
+                    .checked_add(obs.price)
+                    .expect("twap sum overflow");
+                count += 1;
+            }
+        }
+
+        if count < 2 {
+            return Err(Error::InsufficientObservations);
+        }
+
+        Ok(sum / count as i128)
+    }
+
+    /// Returns the raw list of ledger-sequence observations stored for an asset.
+    /// Useful for off-chain inspection and integration tests.
+    pub fn get_ledger_observations(env: Env, asset: Address) -> Vec<LedgerObservation> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::LedgerObservations(asset))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Env,
+    };
+
+    fn setup(env: &Env) -> (Address, Address, OracleConsumerClient<'static>) {
+        env.mock_all_auths();
+
+        let admin = Address::generate(env);
+        let oracle = Address::generate(env);
+        let asset = Address::generate(env);
+
+        let contract_id = env.register(OracleConsumer, ());
+        let client = OracleConsumerClient::new(env, &contract_id);
+        client.initialize(&admin, &oracle);
+
+        (asset, admin, client)
+    }
+
+    // -------------------------------------------------------------------------
+    // record_price / get_twap tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_record_price_stores_observation() {
+        let env = Env::default();
+        let (asset, _admin, client) = setup(&env);
+
+        env.ledger().with_mut(|l| l.sequence_number = 100);
+        client.record_price(&asset, &1_000);
+
+        let obs = client.get_ledger_observations(&asset);
+        assert_eq!(obs.len(), 1);
+        assert_eq!(obs.get(0).unwrap().ledger, 100);
+        assert_eq!(obs.get(0).unwrap().price, 1_000);
+    }
+
+    #[test]
+    fn test_get_twap_returns_arithmetic_mean() {
+        let env = Env::default();
+        let (asset, _admin, client) = setup(&env);
+
+        // Record three observations at different ledger heights.
+        env.ledger().with_mut(|l| l.sequence_number = 100);
+        client.record_price(&asset, &1_000);
+
+        env.ledger().with_mut(|l| l.sequence_number = 110);
+        client.record_price(&asset, &2_000);
+
+        env.ledger().with_mut(|l| l.sequence_number = 120);
+        client.record_price(&asset, &3_000);
+
+        // Request TWAP over the last 30 ledgers (window_start = 90, all 3 in window).
+        let twap = client.get_twap(&asset, &30).unwrap();
+        // arithmetic mean of [1000, 2000, 3000] = 2000
+        assert_eq!(twap, 2_000);
+    }
+
+    #[test]
+    fn test_get_twap_excludes_observations_outside_window() {
+        let env = Env::default();
+        let (asset, _admin, client) = setup(&env);
+
+        // Old observation, outside any 10-ledger window from ledger 120.
+        env.ledger().with_mut(|l| l.sequence_number = 50);
+        client.record_price(&asset, &500);
+
+        // Recent observations inside window.
+        env.ledger().with_mut(|l| l.sequence_number = 115);
+        client.record_price(&asset, &1_000);
+
+        env.ledger().with_mut(|l| l.sequence_number = 120);
+        client.record_price(&asset, &3_000);
+
+        // Window covers ledgers 110–120; only the two recent ones qualify.
+        let twap = client.get_twap(&asset, &10).unwrap();
+        // mean([1000, 3000]) = 2000
+        assert_eq!(twap, 2_000);
+    }
+
+    #[test]
+    fn test_get_twap_insufficient_observations_returns_error() {
+        let env = Env::default();
+        let (asset, _admin, client) = setup(&env);
+
+        // Only 1 observation — must return InsufficientObservations.
+        env.ledger().with_mut(|l| l.sequence_number = 100);
+        client.record_price(&asset, &1_000);
+
+        let result = client.try_get_twap(&asset, &50);
+        assert_eq!(result, Err(Ok(Error::InsufficientObservations)));
+    }
+
+    #[test]
+    fn test_get_twap_no_observations_returns_error() {
+        let env = Env::default();
+        let (asset, _admin, client) = setup(&env);
+
+        // No observations at all.
+        let result = client.try_get_twap(&asset, &50);
+        assert_eq!(result, Err(Ok(Error::InsufficientObservations)));
+    }
+
+    #[test]
+    fn test_record_price_drops_oldest_when_cap_reached() {
+        let env = Env::default();
+        let (asset, _admin, client) = setup(&env);
+
+        // Default cap is 24 observations. Record 25.
+        for i in 0u32..25 {
+            env.ledger().with_mut(|l| l.sequence_number = 100 + i);
+            client.record_price(&asset, &(i as i128 + 1) * 100);
+        }
+
+        let obs = client.get_ledger_observations(&asset);
+        // Cap enforced: exactly 24 entries remain.
+        assert_eq!(obs.len(), 24);
+        // The oldest entry (ledger=100, price=100) must have been dropped.
+        assert_eq!(obs.get(0).unwrap().ledger, 101);
+    }
+
+    #[test]
+    #[should_panic(expected = "price must be positive")]
+    fn test_record_price_rejects_non_positive() {
+        let env = Env::default();
+        let (asset, _admin, client) = setup(&env);
+
+        env.ledger().with_mut(|l| l.sequence_number = 100);
+        client.record_price(&asset, &0);
     }
 }

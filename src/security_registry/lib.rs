@@ -42,11 +42,7 @@ impl SecurityRegistry {
         env.events()
             .publish((symbol_short!("init"),), admin);
 
-        anchorpoint_utils::storage::extend_instance_ttl(
-            &env,
-            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
-            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpoint_utils::storage::extend_instance_ttl(&env);
     }
 
     // -------------------------------------------------------------------------
@@ -77,11 +73,7 @@ impl SecurityRegistry {
         env.events()
             .publish((symbol_short!("adm_prop"), current_admin), proposed_admin);
 
-        anchorpoint_utils::storage::extend_instance_ttl(
-            &env,
-            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
-            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpoint_utils::storage::extend_instance_ttl(&env);
     }
 
     /// Accept a pending nomination, completing the admin transfer.
@@ -109,11 +101,7 @@ impl SecurityRegistry {
         env.events()
             .publish((symbol_short!("adm_xfer"),), (old_admin, proposed_admin));
 
-        anchorpoint_utils::storage::extend_instance_ttl(
-            &env,
-            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
-            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpoint_utils::storage::extend_instance_ttl(&env);
     }
 
     /// Withdraw an outstanding nomination (current super admin only).
@@ -162,11 +150,7 @@ impl SecurityRegistry {
         env.events()
             .publish((symbol_short!("pause"), admin), true);
 
-        anchorpoint_utils::storage::extend_instance_ttl(
-            &env,
-            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
-            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpoint_utils::storage::extend_instance_ttl(&env);
     }
 
     pub fn unpause(env: Env, admin: Address) {
@@ -183,11 +167,7 @@ impl SecurityRegistry {
         env.events()
             .publish((symbol_short!("unpause"), admin), false);
 
-        anchorpoint_utils::storage::extend_instance_ttl(
-            &env,
-            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
-            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpoint_utils::storage::extend_instance_ttl(&env);
     }
 
     pub fn is_paused(env: Env) -> bool {
@@ -216,11 +196,7 @@ impl SecurityRegistry {
         env.events()
             .publish((symbol_short!("p_flags"), admin), flags);
 
-        anchorpoint_utils::storage::extend_instance_ttl(
-            &env,
-            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
-            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
-        );
+        anchorpoint_utils::storage::extend_instance_ttl(&env);
     }
 
     /// Returns the granular pause flags as configured by the admin.
@@ -475,7 +451,7 @@ mod tests {
         assert!(!client.is_paused());
 
         let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
-        assert!(initial_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
+        assert!(initial_ttl >= anchorpoint_utils::storage::TTL_EXTENSION);
 
         env.mock_all_auths();
         client.pause(&admin);
@@ -485,13 +461,13 @@ mod tests {
         assert!(!client.is_paused());
 
         let pause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
-        assert!(pause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
+        assert!(pause_ttl >= anchorpoint_utils::storage::TTL_EXTENSION);
 
         client.unpause(&admin);
         assert!(!client.is_paused());
 
         let unpause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
-        assert!(unpause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
+        assert!(unpause_ttl >= anchorpoint_utils::storage::TTL_EXTENSION);
     }
 
     #[test]
@@ -668,7 +644,7 @@ mod tests {
         assert_eq!(auths[0].0, admin);
 
         let ttl = env.as_contract(&client.address, || env.storage().instance().get_ttl());
-        assert!(ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
+        assert!(ttl >= anchorpoint_utils::storage::TTL_EXTENSION);
     }
 
     #[test]

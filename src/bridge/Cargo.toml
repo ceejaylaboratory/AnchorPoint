@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 soroban-sdk = { version = "26.0.1", features = ["alloc"] }
+anchorpoint-utils = { path = "../utils" }
 
 [dev-dependencies]
 ed25519-dalek = "2.2.0"

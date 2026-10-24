@@ -32,8 +32,9 @@ function buildDatabaseUrl(): string {
 
   // Connection pool limits (Prisma-level; use pgBouncer / Pgpool for
   // external pooling in very high-concurrency deployments).
-  params.set('connection_limit', String(config.DB_CONNECTION_LIMIT));
-  params.set('pool_timeout', String(config.DB_POOL_TIMEOUT));
+  // Prisma's `pool_timeout` is expressed in whole seconds.
+  params.set('connection_limit', String(config.DATABASE_POOL_SIZE));
+  params.set('pool_timeout', String(Math.ceil(config.DATABASE_POOL_TIMEOUT_MS / 1000)));
 
   // SSL mode – configurable per environment. Set to 'require' or stricter
   // for production deployments.

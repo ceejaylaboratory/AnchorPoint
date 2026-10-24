@@ -139,6 +139,9 @@ export const KycForm = ({ onSubmit, defaultValues }: KycFormProps) => {
 
   const submitHandler = handleSubmit(async (values) => {
     await onSubmit?.(values);
+    // Clear fields (and any uploaded file references held by the form) so a
+    // revisit after success starts from a clean, empty form.
+    reset();
   });
 
   /** Wires a field to its error message for both sighted and AT users. */

@@ -1,13 +1,18 @@
 /**
  * Sequence Number Manager
  * 
- * Manages Stellar account sequence numbers with Redis-based locking
+ * Manages Stellar account sequence numbers with Redlock distributed locking
  * to prevent conflicts across concurrent workers.
  */
 
-import { redis } from '../lib/redis';
+import { redis, redlock } from '../lib/redis';
 import logger from '../utils/logger';
 import { BatchPaymentError, BatchErrorType } from './batch-payment.types';
+
+/** Redlock lock TTL in milliseconds (5 seconds as specified in #1525). */
+const LOCK_TTL_MS = 5_000;
+
+/** How many times Redlock should retry before giving up (inherited from redlock instance config). */
 
 type SequenceAccount = {
   sequenceNumber: () => string;
@@ -27,54 +32,52 @@ export class SequenceNumberManager {
   }
 
   /**
-   * Acquire a lock on the sequence number for a specific account
-   * This prevents concurrent workers from using the same sequence number
+   * Acquire a Redlock distributed lock on the sequence number for a specific
+   * account. Uses Redlock (not plain SET NX) so the lock is safe across
+   * multiple Redis nodes and concurrent processes.
+   *
+   * Returns the raw lock token string so the caller can release it later.
+   * Throws a BatchPaymentError with type SEQUENCE_CONFLICT and HTTP-503
+   * semantics when the lock cannot be acquired after retries.
    */
   async acquireLock(accountPublicKey: string): Promise<string> {
     const lockKey = `${this.redisPrefix}:lock:${accountPublicKey}`;
-    const lockValue = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
     try {
-      // SET with NX (only if not exists) and EX (expiry)
-      const result = await redis.set(lockKey, lockValue, 'EX', this.lockTimeout, 'NX');
-
-      if (result === 'OK') {
-        logger.debug(`Sequence lock acquired for account: ${accountPublicKey}`);
-        return lockValue;
-      }
-
-      throw new BatchPaymentError(
-        BatchErrorType.SEQUENCE_CONFLICT,
-        `Failed to acquire sequence lock for account: ${accountPublicKey}. Another worker is processing.`
-      );
+      const lock = await redlock.acquire([lockKey], LOCK_TTL_MS);
+      logger.debug(`Sequence lock acquired for account: ${accountPublicKey}`);
+      // Encode the Redlock resource + value so releaseLock can reconstruct it.
+      return JSON.stringify({ resource: lock.resources[0], value: lock.value });
     } catch (error) {
-      if (error instanceof BatchPaymentError) {
-        throw error;
-      }
-      logger.error(`Error acquiring sequence lock: ${error}`);
+      logger.warn(
+        `Failed to acquire distributed sequence lock for ${accountPublicKey}: ${error}`,
+      );
       throw new BatchPaymentError(
         BatchErrorType.SEQUENCE_CONFLICT,
-        `Redis error while acquiring lock: ${error}`
+        `Service busy – could not acquire sequence lock for account: ${accountPublicKey}. ` +
+          `Please retry (HTTP 503).`,
       );
     }
   }
 
   /**
-   * Release the sequence number lock
+   * Release the Redlock distributed lock.
+   *
+   * Accepts the opaque token returned by `acquireLock`. Safe to call even if
+   * the lock has already expired – Redlock will simply no-op.
    */
-  async releaseLock(accountPublicKey: string, lockValue: string): Promise<void> {
-    const lockKey = `${this.redisPrefix}:lock:${accountPublicKey}`;
-
+  async releaseLock(accountPublicKey: string, lockToken: string): Promise<void> {
     try {
-      // Only release if we still hold the lock (compare lockValue)
-      const currentLock = await redis.get(lockKey);
-      if (currentLock === lockValue) {
-        await redis.del(lockKey);
-        logger.debug(`Sequence lock released for account: ${accountPublicKey}`);
-      }
+      const { resource, value } = JSON.parse(lockToken) as {
+        resource: string;
+        value: string;
+      };
+      // Reconstruct a minimal lock-shaped object that Redlock's release accepts.
+      await redlock.release({ resources: [resource], value } as any);
+      logger.debug(`Sequence lock released for account: ${accountPublicKey}`);
     } catch (error) {
-      logger.error(`Error releasing sequence lock: ${error}`);
-      // Don't throw - lock will expire automatically
+      logger.error(`Error releasing sequence lock for ${accountPublicKey}: ${error}`);
+      // Don't throw – lock will expire automatically via TTL.
     }
   }
 

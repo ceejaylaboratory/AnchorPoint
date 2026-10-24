@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CSV_COLUMNS,
   TransactionExporter,
+  applyActiveFilters,
   buildFilename,
   csvEscape,
   filterTransactions,
@@ -158,6 +159,48 @@ describe('buildFilename', () => {
   });
 });
 
+describe('applyActiveFilters', () => {
+  const MIXED: ExportableTransaction[] = [
+    tx({ id: 'a', asset: 'USDC', type: 'Deposit', status: 'Completed', date: '2026-01-01' }),
+    tx({ id: 'b', asset: 'XLM', type: 'Withdrawal', status: 'Pending', date: '2026-01-10' }),
+    tx({
+      id: 'c',
+      asset: 'USDC',
+      type: 'Withdrawal',
+      status: 'Failed',
+      date: '2026-01-20',
+      reference: 'INV-42',
+    }),
+  ];
+  const ids = (list: ExportableTransaction[]) => list.map((t) => t.id);
+
+  it('returns everything when no filter is active', () => {
+    expect(applyActiveFilters(MIXED, {})).toHaveLength(3);
+    expect(applyActiveFilters(MIXED, { query: '', status: 'All' })).toHaveLength(3);
+  });
+
+  it('matches column filters case-insensitively', () => {
+    expect(ids(applyActiveFilters(MIXED, { asset: 'usdc' }))).toEqual(['a', 'c']);
+    expect(ids(applyActiveFilters(MIXED, { type: 'Withdrawal', asset: 'USDC' }))).toEqual(['c']);
+  });
+
+  it('applies status and date range filters', () => {
+    expect(ids(applyActiveFilters(MIXED, { status: 'pending' }))).toEqual(['b']);
+    expect(ids(applyActiveFilters(MIXED, { from: '2026-01-05', to: '2026-01-31' }))).toEqual([
+      'b',
+      'c',
+    ]);
+  });
+
+  it('treats query as a substring search across every column', () => {
+    expect(ids(applyActiveFilters(MIXED, { query: 'inv-4' }))).toEqual(['c']);
+  });
+
+  it('ignores keys it does not recognise', () => {
+    expect(applyActiveFilters(MIXED, { page: '2' })).toHaveLength(3);
+  });
+});
+
 describe('<TransactionExporter />', () => {
   let createObjectURL: ReturnType<typeof vi.fn>;
   let revokeObjectURL: ReturnType<typeof vi.fn>;
@@ -250,6 +293,56 @@ describe('<TransactionExporter />', () => {
     expect(parsed.transactions[0].id).toBe('c');
     expect(parsed.filters.exportFrom).toBe('2026-01-20');
     expect(clicked[0].download).toMatch(/\.json$/);
+  });
+
+  it('exports only the rows matching the active page filters', async () => {
+    render(
+      <TransactionExporter
+        transactions={TRANSACTIONS}
+        totalCount={TRANSACTIONS.length}
+        filters={{ status: 'Failed' }}
+      />,
+    );
+
+    expect(screen.getByTestId('export-count').textContent).toBe('1 of 3 selected');
+    fireEvent.click(screen.getByRole('button', { name: 'CSV' }));
+
+    const text = await lastBlobText();
+    expect(text).toContain('# Records exported: 1');
+    expect(text).toContain('# Filters: status=Failed');
+    expect(text).toContain('c,Deposit,USDC,100,Failed');
+    expect(text).not.toContain('a,Deposit');
+    expect(text).not.toContain('b,Deposit');
+  });
+
+  it('includes the active page filters in the JSON export', async () => {
+    render(
+      <TransactionExporter
+        transactions={TRANSACTIONS}
+        totalCount={TRANSACTIONS.length}
+        filters={{ query: 'REF', status: 'Pending' }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'JSON' }));
+
+    const parsed = JSON.parse(await lastBlobText());
+    expect(parsed.filters).toMatchObject({ query: 'REF', status: 'Pending' });
+    expect(parsed.transactions.map((t: ExportableTransaction) => t.id)).toEqual(['b']);
+  });
+
+  it('combines page filters with the panel filters', () => {
+    render(
+      <TransactionExporter
+        transactions={TRANSACTIONS}
+        totalCount={TRANSACTIONS.length}
+        filters={{ from: '2026-01-05' }}
+      />,
+    );
+
+    expect(screen.getByTestId('export-count').textContent).toBe('2 of 3 selected');
+    fireEvent.change(screen.getByLabelText('Export status'), { target: { value: 'Failed' } });
+    expect(screen.getByTestId('export-count').textContent).toBe('1 of 3 selected');
   });
 
   it('disables both buttons when the filters select nothing', () => {

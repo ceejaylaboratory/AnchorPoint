@@ -128,7 +128,7 @@ describe('AdminPasswordResetService', () => {
     ).rejects.toBeInstanceOf(InvalidResetTokenError);
   });
 
-  it('updates password and marks token as used for valid reset token', async () => {
+  it('updates password and deletes the used token and all other tokens for the admin', async () => {
     mockedPrisma.adminPasswordResetToken.findUnique.mockResolvedValue({
       id: 'reset-1',
       adminUserId: 'admin-1',
@@ -136,6 +136,7 @@ describe('AdminPasswordResetService', () => {
       expiresAt: new Date('2026-04-26T10:30:00.000Z'),
       adminUser: { id: 'admin-1' },
     });
+    mockedPrisma.adminPasswordResetToken.deleteMany.mockResolvedValue({ count: 1 });
 
     (hashPassword as jest.Mock).mockResolvedValue('hashed-password');
 
@@ -147,17 +148,123 @@ describe('AdminPasswordResetService', () => {
       where: { id: 'admin-1' },
       data: { passwordHash: 'hashed-password' },
     });
-    expect(mockedPrisma.adminPasswordResetToken.update).toHaveBeenCalledWith({
-      where: { id: 'reset-1' },
-      data: { usedAt: expect.any(Date) },
-    });
-    expect(mockedPrisma.adminPasswordResetToken.updateMany).toHaveBeenCalledWith({
+    expect(mockedPrisma.adminPasswordResetToken.deleteMany).toHaveBeenNthCalledWith(1, {
       where: {
-        adminUserId: 'admin-1',
+        id: 'reset-1',
         usedAt: null,
-        id: { not: 'reset-1' },
+        expiresAt: { gt: expect.any(Date) },
       },
-      data: { usedAt: expect.any(Date) },
+    });
+    expect(mockedPrisma.adminPasswordResetToken.deleteMany).toHaveBeenNthCalledWith(2, {
+      where: { adminUserId: 'admin-1' },
+    });
+    // Tokens are removed, not merely flagged as used.
+    expect(mockedPrisma.adminPasswordResetToken.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.adminPasswordResetToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects the token and leaves the password unchanged when it was consumed concurrently', async () => {
+    mockedPrisma.adminPasswordResetToken.findUnique.mockResolvedValue({
+      id: 'reset-1',
+      adminUserId: 'admin-1',
+      usedAt: null,
+      expiresAt: new Date('2026-04-26T10:30:00.000Z'),
+      adminUser: { id: 'admin-1' },
+    });
+    // Another request deleted the token between the lookup and the transaction.
+    mockedPrisma.adminPasswordResetToken.deleteMany.mockResolvedValue({ count: 0 });
+    (hashPassword as jest.Mock).mockResolvedValue('hashed-password');
+
+    const service = new AdminPasswordResetService(emailService);
+
+    await expect(
+      service.confirmPasswordReset('raw-token', 'StrongPassword123')
+    ).rejects.toBeInstanceOf(InvalidResetTokenError);
+    expect(mockedPrisma.adminUser.update).not.toHaveBeenCalled();
+  });
+
+  describe('regression: reset token reuse (stateful token table)', () => {
+    type TokenRow = {
+      id: string;
+      adminUserId: string;
+      tokenHash: string;
+      usedAt: Date | null;
+      expiresAt: Date;
+    };
+
+    let tokens: TokenRow[];
+
+    const hashOf = (raw: string) => createHmac('sha256', config.JWT_SECRET).update(raw).digest('hex');
+
+    beforeEach(() => {
+      tokens = [
+        {
+          id: 'reset-1',
+          adminUserId: 'admin-1',
+          tokenHash: hashOf('token-a'),
+          usedAt: null,
+          expiresAt: new Date('2026-04-26T10:30:00.000Z'),
+        },
+        {
+          id: 'reset-2',
+          adminUserId: 'admin-1',
+          tokenHash: hashOf('token-b'),
+          usedAt: null,
+          expiresAt: new Date('2026-04-26T10:30:00.000Z'),
+        },
+        {
+          id: 'reset-3',
+          adminUserId: 'admin-2',
+          tokenHash: hashOf('token-c'),
+          usedAt: null,
+          expiresAt: new Date('2026-04-26T10:30:00.000Z'),
+        },
+      ];
+
+      mockedPrisma.adminPasswordResetToken.findUnique.mockImplementation(
+        async ({ where }: { where: { tokenHash: string } }) => {
+          const row = tokens.find((t) => t.tokenHash === where.tokenHash);
+          return row ? { ...row, adminUser: { id: row.adminUserId } } : null;
+        }
+      );
+
+      mockedPrisma.adminPasswordResetToken.deleteMany.mockImplementation(
+        async ({ where }: { where: { id?: string; adminUserId?: string; usedAt?: null; expiresAt?: { gt: Date } } }) => {
+          const matches = (t: TokenRow) =>
+            (where.id === undefined || t.id === where.id) &&
+            (where.adminUserId === undefined || t.adminUserId === where.adminUserId) &&
+            (where.usedAt === undefined || t.usedAt === null) &&
+            (where.expiresAt === undefined || t.expiresAt.getTime() > where.expiresAt.gt.getTime());
+          const before = tokens.length;
+          tokens = tokens.filter((t) => !matches(t));
+          return { count: before - tokens.length };
+        }
+      );
+
+      (hashPassword as jest.Mock).mockResolvedValue('hashed-password');
+    });
+
+    it('cannot reuse the same token after a successful reset', async () => {
+      const service = new AdminPasswordResetService(emailService);
+
+      await service.confirmPasswordReset('token-a', 'StrongPassword123');
+      expect(mockedPrisma.adminUser.update).toHaveBeenCalledTimes(1);
+
+      await expect(
+        service.confirmPasswordReset('token-a', 'AnotherPassword456')
+      ).rejects.toBeInstanceOf(InvalidResetTokenError);
+      expect(mockedPrisma.adminUser.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('invalidates other outstanding tokens for the same admin only', async () => {
+      const service = new AdminPasswordResetService(emailService);
+
+      await service.confirmPasswordReset('token-a', 'StrongPassword123');
+
+      expect(tokens.map((t) => t.id)).toEqual(['reset-3']);
+      await expect(
+        service.confirmPasswordReset('token-b', 'AnotherPassword456')
+      ).rejects.toBeInstanceOf(InvalidResetTokenError);
     });
   });
 });

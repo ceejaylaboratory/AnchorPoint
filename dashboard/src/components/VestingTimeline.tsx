@@ -22,6 +22,14 @@ export type VestingSchedule = {
   unlockIntervalMs?: number;
 };
 
+export type VestingClaimEvent = {
+  id: string;
+  scheduleId: string;
+  amount: number;
+  txHash?: string;
+  claimedAt: number;
+};
+
 export type VestingProgress = {
   vestedAmount: number;
   lockedAmount: number;
@@ -252,7 +260,13 @@ const VestingCard = ({ schedule, now, onClaim }: VestingCardProps) => {
 
 interface VestingTimelineProps {
   schedules: VestingSchedule[];
-  /** Called with the schedule id when the user claims; a returned promise keeps the button in its pending state. */
+  /** Past successful claims, rendered per schedule as historical claim events. */
+  claimHistory?: VestingClaimEvent[];
+  /**
+   * Called with the schedule id when the user claims; a returned promise keeps
+   * the button in its pending state. Defaults to POSTing the claim to the
+   * backend (`/api/vesting/:id/claim`) so the click triggers a transaction.
+   */
   onClaim?: (scheduleId: string) => void | Promise<void>;
   /** Fixed clock for deterministic rendering; when omitted the view ticks every 30s. */
   now?: number;
@@ -263,7 +277,7 @@ interface VestingTimelineProps {
  * locked progress bar, the next unlock time and the currently claimable amount.
  * Schedules that are fully vested and fully claimed are hidden.
  */
-export const VestingTimeline = ({ schedules, onClaim, now: fixedNow }: VestingTimelineProps) => {
+export const VestingTimeline = ({ schedules, claimHistory = [], onClaim: onClaimProp, now: fixedNow }: VestingTimelineProps) => {
   const [tick, setTick] = useState(() => Date.now());
 
   useEffect(() => {
@@ -274,6 +288,16 @@ export const VestingTimeline = ({ schedules, onClaim, now: fixedNow }: VestingTi
 
   const now = fixedNow ?? tick;
   const active = schedules.filter((s) => s.claimedAmount < s.totalAmount);
+  const defaultClaim = async (scheduleId: string) => {
+    await fetch(`/api/vesting/${scheduleId}/claim`, { method: 'POST' });
+  };
+  const onClaim = onClaimProp ?? defaultClaim;
+  const historyBySchedule = new Map<string, VestingClaimEvent[]>();
+  for (const event of claimHistory) {
+    const list = historyBySchedule.get(event.scheduleId) ?? [];
+    list.push(event);
+    historyBySchedule.set(event.scheduleId, list);
+  }
 
   return (
     <section className="flex flex-col gap-3" aria-labelledby="vesting-timeline-heading">
@@ -286,10 +310,36 @@ export const VestingTimeline = ({ schedules, onClaim, now: fixedNow }: VestingTi
         </p>
       ) : (
         active.map((schedule) => (
-          <VestingCard key={schedule.id} schedule={schedule} now={now} onClaim={onClaim} />
+          <div key={schedule.id} className="flex flex-col gap-2">
+            <VestingCard schedule={schedule} now={now} onClaim={onClaim} />
+            <ClaimHistoryList events={historyBySchedule.get(schedule.id) ?? []} tokenSymbol={schedule.tokenSymbol} />
+          </div>
         ))
       )}
     </section>
+  );
+};
+
+const ClaimHistoryList = ({ events, tokenSymbol }: { events: VestingClaimEvent[]; tokenSymbol: string }) => {
+  if (events.length === 0) {
+    return (
+      <p className="rounded-lg border border-slate-800/60 px-4 py-2 text-xs text-slate-500" data-testid="vesting-claim-history-empty">
+        No claims recorded yet
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-1 rounded-lg border border-slate-800/60 p-3" data-testid="vesting-claim-history" aria-label="Claim history">
+      {events.map((event) => (
+        <li key={event.id} className="flex items-center justify-between gap-2 text-xs text-slate-300">
+          <span className="font-mono">{formatAmount(event.amount, tokenSymbol)}</span>
+          <span className="text-slate-500">{formatDate(event.claimedAt)}</span>
+          {event.txHash ? (
+            <span className="truncate font-mono text-slate-500" title={event.txHash}>{event.txHash}</span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 };
 

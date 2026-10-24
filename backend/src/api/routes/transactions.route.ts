@@ -5,7 +5,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 import { stellarService } from '../../services/stellar.service';
 import { submissionLimiter } from '../middleware/rate-limit.middleware';
-import { emitTxUpdated } from '../../lib/socket';
+import { emitTxUpdated, emitTransactionStatusUpdate } from '../../lib/socket';
 
 
 const router = Router();
@@ -122,24 +122,32 @@ router.get('/', authMiddleware, validate({ query: querySchema }), async (req: Au
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    // Each filter term must appear in the event's topics or value. Prisma's
-    // query builder binds these as parameters, so user input never reaches SQL text.
-    const eventSearchClauses = [sender, receiver, memo]
-      .filter((term): term is string => Boolean(term))
-      .map((term) => ({
-        OR: [{ topics: { contains: term } }, { value: { contains: term } }],
-      }));
+    // Parameterized equivalent of the previous LIKE search on indexed events.
+    // Uses Prisma `contains` filters so user-supplied values are bound as
+    // parameters instead of interpolated into raw SQL.
+    const eventAndClauses: any[] = [];
+    if (sender) {
+      eventAndClauses.push({ OR: [{ topics: { contains: sender } }, { value: { contains: sender } }] });
+    }
+
+    if (receiver) {
+      eventAndClauses.push({ OR: [{ topics: { contains: receiver } }, { value: { contains: receiver } }] });
+    }
+
+    if (memo) {
+      eventAndClauses.push({ OR: [{ topics: { contains: memo } }, { value: { contains: memo } }] });
+    }
 
     let matchingTxHashes: string[] = [];
 
-    if (eventSearchClauses.length > 0) {
+    if (eventAndClauses.length > 0) {
       const eventRows = await prisma.contractEvent.findMany({
-        where: { AND: eventSearchClauses },
+        where: { AND: eventAndClauses },
         select: { txHash: true },
         distinct: ['txHash'],
       });
 
-      matchingTxHashes = eventRows.map((row: { txHash: string }) => row.txHash).filter(Boolean);
+      matchingTxHashes = [...new Set(eventRows.map((row) => row.txHash).filter(Boolean))];
       if (matchingTxHashes.length === 0) {
         return res.json({
           status: 'success',
@@ -328,6 +336,12 @@ router.patch('/:id/status', authMiddleware, validate({ body: statusUpdateSchema 
     });
 
     emitTxUpdated({ id: tx.id, status: tx.status, assetCode: tx.assetCode, amount: tx.amount, type: tx.type });
+    emitTransactionStatusUpdate([tx.userId, user.id, user.publicKey], {
+      id: tx.id,
+      status: tx.status,
+      updated_at: tx.updatedAt,
+      stellar_transaction_id: tx.stellarTxId,
+    });
 
     return res.json({ status: 'success', data: tx });
   } catch (error) {

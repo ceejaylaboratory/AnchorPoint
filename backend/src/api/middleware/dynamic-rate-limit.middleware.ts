@@ -11,7 +11,7 @@ declare module "express-serve-static-core" {
   }
 }
 
-const BYPASS_PATHS = ["/health", "/metrics"];
+const BYPASS_PATHS = ["/health", "/health/live", "/health/ready", "/metrics"];
 
 let lastRedisWarnTime = 0;
 

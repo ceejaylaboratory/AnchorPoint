@@ -110,6 +110,52 @@ describe('MetricsService', () => {
   });
 });
 
+describe('MetricsService – batch payment counters (#1521)', () => {
+  beforeEach(() => metricsService.reset());
+
+  it('exposes anchor_batch_payment_operations_total as a Prometheus counter', async () => {
+    metricsService.incrementBatchPaymentOperation('batch-001', 'XLM', 'success');
+
+    const metrics = await metricsService.getMetrics();
+    expect(metrics).toContain('# TYPE anchor_batch_payment_operations_total counter');
+  });
+
+  it('records batch_id, asset_code, and status labels', async () => {
+    metricsService.incrementBatchPaymentOperation('batch-001', 'XLM', 'success');
+
+    const metrics = await metricsService.getMetrics();
+    expect(metrics).toMatch(
+      /anchor_batch_payment_operations_total\{[^}]*batch_id="batch-001"[^}]*asset_code="XLM"[^}]*status="success"[^}]*\} 1/,
+    );
+  });
+
+  it('counters are scoped per batch_id, so different batches have independent values', async () => {
+    metricsService.incrementBatchPaymentOperation('batch-A', 'XLM', 'success');
+    metricsService.incrementBatchPaymentOperation('batch-A', 'XLM', 'success');
+    metricsService.incrementBatchPaymentOperation('batch-B', 'XLM', 'success');
+
+    const metrics = await metricsService.getMetrics();
+
+    // batch-A should have count 2
+    expect(metrics).toMatch(
+      /anchor_batch_payment_operations_total\{[^}]*batch_id="batch-A"[^}]*\} 2/,
+    );
+    // batch-B should have count 1
+    expect(metrics).toMatch(
+      /anchor_batch_payment_operations_total\{[^}]*batch_id="batch-B"[^}]*\} 1/,
+    );
+  });
+
+  it('records failed status separately from success', async () => {
+    metricsService.incrementBatchPaymentOperation('batch-001', 'USDC', 'failed');
+
+    const metrics = await metricsService.getMetrics();
+    expect(metrics).toMatch(
+      /anchor_batch_payment_operations_total\{[^}]*batch_id="batch-001"[^}]*status="failed"[^}]*\} 1/,
+    );
+  });
+});
+
 describe('MetricsService API latency & error metrics (#1202)', () => {
   beforeEach(() => metricsService.reset());
 

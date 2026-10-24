@@ -146,7 +146,7 @@ impl C2CWrapper {
 
         // Set lock with TTL (time-to-live) for safety
         env.storage().temporary().set(&lock_key, &true);
-        env.storage().temporary().extend_ttl(&lock_key, 100, 1000);
+        crate::storage::extend_temp_ttl_with(env, &lock_key, 100, 1000);
         
         true
     }

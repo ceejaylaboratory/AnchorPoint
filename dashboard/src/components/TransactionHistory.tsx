@@ -1,5 +1,6 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { CopyableText } from './CopyableText';
 import { 
   ArrowUpRight, 
   ArrowDownLeft, 
@@ -15,6 +16,8 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
+import { useTransactionStore } from '../store/transactionStore';
+import { useTransactionSocket } from '../hooks/useTransactionSocket';
 
 export interface Transaction {
   id: string;
@@ -73,10 +76,35 @@ export function generateTransactions(count: number = 10000): Transaction[] {
 
 export const INITIAL_TRANSACTIONS = generateTransactions(100);
 
+/** Matches Tailwind's `md` breakpoint: below it rows render as cards. */
+export const MOBILE_BREAKPOINT_QUERY = '(max-width: 767px)';
+
+const matchesMobile = (): boolean =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches
+    : false;
+
+const useIsMobileViewport = (): boolean => {
+  const [isMobile, setIsMobile] = useState(matchesMobile);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
+    const onChange = () => setIsMobile(mql.matches);
+    onChange();
+    mql.addEventListener?.('change', onChange);
+    return () => mql.removeEventListener?.('change', onChange);
+  }, []);
+
+  return isMobile;
+};
+
 interface TransactionHistoryProps {
   initialData?: Transaction[];
   totalInitialCount?: number;
   rowHeight?: number;
+  /** Estimated height of a collapsed mobile card; real heights are measured. */
+  mobileRowHeight?: number;
   overscan?: number;
 }
 
@@ -84,12 +112,41 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   initialData,
   totalInitialCount = 10000,
   rowHeight = 56,
+  mobileRowHeight = 112,
   overscan = 15
 }) => {
+  const storeTransactions = useTransactionStore((state) => state.transactions);
+  const setStoreTransactions = useTransactionStore((state) => state.setTransactions);
+  const recentlyUpdatedIds = useTransactionStore((state) => state.recentlyUpdatedIds);
+  const connectionMode = useTransactionStore((state) => state.connectionMode);
+
+  useTransactionSocket();
+
   const [dataCount, setDataCount] = useState<number>(totalInitialCount);
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    return initialData ?? generateTransactions(totalInitialCount);
+    if (initialData) return initialData;
+    if (storeTransactions.length === totalInitialCount && storeTransactions.length > 0) {
+      return storeTransactions;
+    }
+    return generateTransactions(totalInitialCount);
   });
+
+  useEffect(() => {
+    if (initialData) {
+      setTransactions(initialData);
+      setStoreTransactions(initialData);
+    } else if (storeTransactions.length === 0 || storeTransactions.length !== totalInitialCount) {
+      const initial = generateTransactions(totalInitialCount);
+      setTransactions(initial);
+      setStoreTransactions(initial);
+    }
+  }, [initialData, totalInitialCount, setStoreTransactions]);
+
+  useEffect(() => {
+    if (storeTransactions.length > 0) {
+      setTransactions(storeTransactions);
+    }
+  }, [storeTransactions]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState<string>('All');
@@ -97,6 +154,10 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const [expandedTxIds, setExpandedTxIds] = useState<Set<string>>(new Set());
 
   const parentRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobileViewport();
+  // Cards are taller than table rows and grow when expanded, so rows are
+  // measured after render instead of being pinned to a fixed height.
+  const estimatedRowHeight = isMobile ? mobileRowHeight : rowHeight;
 
   const toggleExpand = (id: string) => {
     setExpandedTxIds(prev => {
@@ -132,9 +193,13 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const rowVirtualizer = useVirtualizer({
     count: filteredTransactions.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => rowHeight,
+    estimateSize: () => estimatedRowHeight,
     overscan
   });
+
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [estimatedRowHeight, rowVirtualizer]);
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const itemsToRender = virtualRows.length > 0
@@ -148,14 +213,16 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     : filteredTransactions.slice(0, overscan).map((tx, idx) => ({
         index: idx,
         key: tx.id,
-        start: idx * rowHeight,
-        size: rowHeight,
+        start: idx * estimatedRowHeight,
+        size: estimatedRowHeight,
         tx
       }));
 
   const handleToggleVolume = (count: number) => {
     setDataCount(count);
-    setTransactions(generateTransactions(count));
+    const newTxs = generateTransactions(count);
+    setTransactions(newTxs);
+    setStoreTransactions(newTxs);
   };
 
   return (
@@ -164,12 +231,33 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
       <div className="glass-card p-6 border border-slate-800">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-xl font-bold font-display text-slate-100">
                 Transaction History
               </h2>
               <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-primary/20 text-primary border border-primary/30 flex items-center gap-1">
                 <Zap size={12} /> 60 FPS Virtualized
+              </span>
+              <span
+                data-testid="connection-mode-badge"
+                className={`px-2 py-0.5 rounded-full text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
+                  connectionMode === 'websocket'
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                    : connectionMode === 'polling'
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    connectionMode === 'websocket'
+                      ? 'bg-emerald-400 animate-pulse'
+                      : connectionMode === 'polling'
+                      ? 'bg-amber-400 animate-pulse'
+                      : 'bg-slate-500'
+                  }`}
+                />
+                {connectionMode === 'websocket' ? 'Live WebSocket' : connectionMode === 'polling' ? 'Live Polling' : 'Offline'}
               </span>
             </div>
             <p className="text-sm text-slate-400 mt-1">
@@ -280,7 +368,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         <div
           ref={parentRef}
           data-testid="virtual-scroll-container"
-          className="overflow-y-auto max-h-[560px] relative scrollbar-thin scrollbar-thumb-slate-700"
+          className="overflow-y-auto overflow-x-hidden max-h-[560px] relative scrollbar-thin scrollbar-thumb-slate-700"
           style={{ height: '560px', contain: 'strict' }}
         >
           {filteredTransactions.length === 0 ? (
@@ -300,13 +388,20 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                 const tx = item.tx;
                 if (!tx) return null;
                 const isExpanded = expandedTxIds.has(tx.id);
+                const isRecentlyUpdated = recentlyUpdatedIds.includes(tx.id);
 
                 return (
                   <div
                     key={item.key}
+                    ref={rowVirtualizer.measureElement}
                     data-index={item.index}
                     data-testid={`tx-row-${item.index}`}
-                    className="absolute top-0 left-0 w-full border-b border-slate-800/60 hover:bg-slate-900/60 transition-colors text-sm"
+                    data-animating={isRecentlyUpdated ? 'true' : undefined}
+                    className={`absolute top-0 left-0 w-full border-b border-slate-800/60 hover:bg-slate-900/60 transition-all duration-700 text-sm ${
+                      isRecentlyUpdated
+                        ? 'bg-emerald-500/20 ring-1 ring-inset ring-emerald-500/40 animate-pulse'
+                        : ''
+                    }`}
                     style={{
                       transform: `translateY(${item.start}px)`
                     }}
@@ -342,7 +437,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                       {/* Hash & Counterparty */}
                       <div className="col-span-3">
                         <div className="flex items-center gap-1.5 text-xs font-mono text-slate-300">
-                          <span className="truncate max-w-[140px]">{tx.hash}</span>
+                          <CopyableText value={tx.hash} label="Transaction ID" />
                           <ExternalLink size={11} className="text-slate-500 hover:text-primary cursor-pointer" />
                         </div>
                         <span className="text-[10px] font-mono text-slate-500 block truncate">
@@ -472,7 +567,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-slate-400 font-medium">Hash:</span>
                             <div className="flex items-center gap-1.5 font-mono text-slate-300">
-                              <span className="truncate max-w-[140px] sm:max-w-[200px]">{tx.hash}</span>
+                              <CopyableText value={tx.hash} label="Transaction ID" />
                               <ExternalLink size={12} className="text-slate-500 hover:text-primary cursor-pointer shrink-0" />
                             </div>
                           </div>

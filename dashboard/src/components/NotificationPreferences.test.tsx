@@ -1,6 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_PREFERENCES, NotificationPreferences } from './NotificationPreferences';
+import {
+  DEFAULT_PREFERENCES,
+  NotificationPreferences,
+  toPreferencesPayload,
+} from './NotificationPreferences';
 
 const API = 'http://localhost:3002';
 const ENDPOINT = `${API}/api/notifications/preferences`;
@@ -39,7 +43,7 @@ const resetButton = () =>
   screen.getByLabelText('Reset notification preferences to defaults');
 
 /** The PATCH body of the nth save, parsed. */
-const patchBody = (fetchMock: ReturnType<typeof stubFetch>, index = 0) => {
+const patchBody = (fetchMock: ReturnType<typeof vi.fn>, index = 0) => {
   const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
   return JSON.parse(String(patches[index]?.[1]?.body));
 };
@@ -178,6 +182,94 @@ describe('NotificationPreferences saving', () => {
         .find((node) => node.textContent?.includes('saved successfully'));
       expect(live?.getAttribute('aria-live')).toBe('polite');
     });
+  });
+});
+
+describe('NotificationPreferences disabling every channel', () => {
+  /** Fetch stub backed by a mutable server record, so a reload reflects saves. */
+  const stubServer = (initial: Record<string, unknown>) => {
+    let stored: Record<string, unknown> = { ...initial };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        stored = { ...stored, ...JSON.parse(String(init.body)) };
+        return { ok: true, json: async () => ({ status: 'success' }) };
+      }
+      return { ok: true, json: async () => ({ data: stored }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+
+  const allOn = { emailEnabled: true, smsEnabled: true, pushEnabled: true, phone: '+15551234567' };
+
+  it('PATCHes explicit false values when every channel is turned off', async () => {
+    const fetchMock = stubServer(allOn);
+    render(<NotificationPreferences apiBaseUrl={API} />);
+    await waitFor(() => expect(screen.getByText('Notification Preferences')).toBeTruthy());
+
+    fireEvent.click(emailToggle());
+    fireEvent.click(smsToggle());
+    fireEvent.click(pushToggle());
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(saveButton());
+
+    await waitFor(() =>
+      expect(screen.getByText('Preferences saved successfully')).toBeTruthy(),
+    );
+    const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
+    expect(patches).toHaveLength(1);
+    expect(patchBody(fetchMock)).toMatchObject({
+      emailEnabled: false,
+      smsEnabled: false,
+      pushEnabled: false,
+    });
+  });
+
+  it('keeps every channel off after a reload', async () => {
+    stubServer(allOn);
+    render(<NotificationPreferences apiBaseUrl={API} />);
+    await waitFor(() => expect(screen.getByText('Notification Preferences')).toBeTruthy());
+
+    fireEvent.click(emailToggle());
+    fireEvent.click(smsToggle());
+    fireEvent.click(pushToggle());
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(screen.getByText('Preferences saved successfully')).toBeTruthy(),
+    );
+
+    cleanup();
+    render(<NotificationPreferences apiBaseUrl={API} />);
+    await waitFor(() => expect(screen.getByText('Notification Preferences')).toBeTruthy());
+
+    expect(emailToggle().getAttribute('aria-checked')).toBe('false');
+    expect(smsToggle().getAttribute('aria-checked')).toBe('false');
+    expect(pushToggle().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('sends a channel the API returned as null as an explicit boolean', async () => {
+    const fetchMock = await renderLoaded({ emailEnabled: true, smsEnabled: null, pushEnabled: null });
+
+    fireEvent.click(emailToggle());
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(saveButton());
+
+    await waitFor(() =>
+      expect(screen.getByText('Preferences saved successfully')).toBeTruthy(),
+    );
+    const body = patchBody(fetchMock);
+    expect(body).toMatchObject({ emailEnabled: false, smsEnabled: false, pushEnabled: false });
+  });
+});
+
+describe('toPreferencesPayload', () => {
+  it('serializes every channel even when all are disabled', () => {
+    const json = JSON.parse(
+      JSON.stringify(toPreferencesPayload({ emailEnabled: false, smsEnabled: undefined })),
+    );
+
+    expect(json).toEqual({ emailEnabled: false, smsEnabled: false, pushEnabled: false, phone: '' });
   });
 });
 

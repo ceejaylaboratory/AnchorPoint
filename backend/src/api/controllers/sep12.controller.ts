@@ -8,7 +8,7 @@ import { KYCStatus } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth.middleware';
 import logger from '../../utils/logger';
 import { storageProvider } from '../../services/storage-provider.service';
-import { uploadStore } from '../../services/upload-store.service';
+import { UploadStorageError, uploadStore } from '../../services/upload-store.service';
 import { config } from '../../config/env';
 import { softDeleteKycCustomer } from '../../services/data-retention.service';
 
@@ -19,6 +19,16 @@ const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
 const UPLOAD_ID_SUFFIX = '_upload_id';
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
+
+const STORAGE_PROVIDER_ERROR = { error: 'storage_provider_error' } as const;
+
+function logStorageFailure(message: string, error: unknown, context: Record<string, unknown>): void {
+  logger.error(message, {
+    ...context,
+    operation: error instanceof UploadStorageError ? error.operation : undefined,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
 
 type DocumentResolution =
   | { documents: Record<string, string>; kycFields: Record<string, string> }
@@ -424,7 +434,19 @@ export class Sep12Controller {
         const expiresAt = new Date(Date.now() + config.UPLOAD_URL_EXPIRY_SECONDS * 1000);
         const record = uploadStore.create(account, field_name, content_type, expiresAt);
 
-        const url = await storageProvider.generatePresignedPutUrl(record.storageKey, content_type, config.UPLOAD_URL_EXPIRY_SECONDS);
+        let url: string;
+        try {
+          url = await storageProvider.generatePresignedPutUrl(record.storageKey, content_type, config.UPLOAD_URL_EXPIRY_SECONDS);
+        } catch (storageError) {
+          // Do not leave a PENDING record behind for an upload that can never succeed.
+          uploadStore.remove(record.uploadId);
+          logStorageFailure('SEP-12 upload-url storage provider failure', storageError, {
+            account,
+            field_name,
+            uploadId: record.uploadId,
+          });
+          return res.status(500).json(STORAGE_PROVIDER_ERROR);
+        }
 
         logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
 
@@ -496,9 +518,18 @@ export class Sep12Controller {
         return res.status(403).json({ error: 'account does not match upload record' });
       }
 
-      const exists = await storageProvider.objectExists(
-        record.storageKey || `${KEY_PREFIX}/${account}/${record.fieldName}/${upload_id}`
-      );
+      let exists: boolean;
+      try {
+        exists = await storageProvider.objectExists(
+          record.storageKey || `${KEY_PREFIX}/${account}/${record.fieldName}/${upload_id}`
+        );
+      } catch (storageError) {
+        // A storage failure (e.g. S3 AccessDenied) is not the same as a
+        // missing file: report it rather than leaving the upload unconfirmed.
+        logStorageFailure('SEP-12 upload-confirm storage provider failure', storageError, { upload_id, account });
+        return res.status(500).json(STORAGE_PROVIDER_ERROR);
+      }
+
       if (!exists) {
         return res.status(422).json({ error: 'File not found in storage; upload may not have completed' });
       }

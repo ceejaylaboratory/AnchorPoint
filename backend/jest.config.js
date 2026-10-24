@@ -15,6 +15,8 @@ module.exports = {
   modulePathIgnorePatterns: ["<rootDir>/dist/"],
   moduleNameMapper: {
     "^uuid$": "<rootDir>/src/__mocks__/uuid.ts",
+    "^@noble/ed25519$": "<rootDir>/src/__mocks__/@noble/ed25519.ts",
+    "^uint8array-extras$": "<rootDir>/src/__mocks__/uint8array-extras.ts",
   },
   globalSetup: "<rootDir>/jest.setup.js",
   globalTeardown: "<rootDir>/jest.teardown.js",

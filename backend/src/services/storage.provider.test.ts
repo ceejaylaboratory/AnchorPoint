@@ -1,4 +1,5 @@
 import { StorageProvider } from './storage.provider';
+import { UploadStorageError } from './upload-store.service';
 import { S3Client } from '@aws-sdk/client-s3';
 
 jest.mock('@aws-sdk/client-s3', () => {
@@ -65,14 +66,27 @@ describe('StorageProvider', () => {
       expect(mockS3Client.send).toHaveBeenCalledTimes(1);
     });
 
-    it('should return false and log error for generic unexpected error', async () => {
+    it('should propagate a generic unexpected error as UploadStorageError', async () => {
       const genericError = new Error('S3 connection timed out');
       (mockS3Client.send as jest.Mock).mockRejectedValue(genericError);
 
-      const exists = await storageProvider.objectExists('error-file.pdf');
-
-      expect(exists).toBe(false);
+      await expect(storageProvider.objectExists('error-file.pdf')).rejects.toMatchObject({
+        name: 'UploadStorageError',
+        code: 'storage_provider_error',
+        operation: 'objectExists',
+        originalError: genericError,
+      });
       expect(mockS3Client.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('should propagate an S3 permission error instead of reporting the object as missing', async () => {
+      const accessDenied = Object.assign(new Error('Access Denied'), {
+        name: 'AccessDenied',
+        $metadata: { httpStatusCode: 403 },
+      });
+      (mockS3Client.send as jest.Mock).mockRejectedValue(accessDenied);
+
+      await expect(storageProvider.objectExists('kyc/file.pdf')).rejects.toBeInstanceOf(UploadStorageError);
     });
 
     it('should return false immediately without S3 call if key is empty', async () => {
