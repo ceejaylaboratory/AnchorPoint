@@ -82,7 +82,7 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
   initialBuyAsset = 'EURC',
   initialSellAmount = '100',
   defaultValiditySeconds = 30,
-  debounceMs = 350,
+  debounceMs = 500,
   autoRefresh = true,
   onFetchQuote,
   onSwapSuccess,
@@ -98,6 +98,8 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
   const [remainingSeconds, setRemainingSeconds] = useState<number>(defaultValiditySeconds);
   const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState<boolean>(autoRefresh);
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
+  // True when the shown quote is a local estimate because /sep38/price failed.
+  const [isFallbackQuote, setIsFallbackQuote] = useState<boolean>(false);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -156,6 +158,7 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
 
       try {
         let fetchedQuote: SwapQuote;
+        let usedFallback = false;
 
         if (onFetchQuote) {
           fetchedQuote = await onFetchQuote({
@@ -230,11 +233,14 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
               }
             }
           } catch {
-            // Local realistic fallback computation
+            // Live SEP-38 price unavailable — fall back to a local estimate
+            // so the calculator stays usable, flagged via isFallbackQuote.
             fetchedQuote = computeFallbackQuote(source, dest, cleanAmount);
+            usedFallback = true;
           }
         }
 
+        setIsFallbackQuote(usedFallback);
         setQuote(fetchedQuote);
         setRemainingSeconds(fetchedQuote.totalValiditySeconds || defaultValiditySeconds);
       } catch (err) {
@@ -341,6 +347,12 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
   const isExpired = remainingSeconds === 0;
   const validityTotal = quote?.totalValiditySeconds || defaultValiditySeconds;
   const progressPercent = Math.max(0, Math.min(100, (remainingSeconds / validityTotal) * 100));
+
+  // Indicative bid/ask around the live mid price (±5 bps each side).
+  const midPrice = quote ? parseFloat(quote.price) : NaN;
+  const hasMidPrice = Number.isFinite(midPrice) && midPrice > 0;
+  const bidPrice = hasMidPrice ? (midPrice * 0.9995).toFixed(6) : null;
+  const askPrice = hasMidPrice ? (midPrice * 1.0005).toFixed(6) : null;
 
   const currentSellAssetObj = assets.find((a) => a.code === sellAsset) || assets[0];
   const currentBuyAssetObj = assets.find((a) => a.code === buyAsset) || assets[1];
@@ -511,9 +523,27 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
         </div>
       </div>
 
+      {/* Loading skeleton while the live SEP-38 quote is being fetched */}
+      {isLoading && !quote && (
+        <div
+          data-testid="quote-skeleton"
+          aria-hidden="true"
+          className="mt-4 space-y-2 rounded-2xl border border-slate-800/80 bg-slate-950/40 p-4"
+        >
+          <div className="h-3 w-2/3 animate-pulse rounded bg-slate-800" />
+          <div className="h-3 w-1/2 animate-pulse rounded bg-slate-800" />
+          <div className="h-1.5 w-full animate-pulse rounded-full bg-slate-800" />
+        </div>
+      )}
+
       {/* Quote Details & Fee Breakdown */}
       {quote && (
         <div className="mt-4 rounded-2xl border border-slate-800/80 bg-slate-950/40 p-4 space-y-3">
+          {isFallbackQuote && (
+            <p className="text-[11px] text-amber-400/90">
+              Live SEP-38 price unavailable — showing an estimated rate.
+            </p>
+          )}
           <div className="flex items-center justify-between text-xs text-slate-400">
             <span className="flex items-center gap-1">
               Rate
@@ -532,6 +562,15 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
               {quote.fee} {quote.sourceAsset}
             </span>
           </div>
+
+          {hasMidPrice && (
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>Bid / Ask spread</span>
+              <span className="font-mono text-[11px] text-slate-200">
+                {bidPrice} / {askPrice} (0.10%)
+              </span>
+            </div>
+          )}
 
           {quote.routingPath && quote.routingPath.length > 2 && (
             <div className="flex items-center justify-between text-xs text-slate-400">

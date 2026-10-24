@@ -17,6 +17,8 @@ jest.mock('@stellar/stellar-sdk', () => {
       ...real.TransactionBuilder,
       fromXDR: jest.fn().mockReturnValue({
         hash: mockHash,
+        // Unexpired SEP-10 challenge window (maxTime 5 minutes from load).
+        timeBounds: { minTime: '0', maxTime: String(Math.floor(Date.now() / 1000) + 300) },
         signatures: [
           {
             signature: jest.fn().mockReturnValue(Buffer.from('sig1')),
@@ -272,5 +274,19 @@ describe('verifySep10ChallengeTransactionMultiSig', () => {
     // Basic signature was valid, so we accept despite Horizon failure
     expect(result.isValid).toBe(true);
     expect(result.account).toBe('GABCDE');
+  });
+
+  it('rejects an expired challenge before contacting Horizon', async () => {
+    const fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+    (StellarSdkMock.TransactionBuilder.fromXDR as jest.Mock).mockReturnValueOnce({
+      timeBounds: { minTime: '0', maxTime: String(Math.floor(Date.now() / 1000) - 1) },
+      signatures: [],
+    });
+
+    const result = await verifySep10ChallengeTransactionMultiSig('signed-xdr', mockChallenge);
+
+    expect(result).toEqual({ isValid: false, account: 'GABCDE', error: 'challenge_expired' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

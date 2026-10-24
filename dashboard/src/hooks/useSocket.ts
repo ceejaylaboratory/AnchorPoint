@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { useTransactionStore, type TransactionStatusUpdatePayload } from '../store/transactionStore';
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
-export type TransactionUpdatePayload = {
-  id: string;
-  status?: string;
-  ledger?: number;
-  timestamp?: number;
-  [key: string]: unknown;
-};
+export type { TransactionStatusUpdatePayload };
+export type TransactionUpdatePayload = TransactionStatusUpdatePayload;
 
 type UseSocketOptions = {
   apiBaseUrl: string;
+  authToken?: string | null;
   onStatusChange?: (status: ConnectionStatus) => void;
   onTransactionUpdate?: (payload: TransactionUpdatePayload) => void;
+  fallbackToPolling?: boolean;
+  pollIntervalMs?: number;
 };
 
 /**
@@ -23,17 +22,12 @@ type UseSocketOptions = {
 const MAX_RECONNECT_DELAY = 30000;
 const RECONNECT_BASE_DELAY = 1000;
 
-/**
- * Computes the next reconnect delay using exponential backoff
- * @param attempt - Current reconnection attempt number (0-indexed)
- * @returns Delay in milliseconds
- */
 const computeReconnectDelay = (attempt: number): number => {
   const delay = RECONNECT_BASE_DELAY * Math.pow(2, attempt);
   return Math.min(delay, MAX_RECONNECT_DELAY);
 };
 
-const computeSocketUrl = (apiBaseUrl: string) => {
+export const computeSocketUrl = (apiBaseUrl: string) => {
   try {
     const parsed = new URL(apiBaseUrl);
     return `${parsed.protocol === 'https:' ? 'wss' : 'ws'}://${parsed.host}`;
@@ -49,53 +43,108 @@ export interface UseSocketReturn {
 }
 
 /**
- * Custom hook for WebSocket connection with exponential backoff reconnection
- * and automatic state re-synchronization on reconnection.
+ * Custom hook for WebSocket connection with exponential backoff reconnection,
+ * automatic Zustand store synchronization, and state re-synchronization.
  */
-export const useSocket = ({ apiBaseUrl, onStatusChange, onTransactionUpdate }: UseSocketOptions): UseSocketReturn => {
+export const useSocket = ({
+  apiBaseUrl,
+  authToken,
+  onStatusChange,
+  onTransactionUpdate,
+  fallbackToPolling = true,
+  pollIntervalMs = 10000,
+}: UseSocketOptions): UseSocketReturn => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [lastSyncTimestamp, setLastSyncTimestamp] = useState<number | null>(null);
-  
+
   const socketRef = useRef<Socket | null>(null);
   const reconnectAttemptRef = useRef(0);
   const lastMessageTimestampRef = useRef<number>(Date.now());
   const isManualDisconnectRef = useRef(false);
+  const pollTimerRef = useRef<NodeJS.Timeout | number | null>(null);
 
   const socketUrl = useMemo(() => computeSocketUrl(apiBaseUrl), [apiBaseUrl]);
 
+  const resolvedToken = authToken !== undefined ? authToken : (typeof window !== 'undefined' ? localStorage.getItem('authToken') : null);
+
+  const pollTransactions = useCallback(async () => {
+    if (!apiBaseUrl || !resolvedToken) return;
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/transactions`, {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${resolvedToken}`,
+        },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      const rawList = body?.data?.transactions ?? body?.transactions ?? (Array.isArray(body) ? body : []);
+      if (Array.isArray(rawList)) {
+        for (const item of rawList) {
+          if (!item.id) continue;
+          useTransactionStore.getState().applyStatusUpdate(item);
+          onTransactionUpdate?.(item);
+        }
+      }
+    } catch (err) {
+      console.warn('Fallback polling error:', err);
+    }
+  }, [apiBaseUrl, resolvedToken, onTransactionUpdate]);
+
+  const startPolling = useCallback(() => {
+    if (!fallbackToPolling || pollTimerRef.current) return;
+    useTransactionStore.getState().setConnectionMode('polling');
+    useTransactionStore.getState().setIsPolling(true);
+    void pollTransactions();
+    pollTimerRef.current = setInterval(() => void pollTransactions(), pollIntervalMs);
+  }, [fallbackToPolling, pollIntervalMs, pollTransactions]);
+
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current as NodeJS.Timeout);
+      pollTimerRef.current = null;
+    }
+    useTransactionStore.getState().setIsPolling(false);
+  }, []);
+
   /**
    * Fetches missed messages since the last known timestamp
-   * This enables state re-synchronization after a reconnection
    */
   const fetchMissedMessages = useCallback(async (since: number) => {
     if (!apiBaseUrl) return;
-    
+
     try {
       const res = await fetch(`${apiBaseUrl}/events/sync?since=${since}`, {
         headers: {
           'Content-Type': 'application/json',
+          ...(resolvedToken ? { Authorization: `Bearer ${resolvedToken}` } : {}),
         },
       });
-      
+
       if (!res.ok) {
         console.warn('Failed to fetch missed messages:', res.status);
         return;
       }
-      
+
       const body = await res.json();
       const events = Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : [];
-      
-      // Process each missed message
+
       for (const event of events) {
-        if (event.type === 'tx_updated' || event.event === 'tx_updated') {
-          onTransactionUpdate?.(event.payload || event);
+        const payload = event.payload || event;
+        if (
+          event.type === 'tx_updated' ||
+          event.event === 'tx_updated' ||
+          event.type === 'transaction:status_update' ||
+          event.event === 'transaction:status_update'
+        ) {
+          useTransactionStore.getState().applyStatusUpdate(payload);
+          onTransactionUpdate?.(payload);
         }
       }
-      
-      // Update sync timestamp
+
       if (events.length > 0) {
         const latestTimestamp = events.reduce((max: number, event: TransactionUpdatePayload) => {
-          const ts = event.timestamp || 0;
+          const ts = Number(event.timestamp) || 0;
           return ts > max ? ts : max;
         }, since);
         setLastSyncTimestamp(latestTimestamp);
@@ -104,39 +153,32 @@ export const useSocket = ({ apiBaseUrl, onStatusChange, onTransactionUpdate }: U
     } catch (err) {
       console.warn('Error fetching missed messages:', err);
     }
-  }, [apiBaseUrl, onTransactionUpdate]);
+  }, [apiBaseUrl, resolvedToken, onTransactionUpdate]);
 
-  /**
-   * Attempts to reconnect with exponential backoff
-   */
   const handleReconnect = useCallback(() => {
     if (isManualDisconnectRef.current || !socketRef.current) return;
-    
+
     const attempt = reconnectAttemptRef.current;
     const delay = computeReconnectDelay(attempt);
-    
+
     setConnectionStatus('reconnecting');
     onStatusChange?.('reconnecting');
-    
-    console.log(`WebSocket reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-    
-    // Schedule reconnection attempt
+
+    startPolling();
+
     setTimeout(() => {
       if (socketRef.current && !isManualDisconnectRef.current) {
         socketRef.current.connect();
       }
     }, delay);
-    
-    reconnectAttemptRef.current += 1;
-  }, [onStatusChange]);
 
-  /**
-   * Manual reconnect function (can be called by UI)
-   */
+    reconnectAttemptRef.current += 1;
+  }, [onStatusChange, startPolling]);
+
   const reconnect = useCallback(() => {
     isManualDisconnectRef.current = false;
     reconnectAttemptRef.current = 0;
-    
+
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current.connect();
@@ -147,10 +189,10 @@ export const useSocket = ({ apiBaseUrl, onStatusChange, onTransactionUpdate }: U
     if (!apiBaseUrl) {
       setConnectionStatus('disconnected');
       onStatusChange?.('disconnected');
+      useTransactionStore.getState().setConnectionMode('disconnected');
       return undefined;
     }
 
-    // Reset state for new connection
     isManualDisconnectRef.current = false;
     reconnectAttemptRef.current = 0;
     setConnectionStatus('connecting');
@@ -158,10 +200,10 @@ export const useSocket = ({ apiBaseUrl, onStatusChange, onTransactionUpdate }: U
 
     const socket: Socket = io(socketUrl, {
       autoConnect: true,
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
       path: '/socket.io',
-      // Disable default reconnection - we handle it manually for exponential backoff
       reconnection: false,
+      auth: resolvedToken ? { token: resolvedToken } : undefined,
     });
 
     socketRef.current = socket;
@@ -169,15 +211,15 @@ export const useSocket = ({ apiBaseUrl, onStatusChange, onTransactionUpdate }: U
     socket.on('connect', () => {
       setConnectionStatus('connected');
       onStatusChange?.('connected');
+      useTransactionStore.getState().setConnectionMode('websocket');
+      stopPolling();
       reconnectAttemptRef.current = 0;
-      
-      // Fetch missed messages if we have a last known timestamp
+
       const lastKnownTimestamp = lastMessageTimestampRef.current || Math.floor(Date.now() / 1000) - 60;
       void fetchMissedMessages(lastKnownTimestamp);
     });
 
     socket.on('disconnect', (reason) => {
-      // Only trigger reconnect if not manually disconnected
       if (reason === 'io server disconnect' || !isManualDisconnectRef.current) {
         setConnectionStatus('disconnected');
         onStatusChange?.('disconnected');
@@ -192,30 +234,34 @@ export const useSocket = ({ apiBaseUrl, onStatusChange, onTransactionUpdate }: U
       console.error('WebSocket connection error:', error.message);
       setConnectionStatus('disconnected');
       onStatusChange?.('disconnected');
-      
-      // Trigger exponential backoff reconnect
       handleReconnect();
     });
 
-    socket.on('tx_updated', (payload: TransactionUpdatePayload) => {
-      // Update the last message timestamp for sync purposes
+    const handlePayload = (payload: TransactionUpdatePayload) => {
       if (payload.timestamp) {
-        lastMessageTimestampRef.current = payload.timestamp;
-        setLastSyncTimestamp(payload.timestamp);
+        const ts = Number(payload.timestamp);
+        lastMessageTimestampRef.current = ts;
+        setLastSyncTimestamp(ts);
       }
+      useTransactionStore.getState().applyStatusUpdate(payload);
       onTransactionUpdate?.(payload);
-    });
+    };
+
+    socket.on('tx_updated', handlePayload);
+    socket.on('transaction:status_update', handlePayload);
 
     return () => {
       isManualDisconnectRef.current = true;
+      stopPolling();
       socket.off('connect');
       socket.off('disconnect');
       socket.off('connect_error');
       socket.off('tx_updated');
+      socket.off('transaction:status_update');
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [socketUrl, apiBaseUrl, onStatusChange, onTransactionUpdate, handleReconnect, fetchMissedMessages]);
+  }, [socketUrl, apiBaseUrl, resolvedToken, onStatusChange, onTransactionUpdate, handleReconnect, fetchMissedMessages, stopPolling]);
 
   return {
     connectionStatus,
@@ -223,3 +269,6 @@ export const useSocket = ({ apiBaseUrl, onStatusChange, onTransactionUpdate }: U
     lastSyncTimestamp,
   };
 };
+
+export { useTransactionSocket } from './useTransactionSocket';
+export default useSocket;

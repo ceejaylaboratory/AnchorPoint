@@ -244,7 +244,8 @@ impl RBAC {
         env.storage()
             .persistent()
             .set(&used_key, &current_ledger);
-        env.storage().persistent().extend_ttl(
+        anchorpoint_utils::storage::extend_persistent_ttl_with(
+            &env,
             &used_key,
             NONCE_TTL_LEDGERS,
             NONCE_TTL_LEDGERS,

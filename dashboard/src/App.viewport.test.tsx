@@ -245,6 +245,43 @@ describe('TransactionHistory mobile responsiveness and breakpoint tests', () => 
     expect(expandBtn).toHaveAttribute('aria-expanded', 'false');
     expect(expandBtn).toHaveTextContent('Details');
   });
+
+  it('spaces rows for card height on mobile (<768px) so cards do not overlap', () => {
+    stubMediaQuery('(max-width: 767px)', true);
+
+    render(<TransactionHistory initialData={sampleTransactions} totalInitialCount={2} />);
+
+    expect(screen.getByTestId('tx-row-0')).toHaveStyle({ transform: 'translateY(0px)' });
+    expect(screen.getByTestId('tx-row-1')).toHaveStyle({ transform: 'translateY(112px)' });
+  });
+
+  it('keeps compact table row spacing on desktop (>=768px)', () => {
+    stubMediaQuery('(max-width: 767px)', false);
+
+    render(<TransactionHistory initialData={sampleTransactions} totalInitialCount={2} />);
+
+    expect(screen.getByTestId('tx-row-1')).toHaveStyle({ transform: 'translateY(56px)' });
+  });
+
+  it('honours a custom mobile card height estimate', () => {
+    stubMediaQuery('(max-width: 767px)', true);
+
+    render(
+      <TransactionHistory initialData={sampleTransactions} totalInitialCount={2} mobileRowHeight={140} />,
+    );
+
+    expect(screen.getByTestId('tx-row-1')).toHaveStyle({ transform: 'translateY(140px)' });
+  });
+
+  it('prevents horizontal scrolling inside the list on mobile', () => {
+    stubMediaQuery('(max-width: 767px)', true);
+
+    render(<TransactionHistory initialData={sampleTransactions} totalInitialCount={2} />);
+
+    const container = screen.getByTestId('virtual-scroll-container');
+    expect(container).toHaveClass('overflow-x-hidden');
+    expect(container).toHaveClass('overflow-y-auto');
+  });
 });
 
 export {};

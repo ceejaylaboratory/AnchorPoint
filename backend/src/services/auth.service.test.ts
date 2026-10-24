@@ -341,5 +341,114 @@ describe('Auth Service', () => {
       );
     });
   });
+
+  describe('SEP-10 challenge timeBounds validation', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const StellarSdk = require('@stellar/stellar-sdk') as typeof import('@stellar/stellar-sdk');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { NetworkType } = require('../config/networks') as typeof import('../config/networks');
+    type StellarTransaction = import('@stellar/stellar-sdk').Transaction;
+
+    const anchor = StellarSdk.Keypair.random();
+    const client = StellarSdk.Keypair.random();
+
+    const parse = (xdr: string): StellarTransaction =>
+      StellarSdk.TransactionBuilder.fromXDR(xdr, StellarSdk.Networks.TESTNET) as StellarTransaction;
+
+    const signChallenge = (xdr: string): string => {
+      const tx = parse(xdr);
+      tx.sign(client);
+      return tx.toXDR();
+    };
+
+    const issueSignedChallenge = () => {
+      const { generateSep10ChallengeTransaction } = loadAuthService();
+      const challenge = generateSep10ChallengeTransaction(
+        anchor.publicKey(),
+        client.publicKey(),
+        NetworkType.TESTNET
+      );
+      const signedXdr = signChallenge(challenge.transactionXdr);
+      const stored = {
+        challenge: challenge.challenge,
+        publicKey: client.publicKey(),
+        createdAt: Date.now(),
+        transactionXdr: challenge.transactionXdr
+      };
+      const maxTime = Number(parse(signedXdr).timeBounds!.maxTime);
+      return { signedXdr, stored, maxTime };
+    };
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('accepts a signed challenge before timeBounds.maxTime', () => {
+      const { signedXdr, stored } = issueSignedChallenge();
+      const { verifySep10ChallengeTransaction } = loadAuthService();
+
+      expect(verifySep10ChallengeTransaction(signedXdr, stored, NetworkType.TESTNET)).toEqual({
+        isValid: true,
+        account: client.publicKey()
+      });
+    });
+
+    it('rejects a correctly signed challenge once timeBounds.maxTime has passed', () => {
+      const { signedXdr, stored, maxTime } = issueSignedChallenge();
+      const { verifySep10ChallengeTransaction } = loadAuthService();
+
+      jest.spyOn(Date, 'now').mockReturnValue((maxTime + 1) * 1000);
+
+      expect(verifySep10ChallengeTransaction(signedXdr, stored, NetworkType.TESTNET)).toEqual({
+        isValid: false,
+        account: client.publicKey(),
+        error: 'challenge_expired'
+      });
+    });
+
+    it('does not report challenge_expired for a mismatched challenge', () => {
+      const { stored, maxTime } = issueSignedChallenge();
+      const { verifySep10ChallengeTransaction, generateSep10ChallengeTransaction } = loadAuthService();
+      // A different challenge value signed by the same client must still fail
+      // as an ordinary invalid challenge, even after expiry.
+      const other = generateSep10ChallengeTransaction(anchor.publicKey(), client.publicKey(), NetworkType.TESTNET);
+      const otherSigned = signChallenge(other.transactionXdr);
+
+      jest.spyOn(Date, 'now').mockReturnValue((maxTime + 1) * 1000);
+
+      const result = verifySep10ChallengeTransaction(otherSigned, stored, NetworkType.TESTNET);
+      expect(result.isValid).toBe(false);
+      expect(result.error).toBeUndefined();
+    });
+
+    it('isSep10ChallengeExpired treats maxTime as an exclusive upper bound', () => {
+      const { signedXdr, maxTime } = issueSignedChallenge();
+      const { isSep10ChallengeExpired } = loadAuthService();
+
+      expect(isSep10ChallengeExpired(signedXdr, NetworkType.TESTNET, (maxTime - 1) * 1000)).toBe(false);
+      expect(isSep10ChallengeExpired(signedXdr, NetworkType.TESTNET, maxTime * 1000)).toBe(true);
+      expect(isSep10ChallengeExpired(signedXdr, NetworkType.TESTNET, (maxTime + 60) * 1000)).toBe(true);
+    });
+
+    it('isSep10ChallengeExpired rejects challenges without a finite maxTime', () => {
+      const { isSep10ChallengeExpired } = loadAuthService();
+      const unbounded = new StellarSdk.TransactionBuilder(new StellarSdk.Account(anchor.publicKey(), '0'), {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: StellarSdk.Networks.TESTNET
+      })
+        .addOperation(
+          StellarSdk.Operation.manageData({
+            name: 'stellar.sep10.challenge',
+            value: 'value',
+            source: client.publicKey()
+          })
+        )
+        .setTimeout(StellarSdk.TimeoutInfinite)
+        .build();
+
+      expect(isSep10ChallengeExpired(unbounded.toXDR(), NetworkType.TESTNET)).toBe(true);
+      expect(isSep10ChallengeExpired('not-xdr', NetworkType.TESTNET)).toBe(true);
+    });
+  });
 });
 

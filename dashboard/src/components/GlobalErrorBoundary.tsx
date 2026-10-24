@@ -11,6 +11,40 @@ interface State {
   error: Error | null;
   errorInfo: ErrorInfo | null;
   copied: boolean;
+  reported: boolean;
+}
+
+function getSessionId(): string {
+  try {
+    let id = sessionStorage.getItem('ap-session-id');
+    if (!id) {
+      id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      sessionStorage.setItem('ap-session-id', id);
+    }
+    return id;
+  } catch {
+    return 'unknown-session';
+  }
+}
+
+export async function reportError(error: Error, errorInfo: ErrorInfo | null): Promise<boolean> {
+  const url = (import.meta.env.VITE_ERROR_REPORT_URL as string | undefined) ?? '';
+  if (!url) return false;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: error?.message ?? String(error),
+        stack: error?.stack ?? null,
+        componentStack: errorInfo?.componentStack ?? null,
+        sessionId: getSessionId(),
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export class GlobalErrorBoundary extends Component<Props, State> {
@@ -19,6 +53,7 @@ export class GlobalErrorBoundary extends Component<Props, State> {
     error: null,
     errorInfo: null,
     copied: false,
+    reported: false,
   };
 
   public static getDerivedStateFromError(error: Error): Partial<State> {
@@ -28,6 +63,9 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error:', error, errorInfo);
     this.setState({ errorInfo });
+    void reportError(error, errorInfo).then((ok) => {
+      if (ok) this.setState({ reported: true });
+    });
   }
 
   private handleReload = () => {
@@ -90,6 +128,13 @@ export class GlobalErrorBoundary extends Component<Props, State> {
                 <RefreshCcw size={18} />
                 Reload Application
               </button>
+              <a
+                href="mailto:support@anchorpoint.local?subject=Problem%20Report"
+                data-testid="report-problem-link"
+                className="action-button flex items-center justify-center gap-2 bg-slate-800 text-slate-200 px-6 py-2.5 rounded-lg font-medium hover:bg-slate-700 w-full sm:w-auto border border-slate-600"
+              >
+                Report Problem
+              </a>
               <button
                 onClick={this.handleCopyStackTrace}
                 className="action-button flex items-center justify-center gap-2 bg-slate-800 text-slate-200 px-6 py-2.5 rounded-lg font-medium hover:bg-slate-700 w-full sm:w-auto border border-slate-600"
@@ -98,6 +143,11 @@ export class GlobalErrorBoundary extends Component<Props, State> {
                 {this.state.copied ? 'Copied!' : 'Copy Error Details'}
               </button>
             </div>
+            {this.state.reported && (
+              <p className="text-xs text-emerald-400" data-testid="error-reported-note">
+                Error report sent. Thank you.
+              </p>
+            )}
           </div>
         </div>
       );

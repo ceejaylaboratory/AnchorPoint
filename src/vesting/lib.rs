@@ -400,6 +400,79 @@ mod tests {
         client.revoke_grant(&id);
     }
 
+    /// After revoking, the beneficiary can claim what was vested at revocation.
+    /// Once they claim that amount, any further claim must panic with "nothing to claim".
+    #[test]
+    #[should_panic(expected = "nothing to claim")]
+    fn test_claim_on_fully_claimed_revoked_grant_panics() {
+        let env = Env::default();
+        let (_, beneficiary, token_id, _, client) = setup_test(&env);
+
+        let start = 1000;
+        let cliff = 0;
+        let duration = 1000;
+        let amount = 1000;
+
+        let id = client.create_grant(
+            &beneficiary,
+            &token_id,
+            &amount,
+            &start,
+            &cliff,
+            &duration,
+            &true, // revocable
+        );
+
+        // Advance to mid-point: 500 tokens vested.
+        env.ledger().with_mut(|l| l.timestamp = start + 500);
+
+        // Revoke the grant — unvested (500) back to admin.
+        client.revoke_grant(&id);
+
+        // Beneficiary claims the 500 vested tokens.
+        client.claim(&id);
+
+        // Second claim on the now-fully-claimed revoked grant must panic.
+        client.claim(&id);
+    }
+
+    /// Revoke a grant before the cliff: all tokens go back to admin, beneficiary
+    /// gets nothing (vested = 0 at time of revocation). Any subsequent claim panics.
+    #[test]
+    #[should_panic(expected = "nothing to claim")]
+    fn test_claim_after_pre_cliff_revocation_panics() {
+        let env = Env::default();
+        let (admin, beneficiary, token_id, token_client, client) = setup_test(&env);
+
+        let start = 1000;
+        let cliff = 500;
+        let duration = 1000;
+        let amount = 1000;
+
+        let id = client.create_grant(
+            &beneficiary,
+            &token_id,
+            &amount,
+            &start,
+            &cliff,
+            &duration,
+            &true,
+        );
+
+        let admin_balance_before = token_client.balance(&admin);
+
+        // Revoke before cliff: all 1000 tokens back to admin (vested = 0).
+        env.ledger().with_mut(|l| l.timestamp = start + 100);
+        client.revoke_grant(&id);
+
+        // Admin should have received all tokens back.
+        assert_eq!(token_client.balance(&admin), admin_balance_before + amount);
+
+        // grant.total_amount is now 0 (vested = 0 at revocation).
+        // claimable = 0 - 0 = 0 → panics with "nothing to claim".
+        client.claim(&id);
+    }
+
     /// Verify that nothing is claimable at any point strictly before the cliff.
     #[test]
     fn test_cliff_no_tokens_before_cliff() {

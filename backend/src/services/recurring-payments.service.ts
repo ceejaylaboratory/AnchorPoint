@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { isValidStellarPublicKey } from '../utils/stellar-address';
 import { BatchPaymentService } from './batch-payment.service';
+import { BatchErrorType, BatchPaymentError } from './batch-payment.types';
 import { config } from '../config/env';
 import { notificationService } from './notification.service';
 
@@ -27,6 +28,138 @@ export class RecurringPaymentError extends Error {
     this.name = 'RecurringPaymentError';
     this.type = type;
   }
+}
+
+export type RecurringPaymentFailureKind = 'TRANSIENT' | 'PERMANENT';
+
+/** Batch error types that will fail identically on every retry. */
+const PERMANENT_BATCH_ERROR_TYPES = new Set<BatchErrorType>([
+  BatchErrorType.EXCEEDS_MAX_OPS,
+  BatchErrorType.INVALID_ADDRESS,
+  BatchErrorType.INSUFFICIENT_BALANCE,
+  BatchErrorType.SEQUENCE_CONFLICT,
+  BatchErrorType.INVALID_ASSET,
+]);
+
+/** Horizon result codes that indicate a deterministic rejection. */
+const PERMANENT_RESULT_CODES = new Set([
+  'tx_bad_seq',
+  'tx_bad_auth',
+  'tx_bad_auth_extra',
+  'tx_insufficient_balance',
+  'tx_no_source_account',
+  'tx_malformed',
+  'tx_not_supported',
+  'op_underfunded',
+  'op_no_destination',
+  'op_no_trust',
+  'op_not_authorized',
+  'op_line_full',
+  'op_no_issuer',
+  'op_malformed',
+  'op_src_no_trust',
+  'op_src_not_authorized',
+  'op_bad_auth',
+  'op_no_account',
+]);
+
+/** Horizon result codes that may succeed if the same payment is resubmitted later. */
+const TRANSIENT_RESULT_CODES = new Set(['tx_insufficient_fee', 'tx_too_late', 'tx_internal_error']);
+
+/** Node / axios socket-level error codes. */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'ESOCKETTIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ERR_NETWORK',
+]);
+
+type ErrorLike = {
+  code?: unknown;
+  status?: unknown;
+  name?: unknown;
+  details?: { error?: unknown };
+  cause?: unknown;
+  extras?: { result_codes?: { transaction?: string; operations?: string[] } };
+  response?: {
+    status?: unknown;
+    extras?: { result_codes?: { transaction?: string; operations?: string[] } };
+    data?: { status?: unknown; extras?: { result_codes?: { transaction?: string; operations?: string[] } } };
+  };
+};
+
+function collectResultCodes(err: ErrorLike): string[] {
+  const resultCodes =
+    err.extras?.result_codes ?? err.response?.extras?.result_codes ?? err.response?.data?.extras?.result_codes;
+  if (!resultCodes) return [];
+  const codes = [...(resultCodes.operations ?? [])];
+  if (resultCodes.transaction) codes.push(resultCodes.transaction);
+  return codes.filter((code) => code !== 'op_success');
+}
+
+function extractHttpStatus(err: ErrorLike): number | undefined {
+  const status = err.response?.status ?? err.response?.data?.status ?? err.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function classifyHttpStatus(status: number): RecurringPaymentFailureKind | undefined {
+  if (status === 408 || status === 425 || status === 429 || status >= 500) return 'TRANSIENT';
+  if (status >= 400) return 'PERMANENT';
+  return undefined;
+}
+
+/**
+ * Classifies a recurring payment failure as transient (worth retrying with
+ * backoff: network faults, timeouts, rate limits, Horizon 5xx) or permanent
+ * (will fail identically on retry: bad sequence, insufficient balance, invalid
+ * destination/asset, missing configuration).
+ *
+ * Errors that cannot be classified default to TRANSIENT so that retries stay
+ * bounded by RECURRING_PAYMENTS_MAX_RETRIES rather than dropping an occurrence
+ * on an unrecognised blip.
+ */
+export function classifyRecurringPaymentError(error: unknown, depth = 0): RecurringPaymentFailureKind {
+  if (error instanceof RecurringPaymentError) {
+    return 'PERMANENT';
+  }
+
+  if (!error || typeof error !== 'object' || depth > 3) {
+    return 'TRANSIENT';
+  }
+
+  const err = error as ErrorLike;
+
+  if (error instanceof BatchPaymentError) {
+    if (PERMANENT_BATCH_ERROR_TYPES.has(error.type)) return 'PERMANENT';
+    if (error.type === BatchErrorType.NETWORK_ERROR) return 'TRANSIENT';
+  }
+
+  const resultCodes = collectResultCodes(err);
+  if (resultCodes.some((code) => PERMANENT_RESULT_CODES.has(code))) return 'PERMANENT';
+  if (resultCodes.some((code) => TRANSIENT_RESULT_CODES.has(code))) return 'TRANSIENT';
+
+  const status = extractHttpStatus(err);
+  const statusKind = status !== undefined ? classifyHttpStatus(status) : undefined;
+  if (statusKind) return statusKind;
+
+  if (typeof err.code === 'string' && TRANSIENT_NETWORK_CODES.has(err.code)) return 'TRANSIENT';
+
+  // Unwrap errors that carry the underlying Horizon / network failure.
+  const inner = err.details?.error ?? err.cause;
+  if (inner && inner !== error) {
+    return classifyRecurringPaymentError(inner, depth + 1);
+  }
+
+  if (err.name === 'NotFoundError') return 'PERMANENT';
+
+  return 'TRANSIENT';
 }
 
 /** Fixed delay before retrying an insufficient-funds failure (issue #935). */
@@ -357,6 +490,25 @@ export class RecurringPaymentsService {
         // No status flip needed on the schedule — just record the run.
         const attempt = (currentSchedule.retryCount ?? 0) + 1;
 
+        // A run re-queued after a transient failure is picked up again rather
+        // than creating a new run row for the same occurrence.
+        const requeuedRun = await tx.recurringPaymentRun.findFirst({
+          where: { scheduleId: schedule.id, status: 'PENDING' },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (requeuedRun) {
+          return tx.recurringPaymentRun.update({
+            where: { id: requeuedRun.id },
+            data: {
+              status: 'PROCESSING',
+              attempt,
+              startedAt: new Date(),
+              finishedAt: null,
+            },
+          });
+        }
+
         const run = await tx.recurringPaymentRun.create({
           data: {
             schedule: {
@@ -382,7 +534,7 @@ export class RecurringPaymentsService {
       try {
         const sourceSecretKey = config.STELLAR_DISTRIBUTION_SECRET;
         if (!sourceSecretKey) {
-          throw new Error('STELLAR_DISTRIBUTION_SECRET is not configured');
+          throw new RecurringPaymentError('INVALID_CONFIG', 'STELLAR_DISTRIBUTION_SECRET is not configured');
         }
 
         // Pre-flight balance check before execution. Insufficient funds is
@@ -442,13 +594,15 @@ export class RecurringPaymentsService {
         const isInsufficientFunds =
           error instanceof RecurringPaymentError && error.type === 'INSUFFICIENT_FUNDS';
 
-        // Decide whether to retry this occurrence with exponential backoff or
-        // give up and defer to the next cron-scheduled run.
-        const shouldRetry = failedAttempt <= maxRetries;
+        // Only transient failures (network faults, timeouts, rate limits) are
+        // worth retrying; permanent ones (bad sequence, bad balance, invalid
+        // destination or config) would fail identically on every attempt.
+        const failureKind = classifyRecurringPaymentError(error);
+        const shouldRetry = failureKind === 'TRANSIENT' && failedAttempt <= maxRetries;
 
         let nextRunAt: Date;
         let nextRetryCount: number;
-        let runStatus: 'FAILED' | 'INSUFFICIENT_FUNDS' = 'FAILED';
+        let runStatus: 'FAILED' | 'INSUFFICIENT_FUNDS' | 'PENDING' = 'FAILED';
 
         if (isInsufficientFunds) {
           nextRunAt = new Date(now.getTime() + INSUFFICIENT_FUNDS_RETRY_MS);
@@ -462,10 +616,13 @@ export class RecurringPaymentsService {
             error: message,
           });
         } else if (shouldRetry) {
+          // Re-queue the run: it stays PENDING and is picked up again by the
+          // next tick once the backoff delay has elapsed.
           const delayMs = this.computeBackoffDelayMs(failedAttempt);
           nextRunAt = new Date(now.getTime() + delayMs);
           nextRetryCount = failedAttempt;
-          logger.warn('Recurring payment run failed; scheduling backoff retry', {
+          runStatus = 'PENDING';
+          logger.warn('Recurring payment run failed with a transient error; scheduling backoff retry', {
             scheduleId: schedule.id,
             runId: run.id,
             attempt: failedAttempt,
@@ -475,17 +632,24 @@ export class RecurringPaymentsService {
             error: message,
           });
         } else {
-          // Retries exhausted: reset state and wait for the next cron occurrence.
+          // Permanent failure or retries exhausted: mark FAILED, reset retry
+          // state and wait for the next cron occurrence.
           nextRunAt = this.computeNextRunAt(schedule.cron, now);
           nextRetryCount = 0;
-          logger.error('Recurring payment run failed; retries exhausted', {
-            scheduleId: schedule.id,
-            runId: run.id,
-            attempt: failedAttempt,
-            maxRetries,
-            nextRunAt: nextRunAt.toISOString(),
-            error: message,
-          });
+          logger.error(
+            failureKind === 'PERMANENT'
+              ? 'Recurring payment run failed with a permanent error; not retrying'
+              : 'Recurring payment run failed; retries exhausted',
+            {
+              scheduleId: schedule.id,
+              runId: run.id,
+              attempt: failedAttempt,
+              maxRetries,
+              failureKind,
+              nextRunAt: nextRunAt.toISOString(),
+              error: message,
+            }
+          );
         }
 
         await prisma.$transaction([
@@ -509,19 +673,22 @@ export class RecurringPaymentsService {
         ]);
 
         // Notify the user when a payment has failed twice consecutively.
-        const recentFailedRuns = await prisma.recurringPaymentRun.count({
-          where: {
-            scheduleId: schedule.id,
-            status: { in: ['FAILED', 'INSUFFICIENT_FUNDS'] },
-          },
-        });
+        // A re-queued transient failure is not yet a failed payment.
+        if (runStatus !== 'PENDING') {
+          const recentFailedRuns = await prisma.recurringPaymentRun.count({
+            where: {
+              scheduleId: schedule.id,
+              status: { in: ['FAILED', 'INSUFFICIENT_FUNDS'] },
+            },
+          });
 
-        if (recentFailedRuns >= FAILURE_NOTIFICATION_THRESHOLD) {
-          await notificationService.notify(
-            schedule.userId,
-            `Recurring payment of ${schedule.amount} ${schedule.assetCode} to ${schedule.destination} has failed ${recentFailedRuns} times. Please check your funding source.`,
-            run.id
-          );
+          if (recentFailedRuns >= FAILURE_NOTIFICATION_THRESHOLD) {
+            await notificationService.notify(
+              schedule.userId,
+              `Recurring payment of ${schedule.amount} ${schedule.assetCode} to ${schedule.destination} has failed ${recentFailedRuns} times. Please check your funding source.`,
+              run.id
+            );
+          }
         }
 
         processed += 1;

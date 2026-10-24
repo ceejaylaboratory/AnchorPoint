@@ -48,4 +48,48 @@ describe('WalletConnectModal', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('User rejected the request');
     expect(useWalletStore.getState().publicKey).toBeNull();
   });
+
+  it('clears the previous error as soon as a retry starts', async () => {
+    connectWallet.mockRejectedValueOnce(new Error('User rejected the request'));
+    let resolveRetry: (key: string) => void = () => {};
+    connectWallet.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+    render(<WalletConnectModal isOpen onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /freighter/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('User rejected the request');
+
+    fireEvent.click(screen.getByRole('button', { name: /albedo/i }));
+
+    // While the retry is pending, the stale error must already be gone.
+    await waitFor(() => expect(screen.getByText(/waiting for approval/i)).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    resolveRetry(PUBLIC_KEY);
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('replaces the old error with the new one when a retry also fails', async () => {
+    connectWallet
+      .mockRejectedValueOnce(new Error('User rejected the request'))
+      .mockRejectedValueOnce(new Error('Rabet is not installed'));
+    render(<WalletConnectModal isOpen onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /freighter/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('User rejected the request');
+
+    fireEvent.click(screen.getByRole('button', { name: /rabet/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Rabet is not installed'),
+    );
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.queryByText('User rejected the request')).toBeNull();
+  });
 });

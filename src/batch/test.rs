@@ -1,6 +1,9 @@
 #![cfg(test)]
 
-use super::{BatchExecutor, BatchExecutorClient, BatchResult, Call, CallWithRetry, OpStatus, RetryConfig, TransferOp};
+use super::{
+    checked_cost, BatchError, BatchExecutor, BatchExecutorClient, BatchOp, BatchResult, Call,
+    CallWithRetry, OpStatus, RetryConfig, TransferOp, MAX_ESTIMATE_OPS,
+};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, testutils::{Address as _, Events},
     token::StellarAssetClient, vec as svec, Env, IntoVal, Vec,
@@ -106,18 +109,20 @@ fn test_execute_batch() {
     let v1: u32 = results.get_unchecked(1).into_val(&env);
     assert_eq!(v0, 123u32);
     assert_eq!(v1, 456u32);
-    let events = env.events().all();
     assert_eq!(
-        events.get(events.len() - 1).unwrap(),
-        (
-            client.address.clone(),
-            svec![
-                &env,
-                symbol_short!("exec").into_val(&env),
-                symbol_short!("batch").into_val(&env),
-            ],
-            (caller, 0_u64, 2_u32).into_val(&env),
-        )
+        env.events().all().filter_by_contract(&client.address),
+        svec![
+            &env,
+            (
+                client.address.clone(),
+                svec![
+                    &env,
+                    symbol_short!("exec").into_val(&env),
+                    symbol_short!("batch").into_val(&env),
+                ],
+                (caller, 0_u64, 2_u32).into_val(&env),
+            )
+        ]
     );
 }
 
@@ -362,7 +367,8 @@ fn mint_and_setup_token(env: &Env, admin: &soroban_sdk::Address, amount: i128) -
 #[test]
 fn test_execute_transfers_success() {
     let env = Env::default();
-    env.mock_all_auths();
+    // `from` authorizes inside the nested token call, not at the root.
+    env.mock_all_auths_allowing_non_root_auth();
     let batch_client = setup(&env);
 
     let admin = soroban_sdk::Address::generate(&env);
@@ -388,7 +394,8 @@ fn test_execute_transfers_success() {
 #[test]
 fn test_execute_transfers_multiple_ops() {
     let env = Env::default();
-    env.mock_all_auths();
+    // `from` authorizes inside the nested token call, not at the root.
+    env.mock_all_auths_allowing_non_root_auth();
     let batch_client = setup(&env);
 
     let admin = soroban_sdk::Address::generate(&env);
@@ -467,4 +474,181 @@ fn test_execute_transfers_zero_amount_panics() {
 
     let caller = soroban_sdk::Address::generate(&env);
     batch_client.execute_transfers(&caller, &ops);
+}
+
+// ── estimate_batch ───────────────────────────────────────────────────────────
+
+fn increment_call(env: &Env, counter_id: &soroban_sdk::Address) -> Call {
+    Call {
+        contract: counter_id.clone(),
+        function: symbol_short!("increment"),
+        args: Vec::new(env),
+    }
+}
+
+#[test]
+fn test_estimate_batch_returns_per_op_and_total() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup(&env);
+    let mock_id = env.register(MockContract, ());
+    let token = soroban_sdk::Address::generate(&env);
+
+    let echo = Call {
+        contract: mock_id.clone(),
+        function: symbol_short!("echo"),
+        args: svec![&env, 7u32.into_val(&env)],
+    };
+    let ops = svec![
+        &env,
+        BatchOp::Call(echo.clone()),
+        BatchOp::RetryCall(CallWithRetry { call: echo, retry: default_retry(3) }),
+        BatchOp::Transfer(TransferOp {
+            token,
+            from: soroban_sdk::Address::generate(&env),
+            to: soroban_sdk::Address::generate(&env),
+            amount: 10,
+        }),
+    ];
+
+    let estimate = client.estimate_batch(&ops);
+    assert_eq!(estimate.ops.len(), 3);
+
+    let call = estimate.ops.get(0).unwrap();
+    let retry = estimate.ops.get(1).unwrap();
+    let transfer = estimate.ops.get(2).unwrap();
+    assert_eq!((call.index, retry.index, transfer.index), (0, 1, 2));
+    assert!(call.cpu_insns > 0 && call.mem_bytes > 0);
+    // A retried call is costed for every allowed attempt.
+    assert_eq!(retry.cpu_insns, call.cpu_insns * 3);
+    assert_eq!(retry.mem_bytes, call.mem_bytes * 3);
+
+    let op_cpu: u64 = estimate.ops.iter().map(|e| e.cpu_insns).sum();
+    let op_mem: u64 = estimate.ops.iter().map(|e| e.mem_bytes).sum();
+    // Totals include a fixed per-batch overhead on top of the per-op sum.
+    assert!(estimate.total_cpu_insns > op_cpu);
+    assert!(estimate.total_mem_bytes > op_mem);
+}
+
+#[test]
+fn test_estimate_batch_scales_with_args() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup(&env);
+    let mock_id = env.register(MockContract, ());
+    let call = |args: Vec<soroban_sdk::Val>| Call {
+        contract: mock_id.clone(),
+        function: symbol_short!("echo"),
+        args,
+    };
+    let small = client.estimate_batch(&svec![&env, BatchOp::Call(call(Vec::new(&env)))]);
+    let large = client.estimate_batch(&svec![
+        &env,
+        BatchOp::Call(call(svec![&env, 1u32.into_val(&env), 2u32.into_val(&env)]))
+    ]);
+    assert!(large.total_cpu_insns > small.total_cpu_insns);
+    assert!(large.total_mem_bytes > small.total_mem_bytes);
+}
+
+#[test]
+fn test_estimate_batch_does_not_execute_or_bump_nonce() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup(&env);
+    let counter_id = env.register(CounterContract, ());
+    let counter = CounterContractClient::new(&env, &counter_id);
+    let caller = soroban_sdk::Address::generate(&env);
+
+    let ops = svec![
+        &env,
+        BatchOp::Call(increment_call(&env, &counter_id)),
+        BatchOp::RetryCall(CallWithRetry {
+            call: increment_call(&env, &counter_id),
+            retry: default_retry(2),
+        }),
+    ];
+    client.estimate_batch(&ops);
+
+    // No target call was made and no nonce was consumed.
+    assert_eq!(counter.get_count(), 0);
+    assert_eq!(client.get_nonce(&caller), 0);
+    // No authorization was required for the estimate.
+    assert!(env.auths().is_empty());
+}
+
+#[test]
+fn test_estimate_batch_rejects_self_call() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup(&env);
+    let ops = svec![
+        &env,
+        BatchOp::Call(Call {
+            contract: client.address.clone(),
+            function: symbol_short!("get_nonce"),
+            args: Vec::new(&env),
+        })
+    ];
+    assert_eq!(
+        client.try_estimate_batch(&ops),
+        Err(Ok(BatchError::UnsupportedOperation.into()))
+    );
+}
+
+#[test]
+fn test_estimate_batch_rejects_non_positive_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup(&env);
+    let ops = svec![
+        &env,
+        BatchOp::Transfer(TransferOp {
+            token: soroban_sdk::Address::generate(&env),
+            from: soroban_sdk::Address::generate(&env),
+            to: soroban_sdk::Address::generate(&env),
+            amount: 0,
+        })
+    ];
+    assert_eq!(
+        client.try_estimate_batch(&ops),
+        Err(Ok(BatchError::UnsupportedOperation.into()))
+    );
+}
+
+#[test]
+fn test_estimate_batch_rejects_invalid_size() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = setup(&env);
+    let mock_id = env.register(MockContract, ());
+
+    assert_eq!(
+        client.try_estimate_batch(&Vec::new(&env)),
+        Err(Ok(BatchError::InvalidBatchSize.into()))
+    );
+
+    let mut ops = Vec::new(&env);
+    for _ in 0..=MAX_ESTIMATE_OPS {
+        ops.push_back(BatchOp::Call(Call {
+            contract: mock_id.clone(),
+            function: symbol_short!("echo"),
+            args: Vec::new(&env),
+        }));
+    }
+    assert_eq!(
+        client.try_estimate_batch(&ops),
+        Err(Ok(BatchError::InvalidBatchSize.into()))
+    );
+}
+
+#[test]
+#[should_panic(expected = "estimate overflow")]
+fn test_estimate_cost_panics_on_mul_overflow() {
+    checked_cost(u64::MAX, 2, 0);
+}
+
+#[test]
+#[should_panic(expected = "estimate overflow")]
+fn test_estimate_cost_panics_on_add_overflow() {
+    checked_cost(u64::MAX, 1, 1);
 }

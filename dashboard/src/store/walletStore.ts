@@ -127,5 +127,103 @@ export const usePreferencesStore = create<PreferencesState>()(
   )
 );
 
+// ── Notification Preferences Store (#1491) ─────────────────────────────────────
+//
+// Persists notification channel settings. Transient UI state (loading, saving,
+// error) is intentionally excluded from persistence via `partialize`.
+
+export interface NotificationPreferences {
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  pushEnabled: boolean;
+  phone: string;
+}
+
+type NotificationPrefsState = {
+  /** Persisted notification channel preferences. */
+  notificationPrefs: NotificationPreferences;
+  /** Transient: whether preferences are being fetched from the server. */
+  isLoading: boolean;
+  /** Transient: whether a save is in flight. */
+  isSaving: boolean;
+  /** Transient: last error message, if any. */
+  saveError: string | null;
+
+  setEmailEnabled: (enabled: boolean) => void;
+  setSmsEnabled: (enabled: boolean) => void;
+  setPushEnabled: (enabled: boolean) => void;
+  setPhone: (phone: string) => void;
+  setNotificationPrefs: (prefs: Partial<NotificationPreferences>) => void;
+  resetNotificationPrefs: () => void;
+
+  // Transient state setters (not persisted)
+  setIsLoading: (loading: boolean) => void;
+  setIsSaving: (saving: boolean) => void;
+  setSaveError: (error: string | null) => void;
+};
+
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  emailEnabled: true,
+  smsEnabled: false,
+  pushEnabled: false,
+  phone: '',
+};
+
+export const useNotificationPrefsStore = create<NotificationPrefsState>()(
+  persist(
+    (set) => ({
+      notificationPrefs: DEFAULT_NOTIFICATION_PREFERENCES,
+
+      // Transient state — reset to safe defaults on hydration
+      isLoading: false,
+      isSaving: false,
+      saveError: null,
+
+      setEmailEnabled: (emailEnabled) =>
+        set((state) => ({
+          notificationPrefs: { ...state.notificationPrefs, emailEnabled },
+        })),
+
+      setSmsEnabled: (smsEnabled) =>
+        set((state) => ({
+          notificationPrefs: { ...state.notificationPrefs, smsEnabled },
+        })),
+
+      setPushEnabled: (pushEnabled) =>
+        set((state) => ({
+          notificationPrefs: { ...state.notificationPrefs, pushEnabled },
+        })),
+
+      setPhone: (phone) =>
+        set((state) => ({
+          notificationPrefs: { ...state.notificationPrefs, phone },
+        })),
+
+      setNotificationPrefs: (prefs) =>
+        set((state) => ({
+          notificationPrefs: { ...state.notificationPrefs, ...prefs },
+        })),
+
+      resetNotificationPrefs: () =>
+        set(() => ({
+          notificationPrefs: DEFAULT_NOTIFICATION_PREFERENCES,
+        })),
+
+      setIsLoading: (isLoading) => set({ isLoading }),
+      setIsSaving: (isSaving) => set({ isSaving }),
+      setSaveError: (saveError) => set({ saveError }),
+    }),
+    {
+      name: 'notification-prefs-storage',
+      storage: createJSONStorage(() => createSecureStorage('notification-prefs')),
+      // Persist only the notification channel preferences; exclude all
+      // transient UI state so it never leaks into localStorage.
+      partialize: (state) => ({
+        notificationPrefs: state.notificationPrefs,
+      }),
+    }
+  )
+);
+
 // Re-export DEFAULT_EXCLUDE_KEYS for testing
 export { DEFAULT_EXCLUDE_KEYS };

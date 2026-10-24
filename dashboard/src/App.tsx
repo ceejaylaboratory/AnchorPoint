@@ -20,17 +20,20 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { Sidebar } from './components/Sidebar';
+import { Breadcrumbs } from './components/Breadcrumbs';
 import { NotificationBell } from './components/NotificationBell';
 import { StatusBanner } from './components/StatusBanner';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { WalletModal } from './components/WalletModal';
 import { NetworkSelector, NetworkBanner } from './components/NetworkSelector';
+import { NetworkFeeIndicator } from './components/NetworkFeeIndicator';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { SessionTimeoutModal } from './components/Auth/SessionTimeoutModal';
 import { WalletManager } from './lib/wallet';
 import { I18nProvider, useTranslation, type Language } from './i18n/config';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { ToastContainer, useToastQueue } from './components/NotificationCenter';
 
 export { useTheme };
 
@@ -329,6 +332,36 @@ const AppShell = () => {
     await handleConnectWallet(walletId);
   };
 
+  // Breadcrumb trail for every view (deep views included). Parent crumbs are
+  // clickable via SPA state navigation; the current page crumb is plain text.
+  const tabLabels: Record<string, string> = {
+    dashboard: 'Dashboard',
+    deposit: 'Deposit',
+    withdraw: 'Withdraw',
+    history: 'Transaction History',
+    sep38: 'SEP-38 Quotes',
+    status: 'Service Status',
+    notifications: 'Notifications',
+    'notification-preferences': 'Notification Preferences',
+    'contract-playground': 'Contract Playground',
+    kyc: 'KYC Status',
+    settings: 'Settings',
+  };
+  const currentLabel = tabLabels[activeTab] ?? activeTab;
+  const crumbs =
+    activeTab === 'dashboard'
+      ? [{ label: 'Dashboard' }]
+      : activeTab === 'notification-preferences'
+        ? [
+            { label: 'Dashboard', onClick: () => setActiveTab('dashboard') },
+            { label: 'Notifications', onClick: () => setActiveTab('notifications') },
+            { label: currentLabel },
+          ]
+        : [
+            { label: 'Dashboard', onClick: () => setActiveTab('dashboard') },
+            { label: currentLabel },
+          ];
+
   return (
     <div
       className="min-h-screen flex"
@@ -399,6 +432,7 @@ const AppShell = () => {
                 {loadingState === 'error' ? 'Fallback Theme Active' : 'Config Connected'}
               </span>
             </div>
+            <NetworkFeeIndicator apiBaseUrl={apiBaseUrl} />
             <NotificationBell
               apiBaseUrl={apiBaseUrl}
               onViewAll={() => setActiveTab('notifications')}
@@ -495,6 +529,10 @@ const AppShell = () => {
 
           <StatusBanner apiBaseUrl={apiBaseUrl} />
 
+          <div data-testid="app-breadcrumbs" className="mb-4">
+            <Breadcrumbs crumbs={crumbs} titleSuffix="AnchorPoint" />
+          </div>
+
           <AnimatePresence mode="wait">
             <motion.div
               data-testid="active-view"
@@ -508,8 +546,8 @@ const AppShell = () => {
                 {activeTab === 'dashboard' && (
                   <DashboardOverview uiConfig={uiConfig} isLoading={loadingState === 'loading'} />
                 )}
-                {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />}
-                {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />}
+                {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}
+                {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}
                 {activeTab === 'history' && <TransactionHistory />}
                 {activeTab === 'sep38' && <Sep38QuotePanel />}
                 {activeTab === 'status' && <ServiceStatusPanel />}
@@ -566,11 +604,32 @@ const ThemeToggle = () => {
   );
 };
 
+/**
+ * Global toast stack rendered at the application root so that any component
+ * in the tree can dispatch toasts without prop-drilling.
+ *
+ * The queue is managed by `useToastQueue` from NotificationCenter. Async
+ * operations throughout the app import `useToastQueue` or consume the context
+ * created here to push feedback to this stack.
+ */
+const ToastStack: React.FC = () => {
+  const { toasts, push: _push, dismiss, pause, resume } = useToastQueue();
+  return (
+    <ToastContainer
+      toasts={toasts}
+      onDismiss={dismiss}
+      onPause={pause}
+      onResume={resume}
+    />
+  );
+};
+
 const AppRoot = () => (
   <ThemeProvider>
     <I18nProvider>
       <NetworkProvider apiBaseUrl={apiBaseUrl}>
         <App />
+        <ToastStack />
       </NetworkProvider>
     </I18nProvider>
   </ThemeProvider>

@@ -14,11 +14,13 @@ export class MetricsService {
   private sep38QuoteDuration: Histogram<string>;
   private dbConnectionsActive: Gauge<string>;
   private dbConnectionsLimit: Gauge<string>;
+  private dbPoolConnectionsActive: Gauge<string>;
   private sepTransactionsTotal: Counter<string>;
   private sepTransactionDuration: Histogram<string>;
   private kycVerificationTotal: Counter<string>;
   private transactionReconciliationTotal: Counter<string>;
   private sepFlowDuration: Histogram<string>;
+  private batchPaymentOperationsTotal: Counter<string>;
 
   constructor() {
     this.registry = new promClient.Registry();
@@ -131,6 +133,13 @@ export class MetricsService {
       registers: [this.registry],
     });
 
+    this.dbPoolConnectionsActive = new promClient.Gauge({
+      name: 'db_pool_connections_active',
+      help: 'Number of active connections in the database connection pool',
+      labelNames: ['pool'] as const,
+      registers: [this.registry],
+    });
+
     // SEP Transaction Volume & Latency Metrics (Issue #917)
     this.sepTransactionsTotal = new promClient.Counter({
       name: 'anchor_sep_transactions_total',
@@ -170,6 +179,15 @@ export class MetricsService {
       buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
       registers: [this.registry],
     });
+
+    // #1521: Batch payment counters keyed by batch_id so each batch's metrics
+    // can be inspected independently. Avoids cumulative drift across batches.
+    this.batchPaymentOperationsTotal = new promClient.Counter({
+      name: 'anchor_batch_payment_operations_total',
+      help: 'Total number of payment operations processed per batch, labelled by batch_id, asset_code, and status',
+      labelNames: ['batch_id', 'asset_code', 'status'] as const,
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -205,6 +223,16 @@ export class MetricsService {
    */
   observeSepFlowDuration(sep: string, operation: string, status: string, durationSeconds: number): void {
     this.sepFlowDuration.observe({ sep, operation, status }, durationSeconds);
+  }
+
+  /**
+   * #1521: Increment the per-batch payment operations counter.
+   *
+   * Using a batch_id label ensures that counters are scoped to the current
+   * batch and do not accumulate misleadingly across batches.
+   */
+  incrementBatchPaymentOperation(batchId: string, assetCode: string, status: string): void {
+    this.batchPaymentOperationsTotal.inc({ batch_id: batchId, asset_code: assetCode, status });
   }
 
   /**
@@ -293,6 +321,13 @@ export class MetricsService {
    */
   setDbConnectionsLimit(limit: number, pool = 'default'): void {
     this.dbConnectionsLimit.set({ pool }, limit);
+  }
+
+  /**
+   * Set the number of active connections in the database connection pool.
+   */
+  setDbPoolConnectionsActive(count: number, pool = 'default'): void {
+    this.dbPoolConnectionsActive.set({ pool }, count);
   }
 
   /**

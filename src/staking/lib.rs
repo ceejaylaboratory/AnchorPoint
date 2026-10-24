@@ -26,10 +26,6 @@ pub enum DataKey {
 pub struct LockTier {
     pub lock_seconds: u64,
     pub rate_multiplier: i128, // e.g. 100 = 1x, 150 = 1.5x, 200 = 2x (scaled by 100)
-    /// Equivalent lock duration expressed in ledger sequences. Used for the
-    /// `stake_ledger`-based unlock check so that the lock cannot be shortened
-    /// by changing the ledger close time after a stake is recorded.
-    pub lock_ledgers: u32,
 }
 
 #[contracttype]
@@ -40,12 +36,11 @@ pub struct StakeInfo {
     pub accumulated_rewards: i128,
     pub lock_end: u64,
     pub rate_multiplier: i128,
-    /// Ledger sequence number at which this stake position was last opened or
-    /// extended. Used together with `LockTier::lock_ledgers` so the unlock
-    /// window is anchored to the ledger at stake time rather than re-evaluated
-    /// against the current sequence, which prevents users from bypassing the
-    /// lock by triggering a lock-period change after they stake.
+    /// Ledger sequence at which the current lock started.
     pub stake_ledger: u32,
+    /// Lock length in ledgers, fixed at stake time so later tier changes do
+    /// not move an existing stake's unlock date.
+    pub lock_ledgers: u32,
 }
 
 /// Dynamic emission (APR) scaling parameters.
@@ -69,6 +64,8 @@ pub struct EmissionParams {
 const REWARD_PRECISION: i128 = 10_000_000;
 const BPS: i128 = 10_000;
 const SECONDS_PER_YEAR: u64 = 365 * 24 * 3600;
+/// Average Stellar ledger close time, used to convert tier lock durations.
+const SECONDS_PER_LEDGER: u64 = 5;
 
 /// Default capacity: 100_000 tokens at 7 decimals.
 const DEFAULT_TARGET_CAPACITY: i128 = 1_000_000_000_000;
@@ -121,28 +118,23 @@ impl StakingContract {
             .set(&DataKey::EmissionParams, &default_emission_params());
 
         // Default tiers: 1 month (1x), 3 months (1.25x), 6 months (1.5x), 12 months (2x)
-        // lock_ledgers assumes ~5-second ledger close times (Stellar mainnet average).
         let default_tiers: Vec<LockTier> = vec![
             &env,
             LockTier {
                 lock_seconds: 30 * 24 * 3600,
                 rate_multiplier: 100,
-                lock_ledgers: 518_400,   // ~30 days at 5s/ledger
             },
             LockTier {
                 lock_seconds: 90 * 24 * 3600,
                 rate_multiplier: 125,
-                lock_ledgers: 1_555_200, // ~90 days
             },
             LockTier {
                 lock_seconds: 180 * 24 * 3600,
                 rate_multiplier: 150,
-                lock_ledgers: 3_110_400, // ~180 days
             },
             LockTier {
                 lock_seconds: 365 * 24 * 3600,
                 rate_multiplier: 200,
-                lock_ledgers: 6_307_200, // ~365 days
             },
         ];
         env.storage()
@@ -276,6 +268,7 @@ impl StakingContract {
 
         let mut info = Self::get_stake_info(env.clone(), user.clone());
         let current_time = env.ledger().timestamp();
+        let current_ledger = env.ledger().sequence();
 
         // Accrue on the pre-deposit pool size, then grow the pool.
         info.accumulated_rewards = info
@@ -292,10 +285,8 @@ impl StakingContract {
         if new_lock_end > info.lock_end {
             info.lock_end = new_lock_end;
             info.rate_multiplier = tier.rate_multiplier;
-            // Record the ledger sequence at which this lock window begins so
-            // `withdraw` can compare against `stake_ledger + lock_ledgers`
-            // rather than re-reading the current sequence at check time.
-            info.stake_ledger = env.ledger().sequence();
+            info.stake_ledger = current_ledger;
+            info.lock_ledgers = lock_seconds_to_ledgers(tier.lock_seconds);
         }
 
         let total_staked = Self::total_staked(env.clone())
@@ -350,28 +341,7 @@ impl StakingContract {
         let mut amount_to_return = info.amount;
         let mut penalty = 0_i128;
 
-        // Dual unlock guard: the position is only penalty-free when *both*
-        // the timestamp window (lock_end) and the ledger-sequence window
-        // (stake_ledger + lock_ledgers for the chosen tier) have elapsed.
-        // Using the stake-time ledger value prevents a user from shortening
-        // their effective lock by triggering an admin lock-period change after
-        // they already staked (issue #1537).
-        let tiers_for_check: Vec<LockTier> = env.storage().instance().get(&DataKey::Tiers).unwrap();
-        let lock_ledgers = tiers_for_check
-            .iter()
-            .find(|t| t.rate_multiplier == info.rate_multiplier)
-            .map(|t| t.lock_ledgers)
-            .unwrap_or(0);
-        let current_ledger = env.ledger().sequence();
-        // Skip the ledger check only when the tier carries no ledger data
-        // (lock_ledgers == 0). This keeps backward-compat with tier configs
-        // that predate the field. When lock_ledgers > 0 the check is always
-        // enforced, even for positions whose stake_ledger happens to be 0.
-        let ledger_lock_elapsed = lock_ledgers == 0
-            || current_ledger.saturating_sub(info.stake_ledger) >= lock_ledgers;
-        let time_lock_elapsed = current_time >= info.lock_end;
-
-        if !time_lock_elapsed || !ledger_lock_elapsed {
+        if !Self::is_unlocked(&env, &info) {
             let penalty_bps: i128 = env.storage().instance().get(&DataKey::PenaltyBps).unwrap();
             penalty = amount_to_return
                 .checked_mul(penalty_bps)
@@ -454,7 +424,7 @@ impl StakingContract {
         token_client.transfer(&env.current_contract_address(), &user, &rewards);
 
         env.events()
-            .publish((symbol_short!("claim"), user), rewards);
+            .publish((symbol_short!("claim"), user.clone()), rewards);
         env.events().publish(
             (symbol_short!("staking"), symbol_short!("claim")),
             (user, rewards),
@@ -512,7 +482,20 @@ impl StakingContract {
                 lock_end: 0,
                 rate_multiplier: 100,
                 stake_ledger: 0,
+                lock_ledgers: 0,
             })
+    }
+
+    /// Whether `user`'s stake can be withdrawn without the early-exit penalty.
+    pub fn is_stake_unlocked(env: Env, user: Address) -> bool {
+        let info = Self::get_stake_info(env.clone(), user);
+        Self::is_unlocked(&env, &info)
+    }
+
+    /// Unlock is measured from the ledger recorded at stake time, never from
+    /// the tiers configured now.
+    fn is_unlocked(env: &Env, info: &StakeInfo) -> bool {
+        env.ledger().sequence().saturating_sub(info.stake_ledger) >= info.lock_ledgers
     }
 
     pub fn pending_rewards(env: Env, user: Address) -> i128 {
@@ -587,6 +570,11 @@ impl StakingContract {
     }
 }
 
+fn lock_seconds_to_ledgers(lock_seconds: u64) -> u32 {
+    let ledgers = lock_seconds.div_ceil(SECONDS_PER_LEDGER);
+    u32::try_from(ledgers).expect("lock too long")
+}
+
 fn default_emission_params() -> EmissionParams {
     EmissionParams {
         target_capacity: DEFAULT_TARGET_CAPACITY,
@@ -655,12 +643,6 @@ mod tests {
             LockTier {
                 lock_seconds: 3600,
                 rate_multiplier: 100,
-                lock_ledgers: 720, // 3600s / 5s per ledger
-            },
-            LockTier {
-                lock_seconds: 7200,
-                rate_multiplier: 125,
-                lock_ledgers: 1440, // 7200s / 5s per ledger
             },
         ];
         client.set_tiers(&test_tiers);
@@ -725,6 +707,56 @@ mod tests {
     }
 
     #[test]
+    fn test_stake_records_stake_ledger() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        mint(&env, &token_id, &user, 10_000);
+        env.ledger().set_sequence_number(1_000);
+
+        client.stake(&user, &1_000, &0);
+
+        let info = client.get_stake_info(&user);
+        assert_eq!(info.stake_ledger, 1_000);
+        assert_eq!(info.lock_ledgers, 3600 / 5);
+        assert!(!client.is_stake_unlocked(&user));
+    }
+
+    #[test]
+    fn test_unlock_uses_lock_fixed_at_stake_time() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let token_client = TokenClient::new(&env, &token_id);
+        mint(&env, &token_id, &user, 10_000);
+        fund_rewards(&env, &client, &token_id, 1_000_000);
+        client.set_penalty_recipient(&recipient);
+        env.ledger().set_sequence_number(1_000);
+
+        client.stake(&user, &1_000, &0);
+
+        // Admin lengthens the lock period after the user has staked.
+        client.set_tiers(&vec![
+            &env,
+            LockTier {
+                lock_seconds: 365 * 24 * 3600,
+                rate_multiplier: 100,
+            },
+        ]);
+
+        let lock_ledgers = 3600 / 5;
+        env.ledger().set_sequence_number(1_000 + lock_ledgers - 1);
+        assert!(!client.is_stake_unlocked(&user));
+
+        // Unlocks on the original schedule, not the new tier's.
+        env.ledger().set_sequence_number(1_000 + lock_ledgers);
+        assert!(client.is_stake_unlocked(&user));
+
+        client.withdraw(&user);
+        assert_eq!(token_client.balance(&recipient), 0);
+        assert!(token_client.balance(&user) >= 10_000);
+    }
+
+    #[test]
     fn test_withdraw_with_penalty() {
         let (env, client, _admin, token_id) = setup();
         let user = Address::generate(&env);
@@ -752,12 +784,9 @@ mod tests {
         fund_rewards(&env, &client, &token_id, 1_000_000);
 
         client.stake(&user, &1_000, &0);
-        // Advance both the timestamp past lock_end AND the ledger sequence
-        // past lock_ledgers (720) so the dual unlock guard is satisfied.
-        env.ledger().with_mut(|li| {
-            li.timestamp = START_TIME + 40 * 24 * 3600; // past the lock
-            li.sequence_number = 721; // past stake_ledger(0) + lock_ledgers(720)
-        });
+        env.ledger().set_timestamp(START_TIME + 40 * 24 * 3600); // past the lock
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 40 * 24 * 3600 / 5);
 
         client.withdraw(&user);
 
@@ -1039,10 +1068,6 @@ mod tests {
     fn test_set_emission_params_rejects_inverted_band() {
         let (_env, client, _admin, _token_id) = setup();
         client.set_emission_params(&params(CAPACITY, 20_000, 5_000));
-        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
-        stellar_asset_client.mint(&user, &10000);
-        client.stake(&user, &1000, &0);
-        client.claim_rewards(&user);
     }
 
     #[test]
@@ -1096,12 +1121,10 @@ mod tests {
             LockTier {
                 lock_seconds: 3600,
                 rate_multiplier: 100,
-                lock_ledgers: 720,
             },
             LockTier {
                 lock_seconds: 3600,
                 rate_multiplier: 125,
-                lock_ledgers: 720,
             },
         ];
         client.set_tiers(&tiers);
@@ -1128,12 +1151,10 @@ mod tests {
         client.stake(&user, &1000, &0);
         let lock_end = env.ledger().timestamp() + 3600;
 
-        // Advance both the timestamp exactly to lock_end and the ledger
-        // sequence past lock_ledgers (720) so neither unlock condition fails.
-        env.ledger().with_mut(|li| {
-            li.timestamp = lock_end;
-            li.sequence_number = 721; // past stake_ledger(0) + lock_ledgers(720)
-        });
+        // Advance exactly to lock_end (not beyond): no penalty applies
+        env.ledger().set_timestamp(lock_end);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 3600 / 5);
         stellar_asset_client.mint(&client.address, &400);
 
         client.withdraw(&user);
@@ -1227,99 +1248,5 @@ mod tests {
 
         client.set_penalty_pool(&penalty_pool);
         client.emergency_withdraw(&user);
-    }
-
-    // ---- #1537 regression: stake_ledger anchors unlock to stake time --------
-
-    /// The unlock check must use the ledger sequence recorded *at stake time*
-    /// (`stake_ledger`), not the sequence at withdraw time.  Verify that
-    /// `stake_ledger` is stored when a position is opened.
-    #[test]
-    fn test_stake_records_stake_ledger() {
-        let (env, client, _admin, token_id) = setup();
-        let user = Address::generate(&env);
-        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
-        stellar_asset_client.mint(&user, &10000);
-
-        // Advance the ledger sequence before staking so we have a non-zero value.
-        env.ledger().with_mut(|li| {
-            li.sequence_number = 1000;
-        });
-
-        client.stake(&user, &1000, &0);
-
-        let info = client.get_stake_info(&user);
-        assert_eq!(
-            info.stake_ledger, 1000,
-            "stake_ledger must be recorded as the ledger sequence at stake time"
-        );
-    }
-
-    /// Advancing the timestamp past `lock_end` but NOT the ledger sequence past
-    /// `stake_ledger + lock_ledgers` must still apply a penalty (both conditions
-    /// must be met for a penalty-free withdraw).
-    #[test]
-    fn test_withdraw_penalised_when_ledger_lock_not_elapsed() {
-        let (env, client, _admin, token_id) = setup();
-        let user = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        let token_client = token::Client::new(&env, &token_id);
-        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
-        stellar_asset_client.mint(&user, &10000);
-
-        client.set_penalty_recipient(&recipient);
-
-        // Stake at ledger sequence 0, timestamp START_TIME.
-        client.stake(&user, &1000, &0); // tier 0: lock_ledgers = 720
-
-        // Advance timestamp past lock_end so the time check passes...
-        env.ledger().with_mut(|li| {
-            li.timestamp = START_TIME + 3601;
-            // ...but keep the ledger sequence at 0 so the ledger check fails.
-            li.sequence_number = 0;
-        });
-
-        client.withdraw(&user);
-
-        // Penalty must have been applied because ledger lock has not elapsed.
-        // 10% of 1000 = 100 penalty; user gets 900 back.
-        assert_eq!(
-            token_client.balance(&user),
-            9000 + 900,
-            "penalty must be applied when ledger lock has not elapsed"
-        );
-        assert_eq!(token_client.balance(&recipient), 100);
-    }
-
-    /// When both the timestamp and ledger-sequence lock windows have elapsed,
-    /// no penalty is applied.
-    #[test]
-    fn test_withdraw_penalty_free_when_both_locks_elapsed() {
-        let (env, client, _admin, token_id) = setup();
-        let user = Address::generate(&env);
-        let token_client = token::Client::new(&env, &token_id);
-        let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
-        stellar_asset_client.mint(&user, &10000);
-        // Fund the contract with enough to cover rewards.
-        stellar_asset_client.mint(&client.address, &10000);
-
-        // Stake at ledger 0, time START_TIME; tier 0 → lock_ledgers = 720.
-        client.stake(&user, &1000, &0);
-
-        // Advance both clocks past their respective lock windows.
-        env.ledger().with_mut(|li| {
-            li.timestamp = START_TIME + 3601;   // past lock_end
-            li.sequence_number = 721;           // past stake_ledger(0) + lock_ledgers(720)
-        });
-
-        client.withdraw(&user);
-
-        // No penalty: full principal returned (rewards may vary).
-        let balance = token_client.balance(&user);
-        assert!(
-            balance >= 9000 + 1000,
-            "no penalty expected when both locks have elapsed, got balance {}",
-            balance
-        );
     }
 }

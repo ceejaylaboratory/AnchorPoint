@@ -4,6 +4,7 @@ import {
   StakingCalculator,
   calculateEstimatedApy,
   calculateProjectedRewards,
+  normalizeDepositAmount,
 } from './StakingCalculator';
 
 describe('StakingCalculator math', () => {
@@ -16,6 +17,20 @@ describe('StakingCalculator math', () => {
   it('prorates rewards by APY and lock duration', () => {
     expect(calculateProjectedRewards(10_000, 365)).toBe(1_008);
     expect(calculateProjectedRewards(10_000, 90)).toBe(159.78);
+  });
+
+  it('returns zero rewards for a zero, negative or non-numeric stake', () => {
+    expect(calculateProjectedRewards(0, 365)).toBe(0);
+    expect(calculateProjectedRewards(-500, 90)).toBe(0);
+    expect(calculateProjectedRewards(Number.NaN, 30)).toBe(0);
+    expect(calculateProjectedRewards(Number.POSITIVE_INFINITY, 30)).toBe(0);
+  });
+
+  it('normalizes unusable deposit amounts to zero', () => {
+    expect(normalizeDepositAmount(0)).toBe(0);
+    expect(normalizeDepositAmount(-1)).toBe(0);
+    expect(normalizeDepositAmount(Number.NaN)).toBe(0);
+    expect(normalizeDepositAmount(2_500)).toBe(2_500);
   });
 });
 
@@ -48,5 +63,26 @@ describe('StakingCalculator component', () => {
     expect(screen.getByRole('radio', { name: '365d' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByText('10.08%')).toBeInTheDocument();
     expect(screen.getByText('252.00')).toBeInTheDocument();
+  });
+
+  it('renders zeros instead of NaN when the stake is 0', () => {
+    const { container } = render(<StakingCalculator />);
+
+    fireEvent.change(screen.getByRole('slider', { name: /deposit amount/i }), {
+      target: { value: '0' },
+    });
+
+    expect(container.textContent).not.toMatch(/NaN/);
+    expect(screen.getAllByText('0.00')).toHaveLength(2);
+  });
+
+  it('renders zeros instead of NaN when the stake is not a number', () => {
+    const { container } = render(<StakingCalculator />);
+
+    fireEvent.change(screen.getByRole('slider', { name: /deposit amount/i }), {
+      target: { value: '' },
+    });
+
+    expect(container.textContent).not.toMatch(/NaN/);
   });
 });

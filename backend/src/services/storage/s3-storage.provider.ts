@@ -1,6 +1,7 @@
 import { S3Client, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { StorageProvider } from './storage-provider.interface';
+import { UploadStorageError, isStorageNotFoundError } from '../upload-store.service';
 
 export class S3StorageProvider implements StorageProvider {
   private client: S3Client;
@@ -23,15 +24,22 @@ export class S3StorageProvider implements StorageProvider {
       Key: key,
       ContentType: contentType,
     });
-    return getSignedUrl(this.client, command, { expiresIn });
+    try {
+      return await getSignedUrl(this.client, command, { expiresIn });
+    } catch (error) {
+      throw new UploadStorageError('generatePresignedPutUrl', error);
+    }
   }
 
   async objectExists(key: string): Promise<boolean> {
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isStorageNotFoundError(error)) {
+        return false;
+      }
+      throw new UploadStorageError('objectExists', error);
     }
   }
 }

@@ -26,13 +26,21 @@ interface ModalProps {
   children?: ReactNode;
   /** Rendered in the button row at the bottom of the dialog. */
   footer?: ReactNode;
-  /** Invoked on Escape, backdrop click, and the close button. */
+  /** Invoked on Escape, backdrop click, and the close button (unless `preventClose` is set). */
   onClose: () => void;
   size?: 'sm' | 'md' | 'lg';
   /** Hide the visual heading while keeping the dialog's accessible name. */
   hideTitle?: boolean;
   /** Set to false for dialogs that must be dismissed via an explicit action. */
   closeOnBackdropClick?: boolean;
+  /**
+   * While true, Escape, backdrop clicks and the close button do not dismiss the
+   * dialog (e.g. during an in-flight upload); `onCloseBlocked` is called instead
+   * so the owner can ask the user to confirm.
+   */
+  preventClose?: boolean;
+  /** Invoked instead of `onClose` when a close is attempted while `preventClose` is set. */
+  onCloseBlocked?: () => void;
   /** Icon shown to the left of the title. */
   icon?: ReactNode;
 }
@@ -60,12 +68,22 @@ export const Modal = ({
   size = 'md',
   hideTitle = false,
   closeOnBackdropClick = true,
+  preventClose = false,
+  onCloseBlocked,
   icon,
 }: ModalProps) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const descriptionId = useId();
+
+  const requestClose = useCallback(() => {
+    if (preventClose) {
+      onCloseBlocked?.();
+      return;
+    }
+    onClose();
+  }, [preventClose, onCloseBlocked, onClose]);
 
   const getFocusable = useCallback(() => {
     const root = dialogRef.current;
@@ -106,7 +124,7 @@ export const Modal = ({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        requestClose();
         return;
       }
 
@@ -135,7 +153,7 @@ export const Modal = ({
 
     document.addEventListener('keydown', handleKeyDown, true);
     return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, onClose, getFocusable]);
+  }, [isOpen, requestClose, getFocusable]);
 
   // Lock background scroll so the trapped dialog is the only scrollable surface.
   useEffect(() => {
@@ -156,7 +174,7 @@ export const Modal = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={closeOnBackdropClick ? onClose : undefined}
+            onClick={closeOnBackdropClick ? requestClose : undefined}
             className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
             aria-hidden="true"
           />
@@ -176,7 +194,7 @@ export const Modal = ({
           >
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className="absolute right-4 top-4 rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
               aria-label={`Close ${title}`}
             >

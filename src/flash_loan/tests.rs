@@ -1095,4 +1095,108 @@ mod tests {
 
         provider_client.flash_loan(&receiver_id2, &token_id, &amount);
     }
+
+    // -------------------------------------------------------------------------
+    // Pause / Unpause tests
+    // -------------------------------------------------------------------------
+
+    /// Helper: register a provider with an admin so pause/unpause can be tested.
+    fn setup_with_admin(env: &Env) -> (Address, Address, Address, FlashLoanProviderClient<'static>) {
+        env.mock_all_auths();
+
+        let admin = Address::generate(env);
+        let provider_id = env.register(FlashLoanProvider, ());
+        let token_id = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+
+        // Mint tokens to the provider so flash loans can run.
+        let sac = StellarAssetClient::new(env, &token_id);
+        sac.mint(&provider_id, &1_000_000);
+
+        let client = FlashLoanProviderClient::new(env, &provider_id);
+        client.initialize_admin(&admin);
+
+        (provider_id, token_id, admin, client)
+    }
+
+    #[test]
+    fn test_pause_and_unpause_changes_state() {
+        let env = Env::default();
+        let (_, _, admin, client) = setup_with_admin(&env);
+
+        assert!(!client.is_paused());
+
+        client.pause();
+        assert!(client.is_paused());
+
+        client.unpause();
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_flash_loan_rejects_when_paused() {
+        let env = Env::default();
+        let (provider_id, token_id, _, client) = setup_with_admin(&env);
+
+        client.pause();
+
+        let receiver_id = env.register(MockReceiverSuccess, ());
+        let receiver_client = MockReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        fund_receiver_fee(&env, &token_id, &receiver_id, 100_000, 5);
+
+        // Should panic with ContractError::ContractPaused
+        let result = client.try_flash_loan(&receiver_id, &token_id, &100_000);
+        assert!(result.is_err(), "flash_loan must reject when paused");
+    }
+
+    #[test]
+    fn test_flash_loan_batch_rejects_when_paused() {
+        let env = Env::default();
+        let (provider_id, token_id, _, client) = setup_with_admin(&env);
+
+        client.pause();
+
+        let receiver_id = env.register(MockBatchReceiverSuccess, ());
+        let receiver_client = MockBatchReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let mut loans = Vec::new(&env);
+        loans.push_back((token_id.clone(), 100_000_i128));
+
+        let result = client.try_flash_loan_batch(&receiver_id, &loans);
+        assert!(result.is_err(), "flash_loan_batch must reject when paused");
+    }
+
+    #[test]
+    fn test_flash_loan_succeeds_after_unpause() {
+        let env = Env::default();
+        let (provider_id, token_id, _, client) = setup_with_admin(&env);
+
+        client.pause();
+        client.unpause();
+
+        let receiver_id = env.register(MockReceiverSuccess, ());
+        let receiver_client = MockReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let amount = 100_000;
+        fund_receiver_fee(&env, &token_id, &receiver_id, amount, 5);
+
+        // Must succeed after unpause.
+        client.flash_loan(&receiver_id, &token_id, &amount);
+        assert!(balance(&env, &token_id, &provider_id) > 1_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "admin already set")]
+    fn test_initialize_admin_can_only_be_called_once() {
+        let env = Env::default();
+        let (_, _, admin, client) = setup_with_admin(&env);
+
+        // Second call must panic with "admin already set".
+        client.initialize_admin(&admin);
+    }
 }

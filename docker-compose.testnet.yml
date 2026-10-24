@@ -11,7 +11,7 @@ services:
       - NODE_ENV=production
       - PORT=3002
       - DATABASE_URL=file:/app/data/testnet.db
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in your local environment or .env file}@redis:6379
       - STELLAR_NETWORK=testnet
       - STELLAR_PASSPHRASE=Test SDF Network ; September 2015
       - QUEUE_CONCURRENCY=5
@@ -37,9 +37,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: anchorpoint-redis-testnet
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in your local environment or .env file}"]
     ports:
       - "6379:6379"
+    environment:
+      - REDISCLI_AUTH=${REDIS_PASSWORD:?Set REDIS_PASSWORD in your local environment or .env file}
     volumes:
       - redis-testnet-data:/data
     healthcheck:

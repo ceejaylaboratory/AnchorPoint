@@ -25,6 +25,7 @@ import { SequenceNumberManager } from './sequence-number.service';
 import { getKeyManagementService } from '../lib/key-management.service';
 import { KeyManagementError } from '../lib/key-management.types';
 import { redlock } from '../lib/redis';
+import { metricsService } from './metrics.service';
 import {
   BatchPaymentRequest,
   BatchPaymentResult,
@@ -194,6 +195,13 @@ export class BatchPaymentService {
           // Reset sequence counter after successful submission
           await this.sequenceManager.resetSequenceCounter(sourcePublicKey, result.sequenceNumber);
 
+          // #1521: Record per-batch, per-asset counters so each batch's metrics
+          // are independently observable and don't accumulate across batches.
+          request.payments.forEach((payment) => {
+            const assetCode = payment.assetCode || 'XLM';
+            metricsService.incrementBatchPaymentOperation(batchId, assetCode, 'success');
+          });
+
           logger.info(`[Batch ${batchId}] Successfully submitted transaction: ${result.transactionHash}`);
           return result;
         } finally {
@@ -202,6 +210,12 @@ export class BatchPaymentService {
       } catch (error) {
         lastError = error as Error;
         logger.error(`[Batch ${batchId}] Attempt ${attempts} failed: ${error}`);
+
+        // Record failed attempt metrics per batch
+        request.payments.forEach((payment) => {
+          const assetCode = payment.assetCode || 'XLM';
+          metricsService.incrementBatchPaymentOperation(batchId, assetCode, 'failed');
+        });
 
         // If it's a sequence number error, retry immediately
         if (error instanceof BatchPaymentError && error.type === BatchErrorType.SEQUENCE_CONFLICT) {

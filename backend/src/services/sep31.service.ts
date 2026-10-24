@@ -6,6 +6,7 @@ import {
 } from "../config/sep31Fields";
 import logger from "../utils/logger";
 import { notificationService } from "./notification.service";
+import { emitTransactionStatusUpdate } from "../lib/socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -178,7 +179,7 @@ export class SEP31Service {
     try {
       const { FeeService } = require('./fee.service');
       const feeService = new FeeService();
-      const feeResult = feeService.calculateAssetFee(assetCode, numericAmount);
+      const feeResult = await feeService.calculateAssetFee(assetCode, numericAmount);
       feeAmount = feeResult.feeAmount.toFixed(7);
     } catch {
       // Fee calculation is non-critical; proceed without fee
@@ -283,6 +284,13 @@ export class SEP31Service {
     const updated = await prisma.transaction.update({
       where: { id },
       data: updateData,
+    });
+
+    emitTransactionStatusUpdate(updated.userId, {
+      id: updated.id,
+      status: updated.status,
+      updated_at: updated.updatedAt,
+      stellar_transaction_id: updated.stellarTxId,
     });
 
     const tx = this.mapToSep31Transaction(updated);

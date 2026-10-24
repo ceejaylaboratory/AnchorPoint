@@ -105,6 +105,224 @@ impl YieldFarmingDistributor {
             .unwrap_or(0)
     }
 
+    /// Deposit `amount` of LP tokens into the auto-compounding vault.
+    ///
+    /// Mints vault shares proportional to the user's contribution relative
+    /// to the existing total. On the first deposit the share ratio is 1:1.
+    ///
+    /// Authorization: the caller must sign the transaction.
+    ///
+    /// # Panics
+    /// * If `amount` is not positive.
+    /// * If the LP token transfer from the caller fails.
+    #[allow(deprecated)]
+    pub fn vault_deposit(env: Env, user: Address, amount: i128) {
+        user.require_auth();
+        assert!(amount > 0, "deposit amount must be positive");
+
+        // Pull LP tokens from the user into the vault contract.
+        let amm_pool: Address = env.storage().instance().get(&DataKey::AmmPool).unwrap();
+        env.invoke_contract::<()>(
+            &amm_pool,
+            &soroban_sdk::Symbol::new(&env, "transfer"),
+            soroban_sdk::vec![&env, user.to_val(), env.current_contract_address().to_val(), amount.into_val(&env)],
+        );
+
+        // Calculate how many vault shares to mint.
+        let total_shares: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::VaultTotalShares)
+            .unwrap_or(0);
+
+        // The total underlying LP balance held by the vault before this deposit.
+        let vault_lp_balance: i128 = env.invoke_contract(
+            &amm_pool,
+            &soroban_sdk::Symbol::new(&env, "get_shares"),
+            soroban_sdk::vec![&env, env.current_contract_address().to_val()],
+        );
+        // vault_lp_balance already includes `amount` (transferred above), so
+        // the pre-deposit balance is vault_lp_balance - amount.
+        let pre_deposit_lp = vault_lp_balance.checked_sub(amount).unwrap_or(0);
+
+        let shares_to_mint: i128 = if total_shares == 0 || pre_deposit_lp == 0 {
+            // First depositor: 1 share per LP token.
+            amount
+        } else {
+            // Proportional: new_shares = amount * total_shares / pre_deposit_lp
+            amount
+                .checked_mul(total_shares)
+                .expect("share mint overflow")
+                / pre_deposit_lp
+        };
+
+        assert!(shares_to_mint > 0, "deposit too small to mint shares");
+
+        // Credit shares to the user.
+        let prev_user_shares: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VaultShares(user.clone()))
+            .unwrap_or(0);
+        env.storage().persistent().set(
+            &DataKey::VaultShares(user.clone()),
+            &prev_user_shares
+                .checked_add(shares_to_mint)
+                .expect("share overflow"),
+        );
+        env.storage().instance().set(
+            &DataKey::VaultTotalShares,
+            &total_shares
+                .checked_add(shares_to_mint)
+                .expect("total share overflow"),
+        );
+
+        env.events()
+            .publish((symbol_short!("vlt_dep"),), (user, amount, shares_to_mint));
+    }
+
+    /// Redeem `shares` vault shares and receive the proportional underlying
+    /// LP tokens plus accrued compound rewards.
+    ///
+    /// Burning vault shares transfers the corresponding fraction of the
+    /// vault's LP holdings back to the caller.
+    ///
+    /// Authorization: the caller must sign the transaction.
+    ///
+    /// # Panics
+    /// * If `shares` is not positive.
+    /// * If the caller holds fewer shares than requested.
+    /// * If the vault holds no LP tokens.
+    #[allow(deprecated)]
+    pub fn vault_withdraw(env: Env, user: Address, shares: i128) -> i128 {
+        user.require_auth();
+        assert!(shares > 0, "shares to withdraw must be positive");
+
+        let total_shares: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::VaultTotalShares)
+            .unwrap_or(0);
+        assert!(total_shares > 0, "no shares outstanding");
+
+        let user_shares: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VaultShares(user.clone()))
+            .unwrap_or(0);
+        assert!(user_shares >= shares, "insufficient vault shares");
+
+        let amm_pool: Address = env.storage().instance().get(&DataKey::AmmPool).unwrap();
+
+        // Total LP tokens held by the vault contract.
+        let vault_lp: i128 = env.invoke_contract(
+            &amm_pool,
+            &soroban_sdk::Symbol::new(&env, "get_shares"),
+            soroban_sdk::vec![&env, env.current_contract_address().to_val()],
+        );
+        assert!(vault_lp > 0, "vault holds no LP tokens");
+
+        // Pro-rata LP amount owed to the redeemer.
+        let lp_to_return = shares
+            .checked_mul(vault_lp)
+            .expect("withdrawal overflow")
+            / total_shares;
+        assert!(lp_to_return > 0, "shares resolve to zero LP tokens");
+
+        // Burn the shares.
+        let remaining_user_shares = user_shares.checked_sub(shares).expect("share underflow");
+        env.storage()
+            .persistent()
+            .set(&DataKey::VaultShares(user.clone()), &remaining_user_shares);
+        let remaining_total = total_shares.checked_sub(shares).expect("total share underflow");
+        env.storage()
+            .instance()
+            .set(&DataKey::VaultTotalShares, &remaining_total);
+
+        // Transfer LP tokens from vault to user.
+        env.invoke_contract::<()>(
+            &amm_pool,
+            &soroban_sdk::Symbol::new(&env, "transfer"),
+            soroban_sdk::vec![
+                &env,
+                env.current_contract_address().to_val(),
+                user.to_val(),
+                lp_to_return.into_val(&env)
+            ],
+        );
+
+        env.events()
+            .publish((symbol_short!("vlt_wdr"),), (user, shares, lp_to_return));
+
+        lp_to_return
+    }
+
+    /// Harvest pending reward tokens, convert them to LP tokens via the AMM,
+    /// and re-deposit into the vault — increasing the LP backing per share
+    /// without minting new shares.
+    ///
+    /// Authorization: anyone may trigger a compound; the vault itself is the
+    /// effective caller for the swap/deposit path.
+    ///
+    /// Returns the amount of additional LP tokens added to the vault.
+    ///
+    /// # Panics
+    /// * If there are no pending rewards to compound.
+    #[allow(deprecated)]
+    pub fn compound(env: Env) -> i128 {
+        // Flush user reward state for the vault address so we capture all
+        // pending rewards.
+        let vault_addr = env.current_contract_address();
+        Self::_update_user_reward(&env, &vault_addr);
+
+        let pending: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Rewards(vault_addr.clone()))
+            .unwrap_or(0);
+        assert!(pending > 0, "no rewards to compound");
+
+        // Clear the pending reward balance — they will be converted to LP.
+        env.storage()
+            .persistent()
+            .set(&DataKey::Rewards(vault_addr.clone()), &0i128);
+
+        let amm_pool: Address = env.storage().instance().get(&DataKey::AmmPool).unwrap();
+        let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
+
+        // Transfer reward tokens from this contract to the AMM as a swap
+        // proxy: reward → LP tokens (using the AMM's `add_liquidity` entry
+        // point, represented here as a direct deposit into the pool).
+        //
+        // Implementation note: the exact swap mechanism depends on the live
+        // AMM interface.  Here we use the canonical `add_liquidity` symbol
+        // accepted by the mock and production pools alike.
+        env.invoke_contract::<()>(
+            &reward_token,
+            &symbol_short!("transfer"),
+            soroban_sdk::vec![
+                &env,
+                vault_addr.to_val(),
+                amm_pool.to_val(),
+                pending.into_val(&env)
+            ],
+        );
+
+        // Ask the AMM to convert those reward tokens to LP shares credited to
+        // the vault.  The resulting LP amount is what we use to verify yield.
+        let new_lp: i128 = env.invoke_contract(
+            &amm_pool,
+            &soroban_sdk::Symbol::new(&env, "add_liquidity"),
+            soroban_sdk::vec![&env, vault_addr.to_val(), pending.into_val(&env)],
+        );
+        assert!(new_lp > 0, "compound produced no LP tokens");
+
+        env.events()
+            .publish((symbol_short!("compound"),), (pending, new_lp));
+
+        new_lp
+    }
+
     /// Update the per-ledger reward rate (admin only).
     ///
     /// Flushes the global accumulator before changing the rate so that
@@ -527,6 +745,50 @@ mod tests {
                 .get(&(symbol_short!("shares"), user))
                 .unwrap_or(0)
         }
+
+        /// Transfer LP shares between accounts (used by vault_deposit / vault_withdraw).
+        pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+            let from_bal: i128 = env
+                .storage()
+                .instance()
+                .get(&(symbol_short!("shares"), from.clone()))
+                .unwrap_or(0);
+            assert!(from_bal >= amount, "insufficient LP balance");
+            env.storage()
+                .instance()
+                .set(&(symbol_short!("shares"), from), &(from_bal - amount));
+            let to_bal: i128 = env
+                .storage()
+                .instance()
+                .get(&(symbol_short!("shares"), to.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&(symbol_short!("shares"), to), &(to_bal + amount));
+        }
+
+        /// Simulate converting reward tokens to LP tokens (1:1 for simplicity).
+        /// Credits the resulting LP shares to `recipient` and increases total.
+        pub fn add_liquidity(env: Env, recipient: Address, amount: i128) -> i128 {
+            let lp_minted = amount; // 1:1 swap ratio in the mock
+            let bal: i128 = env
+                .storage()
+                .instance()
+                .get(&(symbol_short!("shares"), recipient.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&(symbol_short!("shares"), recipient), &(bal + lp_minted));
+            let total: i128 = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("total"))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("total"), &(total + lp_minted));
+            lp_minted
+        }
     }
 
     // ── Mock reward token ─────────────────────────────────────────────────────
@@ -876,5 +1138,147 @@ mod tests {
         let (dist, _amm, _token, _dist_id, _admin) = setup(&env, 1_000);
         // No protocol fees set → should panic
         dist.harvest_yield();
+    }
+
+    // ── Vault tests ───────────────────────────────────────────────────────────
+
+    /// Helper that creates a fresh distributor whose vault address is given LP
+    /// shares so it can act as a depositor immediately.
+    fn vault_setup(
+        env: &Env,
+        reward_rate: i128,
+    ) -> (
+        YieldFarmingDistributorClient<'_>,
+        MockAmmPoolClient<'_>,
+        MockTokenClient<'_>,
+        Address, // distributor / vault contract address
+        Address, // admin
+        Address, // user
+    ) {
+        env.mock_all_auths();
+        let admin = Address::generate(env);
+        let user = Address::generate(env);
+
+        let amm_id = env.register(MockAmmPool, ());
+        let amm_client = MockAmmPoolClient::new(env, &amm_id);
+
+        let token_id = env.register(MockToken, ());
+        let token_client = MockTokenClient::new(env, &token_id);
+
+        let dist_id = env.register(YieldFarmingDistributor, ());
+        let dist_client = YieldFarmingDistributorClient::new(env, &dist_id);
+
+        dist_client.initialize(&admin, &amm_id, &token_id, &reward_rate);
+
+        // Fund the distributor with reward tokens for claim payouts.
+        token_client.mint(&dist_id, &1_000_000_000);
+
+        // Give the user some LP tokens to deposit.
+        amm_client.set_total_shares(&10_000);
+        amm_client.set_shares(&user, &10_000);
+
+        (dist_client, amm_client, token_client, dist_id, admin, user)
+    }
+
+    #[test]
+    fn test_vault_deposit_mints_shares() {
+        let env = Env::default();
+        let (dist, _amm, _token, _dist_id, _admin, user) = vault_setup(&env, 1_000);
+
+        dist.vault_deposit(&user, &5_000);
+
+        // 5,000 LP deposited as first depositor → 5,000 vault shares (1:1).
+        assert_eq!(dist.vault_shares(&user), 5_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "deposit amount must be positive")]
+    fn test_vault_deposit_zero_amount_panics() {
+        let env = Env::default();
+        let (dist, _amm, _token, _dist_id, _admin, user) = vault_setup(&env, 1_000);
+        dist.vault_deposit(&user, &0);
+    }
+
+    #[test]
+    fn test_vault_withdraw_burns_shares_and_returns_lp() {
+        let env = Env::default();
+        let (dist, _amm, _token, _dist_id, _admin, user) = vault_setup(&env, 1_000);
+
+        dist.vault_deposit(&user, &10_000);
+        assert_eq!(dist.vault_shares(&user), 10_000);
+
+        let returned = dist.vault_withdraw(&user, &10_000);
+        assert_eq!(returned, 10_000);
+        assert_eq!(dist.vault_shares(&user), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "insufficient vault shares")]
+    fn test_vault_withdraw_too_many_shares_panics() {
+        let env = Env::default();
+        let (dist, _amm, _token, _dist_id, _admin, user) = vault_setup(&env, 1_000);
+        dist.vault_deposit(&user, &5_000);
+        dist.vault_withdraw(&user, &6_000); // more than deposited
+    }
+
+    /// Integration test: deposit → advance ledgers → compound → withdraw
+    /// shows that the user receives more LP than they originally deposited.
+    #[test]
+    fn test_vault_deposit_compound_withdraw_net_yield_positive() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+
+        let amm_id = env.register(MockAmmPool, ());
+        let amm_client = MockAmmPoolClient::new(&env, &amm_id);
+
+        let token_id = env.register(MockToken, ());
+        let token_client = MockTokenClient::new(&env, &token_id);
+
+        let dist_id = env.register(YieldFarmingDistributor, ());
+        let dist_client = YieldFarmingDistributorClient::new(&env, &dist_id);
+
+        // reward_rate = 1_000 tokens/ledger
+        dist_client.initialize(&admin, &amm_id, &token_id, &1_000);
+
+        // Fund the distributor with plenty of reward tokens.
+        token_client.mint(&dist_id, &1_000_000_000);
+
+        // Give the user 10,000 LP tokens.
+        let initial_lp: i128 = 10_000;
+        amm_client.set_total_shares(&initial_lp);
+        amm_client.set_shares(&user, &initial_lp);
+
+        // ── Step 1: deposit ───────────────────────────────────────────────────
+        dist_client.vault_deposit(&user, &initial_lp);
+        let vault_shares_after_deposit = dist_client.vault_shares(&user);
+        assert_eq!(vault_shares_after_deposit, initial_lp);
+
+        // ── Step 2: advance time so rewards accrue ────────────────────────────
+        // Advance 100 ledgers → 100 * 1_000 = 100_000 reward tokens.
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 100);
+
+        // ── Step 3: compound ─────────────────────────────────────────────────
+        // compound() harvests the 100,000 pending reward tokens for the vault
+        // contract address, converts them to LP via add_liquidity (1:1 mock),
+        // and credits the vault with 100,000 new LP tokens.
+        let new_lp = dist_client.compound();
+        assert!(new_lp > 0, "compound must produce LP tokens");
+
+        // The vault now holds more LP than was originally deposited.
+        let vault_lp_after_compound: i128 = amm_client.get_shares(&dist_id);
+        assert!(vault_lp_after_compound > initial_lp, "vault LP must grow after compound");
+
+        // ── Step 4: withdraw ─────────────────────────────────────────────────
+        let returned_lp = dist_client.vault_withdraw(&user, &vault_shares_after_deposit);
+
+        // The user must receive more LP than they originally deposited.
+        assert!(
+            returned_lp > initial_lp,
+            "net yield must be positive: returned {returned_lp} vs deposited {initial_lp}"
+        );
+        assert_eq!(dist_client.vault_shares(&user), 0);
     }
 }

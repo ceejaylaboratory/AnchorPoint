@@ -93,6 +93,63 @@ describe('Sep38QuoteCacheService', () => {
     });
   });
 
+  describe('buildPriceKey (#1520: cache key includes asset pair)', () => {
+    it('includes both source and destination assets in the key', () => {
+      const key = service.buildPriceKey('USDC', 'XLM', '100', 'sep24');
+      expect(key).toContain('USDC');
+      expect(key).toContain('XLM');
+      expect(key).toContain('100');
+      expect(key).toContain('sep24');
+    });
+
+    it('produces different keys for different asset pairs with the same amount', () => {
+      const usdcXlmKey = service.buildPriceKey('USDC', 'XLM', '100');
+      const btcXlmKey  = service.buildPriceKey('BTC',  'XLM', '100');
+      expect(usdcXlmKey).not.toBe(btcXlmKey);
+    });
+
+    it('produces different keys when source and destination are swapped', () => {
+      const forward  = service.buildPriceKey('USDC', 'XLM', '100');
+      const reversed = service.buildPriceKey('XLM',  'USDC', '100');
+      expect(forward).not.toBe(reversed);
+    });
+
+    it('is case-insensitive (normalises to upper-case)', () => {
+      const lower = service.buildPriceKey('usdc', 'xlm', '100');
+      const upper = service.buildPriceKey('USDC', 'XLM', '100');
+      expect(lower).toBe(upper);
+    });
+
+    it('defaults context to "default" when omitted', () => {
+      const withDefault   = service.buildPriceKey('USDC', 'XLM', '100', 'default');
+      const withUndefined = service.buildPriceKey('USDC', 'XLM', '100');
+      expect(withDefault).toBe(withUndefined);
+    });
+
+    it('different contexts produce different keys', () => {
+      const sep24Key = service.buildPriceKey('USDC', 'XLM', '100', 'sep24');
+      const sep31Key = service.buildPriceKey('USDC', 'XLM', '100', 'sep31');
+      expect(sep24Key).not.toBe(sep31Key);
+    });
+
+    it('price keys are distinct from firm-quote id keys', () => {
+      const priceKey = service.buildPriceKey('USDC', 'XLM', '100');
+      // buildKey is private; construct the expected pattern manually.
+      expect(priceKey).toContain('price:');
+    });
+
+    it('caches and retrieves a price quote under its buildPriceKey', async () => {
+      const key     = service.buildPriceKey('USDC', 'XLM', '100');
+      const payload = { price: '8.33', source: 'USDC', dest: 'XLM' };
+
+      // Re-use the public cacheQuote / getQuote API with the price key as id.
+      await service.cacheQuote(key, payload, 60);
+      const result = await service.getQuote(key);
+
+      expect(result).toEqual(payload);
+    });
+  });
+
   describe('cleanupExpiredQuotes (expiration)', () => {
     it('purges only index entries whose expiry has passed', async () => {
       const now = Date.now();

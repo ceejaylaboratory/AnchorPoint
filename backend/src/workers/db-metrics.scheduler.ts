@@ -2,8 +2,15 @@ import { metricsService } from '../services/metrics.service';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 
-/** Default pool limit when DB_CONNECTION_LIMIT is unset (matches config/env.ts). */
-const DEFAULT_DB_CONNECTION_LIMIT = 20;
+/** Default pool limit when DATABASE_POOL_SIZE is unset (matches config/env.ts). */
+const DEFAULT_DB_CONNECTION_LIMIT = 10;
+
+export interface DbPoolUtilization {
+  active: number | null;
+  limit: number;
+  /** active / limit, or null when active connections have not been sampled. */
+  utilization: number | null;
+}
 
 /**
  * #1008: Periodically sample the active database connection count and keep the
@@ -16,6 +23,7 @@ const DEFAULT_DB_CONNECTION_LIMIT = 20;
 export class DbMetricsScheduler {
   private timer: NodeJS.Timeout | null = null;
   private readonly intervalMs = 15_000;
+  private lastActive: number | null = null;
 
   start(): void {
     if (!this.isPostgres()) {
@@ -37,6 +45,16 @@ export class DbMetricsScheduler {
     logger.info(`DbMetricsScheduler: sampling DB connections every ${this.intervalMs}ms`);
   }
 
+  /** Latest sampled pool utilization, used by the /health endpoint. */
+  getPoolUtilization(): DbPoolUtilization {
+    const limit = this.poolLimit();
+    return {
+      active: this.lastActive,
+      limit,
+      utilization: this.lastActive === null ? null : this.lastActive / limit,
+    };
+  }
+
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
@@ -50,7 +68,7 @@ export class DbMetricsScheduler {
   }
 
   private poolLimit(): number {
-    const raw = process.env.DB_CONNECTION_LIMIT;
+    const raw = process.env.DATABASE_POOL_SIZE;
     if (!raw) return DEFAULT_DB_CONNECTION_LIMIT;
     const parsed = Number(raw);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_DB_CONNECTION_LIMIT;
@@ -66,6 +84,8 @@ export class DbMetricsScheduler {
     );
     const active = Number(rows[0]?.active_connections ?? 0);
     metricsService.setDbConnectionsActive(active);
+    metricsService.setDbPoolConnectionsActive(active);
+    this.lastActive = active;
   }
 }
 

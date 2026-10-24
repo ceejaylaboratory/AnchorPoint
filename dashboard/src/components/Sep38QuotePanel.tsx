@@ -53,6 +53,21 @@ export const Sep38QuotePanel: React.FC<Sep38QuotePanelProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  const EXPIRY_WARNING_SECONDS = 30;
+  const showExpiryWarning = quote !== null && remainingSeconds <= EXPIRY_WARNING_SECONDS && remainingSeconds > 0;
+
+  const trackQuoteRefreshed = useCallback((reason: 'expiry' | 'manual' | 'warning') => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('anchor:analytics', {
+          detail: { event: 'quote_refreshed', reason, timestamp: new Date().toISOString() },
+        }),
+      );
+    } catch {
+      // Analytics must never break the quote flow.
+    }
+  }, []);
+
   const lastRequestedParams = useRef<{
     sellAmount: string;
     buyAmount: string;
@@ -63,7 +78,7 @@ export const Sep38QuotePanel: React.FC<Sep38QuotePanelProps> = ({
 
   // Helper to fetch or compute quote
   const executeFetchQuote = useCallback(
-    async (isBackgroundRefresh = false) => {
+    async (isBackgroundRefresh = false, refreshReason: 'expiry' | 'manual' | 'warning' = 'expiry') => {
       const currentSell = sellAmount.trim();
       const currentBuy = buyAmount.trim();
 
@@ -155,6 +170,10 @@ export const Sep38QuotePanel: React.FC<Sep38QuotePanelProps> = ({
         setTotalValiditySeconds(fetchedQuote.totalDurationSeconds || initialValiditySeconds);
         setRemainingSeconds(fetchedQuote.totalDurationSeconds || initialValiditySeconds);
 
+        if (isBackgroundRefresh) {
+          trackQuoteRefreshed(refreshReason);
+        }
+
         lastRequestedParams.current = {
           sellAmount: fetchedQuote.sellAmount,
           buyAmount: fetchedQuote.buyAmount,
@@ -169,7 +188,7 @@ export const Sep38QuotePanel: React.FC<Sep38QuotePanelProps> = ({
         setIsRefreshing(false);
       }
     },
-    [sellAmount, buyAmount, quoteType, sellAsset, buyAsset, onFetchQuote, apiBaseUrl, initialValiditySeconds]
+    [sellAmount, buyAmount, quoteType, sellAsset, buyAsset, onFetchQuote, apiBaseUrl, initialValiditySeconds, trackQuoteRefreshed]
   );
 
   // Countdown timer effect
@@ -468,13 +487,33 @@ export const Sep38QuotePanel: React.FC<Sep38QuotePanelProps> = ({
             <button
               type="button"
               disabled={isRefreshing || isFetching || isSubmitting}
-              onClick={() => executeFetchQuote(true)}
+              onClick={() => executeFetchQuote(true, 'manual')}
               className="inline-flex items-center gap-1 text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
               <span>Refresh Now</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Expiry warning: shown during the final 30 seconds with a quick refresh action */}
+      {showExpiryWarning && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300"
+        >
+          <span>Quote expiring in {remainingSeconds}s.</span>
+          <button
+            type="button"
+            disabled={isRefreshing || isFetching || isSubmitting}
+            onClick={() => executeFetchQuote(true, 'warning')}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/20 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/30 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
+            <span>Refresh Quote</span>
+          </button>
         </div>
       )}
 
@@ -517,7 +556,7 @@ export const Sep38QuotePanel: React.FC<Sep38QuotePanelProps> = ({
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => executeFetchQuote(true)}
+              onClick={() => executeFetchQuote(true, 'manual')}
               disabled={isRefreshing || isFetching || isSubmitting}
               className="rounded-lg border border-slate-700 px-4 py-3 text-sm font-semibold text-slate-300 hover:border-slate-600 hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >

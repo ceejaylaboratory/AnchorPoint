@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -78,6 +79,15 @@ const buildKycSchema = (t: TranslateFn) =>
 
 export type KycFormValues = z.infer<ReturnType<typeof buildKycSchema>>;
 
+const EMPTY_KYC_VALUES: KycFormValues = {
+  firstName: '',
+  lastName: '',
+  emailAddress: '',
+  mobileNumber: '',
+  idType: 'national_id',
+  idNumber: '',
+};
+
 interface KycFormProps {
   /** Receives the parsed, valid payload for the SEP-12 PUT /customer call. */
   onSubmit?: (values: KycFormValues) => void | Promise<void>;
@@ -107,24 +117,31 @@ export const KycForm = ({ onSubmit, defaultValues }: KycFormProps) => {
   const {
     register,
     handleSubmit,
+    reset,
     formState: { errors, isSubmitting, isSubmitSuccessful },
   } = useForm<KycFormValues>({
     resolver: zodResolver(kycSchema),
     mode: 'onBlur',
     reValidateMode: 'onChange',
     defaultValues: {
-      firstName: '',
-      lastName: '',
-      emailAddress: '',
-      mobileNumber: '',
-      idType: 'national_id',
-      idNumber: '',
+      ...EMPTY_KYC_VALUES,
       ...defaultValues,
     },
   });
 
+  // Clear submitted PII so returning to the form never shows stale data. The
+  // success banner stays visible until the user edits or submits again.
+  useEffect(() => {
+    if (isSubmitSuccessful) {
+      reset(EMPTY_KYC_VALUES, { keepIsSubmitSuccessful: true });
+    }
+  }, [isSubmitSuccessful, reset]);
+
   const submitHandler = handleSubmit(async (values) => {
     await onSubmit?.(values);
+    // Clear fields (and any uploaded file references held by the form) so a
+    // revisit after success starts from a clean, empty form.
+    reset();
   });
 
   /** Wires a field to its error message for both sighted and AT users. */

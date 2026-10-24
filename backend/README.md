@@ -65,6 +65,20 @@ npm run db:restore:verify
 
 For the full disaster recovery procedure, see [Database Restore Disaster Recovery Runbook](./docs/DISASTER_RECOVERY_DB_RESTORE.md).
 
+### Database Connection Pooling
+Prisma's connection pool is configured through environment variables, which are appended to PostgreSQL `DATABASE_URL`s:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DATABASE_POOL_SIZE` | `10` | Maximum connections per process (Prisma `connection_limit`). |
+| `DATABASE_POOL_TIMEOUT_MS` | `5000` | How long a query waits to acquire a connection before failing (Prisma `pool_timeout`, rounded up to whole seconds). |
+
+Production sizing guidance:
+- Start from `DATABASE_POOL_SIZE = (num_cpus * 2) + 1` per instance and tune from observed load.
+- Keep `DATABASE_POOL_SIZE * number_of_instances` (including workers) below PostgreSQL's `max_connections`, leaving headroom for migrations and admin sessions.
+- If you need more total connections than the database allows, put PgBouncer in front of PostgreSQL rather than raising the pool size.
+- Watch `db_pool_connections_active` (Prometheus) and the `databasePool` block of `GET /health`; sustained utilization near `1.0` or pool-timeout errors mean the pool is undersized.
+
 ## External KYC Providers (SEP-12)
 AnchorPoint supports pluggable third-party KYC providers for SEP-12 flows.
 

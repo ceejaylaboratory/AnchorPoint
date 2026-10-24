@@ -1,4 +1,5 @@
 import React from 'react';
+import { usePriceHistory } from '../hooks/usePriceHistory';
 
 export interface PricePoint {
   timestamp: number;
@@ -6,16 +7,36 @@ export interface PricePoint {
 }
 
 interface PriceChartProps {
-  data: PricePoint[] | null;
+  /**
+   * Price history to plot. When omitted, the chart fetches the history for
+   * the selected asset pair itself and re-fetches whenever the pair changes.
+   */
+  data?: PricePoint[] | null;
   loading?: boolean;
   error?: string | null;
   sourceAsset: string;
   destinationAsset: string;
+  /** History window requested when the chart fetches its own data. */
+  duration?: string;
+  /** Background refresh interval (ms) when the chart fetches its own data. */
+  refreshInterval?: number;
 }
 
-const PriceChart: React.FC<PriceChartProps> = ({ data, loading = false, error = null, sourceAsset, destinationAsset }) => {
+type PriceChartViewProps = Omit<PriceChartProps, 'duration' | 'refreshInterval'>;
+
+const PriceChartView: React.FC<PriceChartViewProps> = ({
+  data,
+  loading = false,
+  error = null,
+  sourceAsset,
+  destinationAsset,
+}) => {
   if (loading) {
-    return <div className="price-chart price-chart--loading">Loading price chart...</div>;
+    return (
+      <div className="price-chart price-chart--loading" role="status" aria-live="polite">
+        Loading price chart...
+      </div>
+    );
   }
 
   if (error) {
@@ -38,10 +59,13 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, loading = false, error = 
   const minPrice = low;
   const maxPrice = high;
   const range = maxPrice - minPrice || 1; // avoid division by zero
+  // A single point has no horizontal extent; plot it as a flat line instead of
+  // dividing by zero (which yields NaN coordinates and a blank chart).
+  const plotted = data.length === 1 ? [data[0], data[0]] : data;
 
-  const points = data
+  const points = plotted
     .map((point, index) => {
-      const x = padding + (index / (data.length - 1)) * (width - 2 * padding);
+      const x = padding + (index / (plotted.length - 1)) * (width - 2 * padding);
       const y = height - padding - ((point.price - minPrice) / range) * (height - 2 * padding);
       return `${x},${y}`;
     })
@@ -74,5 +98,35 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, loading = false, error = 
     </div>
   );
 };
+
+/** Fetches the history for the selected pair; re-runs when the pair changes. */
+const ConnectedPriceChart: React.FC<PriceChartProps> = ({
+  sourceAsset,
+  destinationAsset,
+  duration,
+  refreshInterval,
+}) => {
+  const { data, loading, error } = usePriceHistory(sourceAsset, destinationAsset, {
+    duration,
+    refreshInterval,
+  });
+
+  return (
+    <PriceChartView
+      data={data}
+      loading={loading}
+      error={error}
+      sourceAsset={sourceAsset}
+      destinationAsset={destinationAsset}
+    />
+  );
+};
+
+const PriceChart: React.FC<PriceChartProps> = ({ duration, refreshInterval, ...props }) =>
+  props.data === undefined ? (
+    <ConnectedPriceChart {...props} duration={duration} refreshInterval={refreshInterval} />
+  ) : (
+    <PriceChartView {...props} />
+  );
 
 export default PriceChart;

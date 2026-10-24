@@ -89,7 +89,7 @@ describe('ServiceStatusPanel', () => {
     expect(screen.getAllByText('Offline')).toHaveLength(2);
   });
 
-  it('fetches data every 30 seconds', async () => {
+  it('fetches data every 60 seconds', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -105,12 +105,12 @@ describe('ServiceStatusPanel', () => {
     // Initial fetch
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
     
-    // Fast-forward 30 seconds
-    vi.advanceTimersByTime(30000);
+    // Fast-forward 60 seconds
+    vi.advanceTimersByTime(60000);
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
     
-    // Fast-forward another 30 seconds
-    vi.advanceTimersByTime(30000);
+    // Fast-forward another 60 seconds
+    vi.advanceTimersByTime(60000);
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3));
   });
 });

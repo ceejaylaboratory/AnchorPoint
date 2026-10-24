@@ -177,12 +177,8 @@ impl Bridge {
         env.storage()
             .persistent()
             .set(&processed_at_key, &sequence);
-        env.storage()
-            .persistent()
-            .extend_ttl(&processed_key, 1, replay_window);
-        env.storage()
-            .persistent()
-            .extend_ttl(&processed_at_key, 1, replay_window);
+        anchorpoint_utils::storage::extend_persistent_ttl_with(&env, &processed_key, 1, replay_window);
+        anchorpoint_utils::storage::extend_persistent_ttl_with(&env, &processed_at_key, 1, replay_window);
 
         // Update last relayer activity timestamp
         env.storage()

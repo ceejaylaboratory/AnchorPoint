@@ -1,4 +1,3 @@
-import { PrismaClient } from '@prisma/client';
 import PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -6,8 +5,7 @@ import { Queue } from 'bullmq';
 import { defaultQueueOptions, QUEUE_NAMES } from '../config/queue';
 import logger from '../utils/logger';
 import { formatDecimal, toDecimal } from '../utils/decimal';
-
-const prisma = new PrismaClient();
+import prisma from '../lib/prisma';
 
 export interface FeeReportJobData {
   reportType: 'DAILY' | 'MONTHLY';
@@ -171,17 +169,46 @@ export class FeeReportService {
     };
 
     const feeBreakdown: Record<string, FeeSummary> = {};
+    // Guard: default to zero strings so downstream consumers never get undefined.
     let totalFees = formatDecimal(0);
     let totalFeesXLM = formatDecimal(0);
 
-    transactions.forEach((tx) => {
+    // Early-return safe path: empty result set produces a valid zero-value report.
+    if (transactions.length === 0) {
+      logger.info(`No completed transactions found for ${reportType} report`, {
+        startDate,
+        endDate,
+      });
+
+      const reportData: FeeReportData = {
+        reportType,
+        startDate,
+        endDate,
+        totalFees,
+        totalFeesXLM,
+        operationCounts,
+        feeBreakdown,
+      };
+
+      await this.saveReportToDatabase(reportData);
+
+      return reportData;
+    }
+
+    transactions.forEach((tx: {
+      type: string;
+      amount: string | null;
+      feeAmount: string | null;
+      feeAssetCode: string | null;
+    }) => {
       const opType = tx.type;
       if (Object.hasOwn(operationCounts, opType)) {
         operationCounts[opType as keyof OperationCounts] += 1;
       }
 
-      const feeAmount = tx.feeAmount || '0';
-      const feeAsset = tx.feeAssetCode || 'XLM';
+      // Guard against null/undefined fee fields coming back from the DB.
+      const feeAmount = tx.feeAmount ?? '0';
+      const feeAsset = tx.feeAssetCode ?? 'XLM';
 
       // Initialize breakdown if not exists
       if (!feeBreakdown[opType]) {
@@ -292,12 +319,17 @@ export class FeeReportService {
     doc.moveDown();
     doc.fontSize(12).font('Helvetica');
 
-    Object.values(reportData.feeBreakdown).forEach((summary: FeeSummary) => {
-      doc.text(`\n${summary.operationType}`);
-      doc.text(`  Transactions: ${summary.transactionCount}`);
-      doc.text(`  Total Fees: ${summary.totalFees}`);
-      doc.text(`  Average Fee: ${summary.averageFee}`);
-    });
+    const breakdownEntries = Object.values(reportData.feeBreakdown);
+    if (breakdownEntries.length === 0) {
+      doc.text('No transactions in this period.');
+    } else {
+      breakdownEntries.forEach((summary: FeeSummary) => {
+        doc.text(`\n${summary.operationType}`);
+        doc.text(`  Transactions: ${summary.transactionCount}`);
+        doc.text(`  Total Fees: ${summary.totalFees}`);
+        doc.text(`  Average Fee: ${summary.averageFee}`);
+      });
+    }
 
     doc.end();
 

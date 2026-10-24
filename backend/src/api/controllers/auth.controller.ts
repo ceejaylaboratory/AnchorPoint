@@ -301,6 +301,15 @@ export const getToken = async (
       networkType
     );
 
+    if (verification.error === 'challenge_expired') {
+      // The signature was valid but timeBounds.maxTime has passed: the
+      // challenge can never be redeemed, so drop it and reject the replay.
+      await removeChallenge(redisService, account);
+      return res.status(401).json({
+        error: 'challenge_expired'
+      });
+    }
+
     if (!verification.isValid) {
       return res.status(400).json({
         error: 'Invalid signature or challenge'

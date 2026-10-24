@@ -3,11 +3,15 @@ import type { AlertEmailService } from './alert-email.service';
 import { stellarService } from './stellar.service';
 import { redis } from '../lib/redis';
 import logger from '../utils/logger';
+import { notificationService } from './notification.service';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 jest.mock('./stellar.service');
 jest.mock('../lib/redis');
+jest.mock('./notification.service', () => ({
+  notificationService: { notify: jest.fn().mockResolvedValue(undefined) },
+}));
 jest.mock('../utils/logger', () => ({
   info: jest.fn(),
   warn: jest.fn(),
@@ -55,7 +59,7 @@ function makeService(
   wallets: HotWallet[] = [XLM_WALLET],
   options: {
     alertEmailService?: AlertEmailService;
-    alertChannels?: { emailRecipients?: string };
+    alertChannels?: { emailRecipients?: string; notificationUserIds?: string };
   } = {},
 ) {
   // Reset singleton for each test
@@ -216,6 +220,53 @@ describe('HotWalletMonitorService — alert de-duplication', () => {
         thresholdAmount: 100,
       }),
     );
+  });
+});
+
+describe('HotWalletMonitorService — notification service alerts', () => {
+  const channels = { notificationUserIds: 'admin-1, admin-2' };
+
+  it('dispatches an alert via the notification service on threshold breach', async () => {
+    mockHorizonAccount([{ asset_type: 'native', balance: '99.9999999' }]);
+
+    const svc = makeService([XLM_WALLET], { alertChannels: channels });
+    await svc.checkWallet(XLM_WALLET);
+
+    expect(notificationService.notify).toHaveBeenCalledTimes(2);
+    expect(notificationService.notify).toHaveBeenCalledWith('admin-1', expect.stringContaining('Low balance'));
+    expect(notificationService.notify).toHaveBeenCalledWith('admin-2', expect.stringContaining('Low balance'));
+  });
+
+  it('suppresses repeat alerts while the cooldown interval is active', async () => {
+    mockHorizonAccount([{ asset_type: 'native', balance: '50.0000000' }]);
+    const store = new Map<string, string>();
+    (redis.get as jest.Mock).mockImplementation(async (key: string) => store.get(key) ?? null);
+    (redis.set as jest.Mock).mockImplementation(async (key: string, value: string) => {
+      store.set(key, value);
+      return 'OK';
+    });
+
+    const svc = makeService([XLM_WALLET], { alertChannels: channels });
+    await svc.checkWallet(XLM_WALLET);
+    await svc.checkWallet(XLM_WALLET);
+
+    expect(notificationService.notify).toHaveBeenCalledTimes(2); // first breach only
+  });
+
+  it('sends an all-clear once balance recovers above 110% of threshold', async () => {
+    (redis.get as jest.Mock).mockImplementation(async (key: string) =>
+      key.startsWith('hot_wallet_breach:') ? '1' : null
+    );
+
+    mockHorizonAccount([{ asset_type: 'native', balance: '105.0000000' }]);
+    const svc = makeService([XLM_WALLET], { alertChannels: channels });
+    await svc.checkWallet(XLM_WALLET);
+    expect(notificationService.notify).not.toHaveBeenCalled();
+
+    mockHorizonAccount([{ asset_type: 'native', balance: '111.0000000' }]);
+    await svc.checkWallet(XLM_WALLET);
+    expect(notificationService.notify).toHaveBeenCalledWith('admin-1', expect.stringContaining('All clear'));
+    expect(redis.del).toHaveBeenCalledWith(expect.stringContaining('hot_wallet_breach:'));
   });
 });
 
