@@ -1,20 +1,22 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { CopyableText } from './CopyableText';
-import { 
-  ArrowUpRight, 
-  ArrowDownLeft, 
-  RefreshCw, 
-  Search, 
-  Zap, 
-  Flame, 
-  Coins, 
-  CheckCircle2, 
-  Clock, 
+import {
+  ArrowUpRight,
+  ArrowDownLeft,
+  RefreshCw,
+  Search,
+  Zap,
+  Flame,
+  Coins,
+  CheckCircle2,
+  Clock,
   AlertCircle,
   ExternalLink,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  SlidersHorizontal,
+  X
 } from 'lucide-react';
 import { useTransactionStore } from '../store/transactionStore';
 import { useTransactionSocket } from '../hooks/useTransactionSocket';
@@ -152,6 +154,84 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const [selectedType, setSelectedType] = useState<string>('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
   const [expandedTxIds, setExpandedTxIds] = useState<Set<string>>(new Set());
+  // Advanced filters
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [statusMulti, setStatusMulti] = useState<string[]>(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get('status');
+      return p ? p.split(',').filter(Boolean) : [];
+    } catch { return []; }
+  });
+  const [assetFilter, setAssetFilter] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get('asset') ?? 'All'; }
+    catch { return 'All'; }
+  });
+  const [dateFrom, setDateFrom] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get('from') ?? ''; }
+    catch { return ''; }
+  });
+  const [dateTo, setDateTo] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get('to') ?? ''; }
+    catch { return ''; }
+  });
+  const [minAmount, setMinAmount] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get('min') ?? ''; }
+    catch { return ''; }
+  });
+  const [maxAmount, setMaxAmount] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get('max') ?? ''; }
+    catch { return ''; }
+  });
+
+  // Sync filter state to URL query params
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const setOrDel = (k: string, v: string) => { if (v) params.set(k, v); else params.delete(k); };
+      setOrDel('q', searchQuery.trim());
+      if (statusMulti.length > 0) params.set('status', statusMulti.join(','));
+      else if (selectedStatus !== 'All') params.set('status', selectedStatus);
+      else params.delete('status');
+      setOrDel('asset', assetFilter !== 'All' ? assetFilter : '');
+      setOrDel('type', selectedType !== 'All' ? selectedType : '');
+      setOrDel('from', dateFrom);
+      setOrDel('to', dateTo);
+      setOrDel('min', minAmount);
+      setOrDel('max', maxAmount);
+      const qs = params.toString();
+      window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+    } catch { /* non-browser */ }
+  }, [searchQuery, selectedType, selectedStatus, statusMulti, assetFilter, dateFrom, dateTo, minAmount, maxAmount]);
+
+  const toggleStatusMulti = (s: string) => {
+    setStatusMulti(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+  };
+
+  const clearAllFilters = () => {
+    setSearchQuery('');
+    setSelectedType('All');
+    setSelectedStatus('All');
+    setStatusMulti([]);
+    setAssetFilter('All');
+    setDateFrom('');
+    setDateTo('');
+    setMinAmount('');
+    setMaxAmount('');
+  };
+
+  const activeChips: { key: string; label: string; clear: () => void }[] = useMemo(() => {
+    const chips: { key: string; label: string; clear: () => void }[] = [];
+    if (selectedType !== 'All') chips.push({ key: 'type', label: `Type: ${selectedType}`, clear: () => setSelectedType('All') });
+    const effStatuses = statusMulti.length > 0 ? statusMulti : (selectedStatus !== 'All' ? [selectedStatus] : []);
+    effStatuses.forEach(s => chips.push({ key: `status-${s}`, label: `Status: ${s}`, clear: () => { setSelectedStatus('All'); setStatusMulti(prev => prev.filter(x => x !== s)); } }));
+    if (assetFilter !== 'All') chips.push({ key: 'asset', label: `Asset: ${assetFilter}`, clear: () => setAssetFilter('All') });
+    if (dateFrom) chips.push({ key: 'from', label: `From: ${dateFrom}`, clear: () => setDateFrom('') });
+    if (dateTo) chips.push({ key: 'to', label: `To: ${dateTo}`, clear: () => setDateTo('') });
+    if (minAmount) chips.push({ key: 'min', label: `Min: ${minAmount}`, clear: () => setMinAmount('') });
+    if (maxAmount) chips.push({ key: 'max', label: `Max: ${maxAmount}`, clear: () => setMaxAmount('') });
+    if (searchQuery.trim()) chips.push({ key: 'q', label: `"${searchQuery.trim()}"`, clear: () => setSearchQuery('') });
+    return chips;
+  }, [selectedType, selectedStatus, statusMulti, assetFilter, dateFrom, dateTo, minAmount, maxAmount, searchQuery]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobileViewport();
@@ -173,9 +253,18 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
   // Filtered dataset
   const filteredTransactions = useMemo(() => {
+    const min = minAmount !== '' ? parseFloat(minAmount) : NaN;
+    const max = maxAmount !== '' ? parseFloat(maxAmount) : NaN;
     return transactions.filter(tx => {
       if (selectedType !== 'All' && tx.type !== selectedType) return false;
-      if (selectedStatus !== 'All' && tx.status !== selectedStatus) return false;
+      const effStatuses = statusMulti.length > 0 ? statusMulti : (selectedStatus !== 'All' ? [selectedStatus] : []);
+      if (effStatuses.length > 0 && !effStatuses.includes(tx.status)) return false;
+      if (assetFilter !== 'All' && tx.asset !== assetFilter) return false;
+      if (dateFrom && tx.date < dateFrom) return false;
+      if (dateTo && tx.date > dateTo) return false;
+      const amt = parseFloat(tx.amount);
+      if (!Number.isNaN(min) && amt < min) return false;
+      if (!Number.isNaN(max) && amt > max) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
@@ -187,7 +276,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
       }
       return true;
     });
-  }, [transactions, selectedType, selectedStatus, searchQuery]);
+  }, [transactions, selectedType, selectedStatus, statusMulti, assetFilter, dateFrom, dateTo, minAmount, maxAmount, searchQuery]);
 
   // Virtualizer hook
   const rowVirtualizer = useVirtualizer({
@@ -345,8 +434,72 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
             <span className="text-xs text-slate-500 font-mono ml-auto">
               DOM Active: <strong className="text-emerald-400">{itemsToRender.length}</strong> / {filteredTransactions.length}
             </span>
+            <button
+              type="button"
+              onClick={() => setFilterDrawerOpen(v => !v)}
+              aria-expanded={filterDrawerOpen}
+              data-testid="tx-filter-drawer-toggle"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white"
+            >
+              <SlidersHorizontal size={14} /> Filters{activeChips.length > 0 ? ` (${activeChips.length})` : ''}
+            </button>
           </div>
         </div>
+
+        {/* Active filter chips */}
+        {activeChips.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-2" data-testid="tx-active-filters">
+            {activeChips.map(chip => (
+              <span key={chip.key} data-testid={`tx-filter-chip-${chip.key}`} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-primary/15 text-primary border border-primary/30">
+                {chip.label}
+                <button type="button" onClick={chip.clear} aria-label={`Remove filter ${chip.label}`} data-testid={`tx-filter-chip-remove-${chip.key}`} className="hover:text-white">
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            <button type="button" onClick={clearAllFilters} data-testid="tx-clear-all-filters" className="text-[11px] font-semibold text-slate-400 hover:text-white underline">
+              Clear all
+            </button>
+          </div>
+        )}
+
+        {/* Filter drawer */}
+        {filterDrawerOpen && (
+          <div data-testid="tx-filter-drawer" className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+            <fieldset>
+              <legend className="text-xs font-semibold text-slate-300 mb-2">Status (multi-select)</legend>
+              <div className="space-y-1.5">
+                {STATUSES.map(s => (
+                  <label key={s} className="flex items-center gap-2 text-xs text-slate-400">
+                    <input type="checkbox" checked={statusMulti.includes(s)} onChange={() => toggleStatusMulti(s)} data-testid={`tx-filter-status-${s}`} className="accent-blue-500" />
+                    {s}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <div>
+              <label htmlFor="tx-asset-filter" className="text-xs font-semibold text-slate-300 mb-2 block">Asset</label>
+              <select id="tx-asset-filter" value={assetFilter} onChange={e => setAssetFilter(e.target.value)} data-testid="tx-asset-filter" className="input-field text-xs py-1.5 w-full">
+                <option value="All">All Assets</option>
+                {ASSETS.map(a => (<option key={a} value={a}>{a}</option>))}
+              </select>
+            </div>
+            <div>
+              <span className="text-xs font-semibold text-slate-300 mb-2 block">Date range</span>
+              <div className="flex flex-col gap-2">
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} data-testid="tx-filter-date-from" aria-label="From date" className="input-field text-xs py-1.5" />
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} data-testid="tx-filter-date-to" aria-label="To date" className="input-field text-xs py-1.5" />
+              </div>
+            </div>
+            <div>
+              <span className="text-xs font-semibold text-slate-300 mb-2 block">Amount range</span>
+              <div className="flex flex-col gap-2">
+                <input type="number" value={minAmount} onChange={e => setMinAmount(e.target.value)} placeholder="Min amount" data-testid="tx-filter-min-amount" aria-label="Minimum amount" className="input-field text-xs py-1.5" />
+                <input type="number" value={maxAmount} onChange={e => setMaxAmount(e.target.value)} placeholder="Max amount" data-testid="tx-filter-max-amount" aria-label="Maximum amount" className="input-field text-xs py-1.5" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Virtualized Table Container */}

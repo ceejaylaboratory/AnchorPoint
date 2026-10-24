@@ -20,6 +20,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { Sidebar } from './components/Sidebar';
+import { Breadcrumbs } from './components/Breadcrumbs';
 import { NotificationBell } from './components/NotificationBell';
 import { StatusBanner } from './components/StatusBanner';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
@@ -331,6 +332,36 @@ const AppShell = () => {
     await handleConnectWallet(walletId);
   };
 
+  // Breadcrumb trail for every view (deep views included). Parent crumbs are
+  // clickable via SPA state navigation; the current page crumb is plain text.
+  const tabLabels: Record<string, string> = {
+    dashboard: 'Dashboard',
+    deposit: 'Deposit',
+    withdraw: 'Withdraw',
+    history: 'Transaction History',
+    sep38: 'SEP-38 Quotes',
+    status: 'Service Status',
+    notifications: 'Notifications',
+    'notification-preferences': 'Notification Preferences',
+    'contract-playground': 'Contract Playground',
+    kyc: 'KYC Status',
+    settings: 'Settings',
+  };
+  const currentLabel = tabLabels[activeTab] ?? activeTab;
+  const crumbs =
+    activeTab === 'dashboard'
+      ? [{ label: 'Dashboard' }]
+      : activeTab === 'notification-preferences'
+        ? [
+            { label: 'Dashboard', onClick: () => setActiveTab('dashboard') },
+            { label: 'Notifications', onClick: () => setActiveTab('notifications') },
+            { label: currentLabel },
+          ]
+        : [
+            { label: 'Dashboard', onClick: () => setActiveTab('dashboard') },
+            { label: currentLabel },
+          ];
+
   return (
     <div
       className="min-h-screen flex"
@@ -497,6 +528,10 @@ const AppShell = () => {
           </div>
 
           <StatusBanner apiBaseUrl={apiBaseUrl} />
+
+          <div data-testid="app-breadcrumbs" className="mb-4">
+            <Breadcrumbs crumbs={crumbs} titleSuffix="AnchorPoint" />
+          </div>
 
           <AnimatePresence mode="wait">
             <motion.div
