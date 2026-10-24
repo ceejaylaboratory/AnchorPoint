@@ -528,3 +528,159 @@ describe('EventLogViewer combined filters', () => {
     expect(screen.getByLabelText('Event transfer_error')).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reconnect deduplication (#1533)
+// ---------------------------------------------------------------------------
+
+import { act } from '@testing-library/react';
+import { mergeEvents } from './EventLogViewer';
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  url: string;
+  onopen: (() => void) | null = null;
+  onmessage: ((message: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  closed = false;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  emit(event: RawContractEvent) {
+    this.onmessage?.({ data: JSON.stringify(event) });
+  }
+}
+
+const renderedIds = () =>
+  screen.queryAllByLabelText('Event transfer').map((entry) => entry.textContent);
+
+describe('mergeEvents', () => {
+  const entry = (id: string) => toLogEntry(transferEvent(CONTRACT_A, id));
+
+  it('skips entries whose id is already in the log', () => {
+    const prev = [entry('e1'), entry('e2')];
+    const next = mergeEvents(prev, [entry('e2'), entry('e3')], 200);
+
+    expect(next.map((e) => e.id)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  it('skips duplicates within the incoming batch', () => {
+    const next = mergeEvents([], [entry('e1'), entry('e1')], 200);
+
+    expect(next.map((e) => e.id)).toEqual(['e1']);
+  });
+
+  it('returns the same array when nothing new arrived', () => {
+    const prev = [entry('e1')];
+
+    expect(mergeEvents(prev, [entry('e1')], 200)).toBe(prev);
+  });
+
+  it('keeps only the newest maxEntries', () => {
+    const next = mergeEvents([entry('e1'), entry('e2')], [entry('e3')], 2);
+
+    expect(next.map((e) => e.id)).toEqual(['e2', 'e3']);
+  });
+});
+
+describe('EventLogViewer reconnect deduplication', () => {
+  beforeEach(() => {
+    MockEventSource.instances = [];
+    vi.useFakeTimers();
+    vi.stubGlobal('EventSource', MockEventSource);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders seeded events with duplicate ids only once', () => {
+    render(
+      <EventLogViewer
+        initialEvents={[transferEvent(CONTRACT_A, 'e1'), transferEvent(CONTRACT_A, 'e1')]}
+      />,
+    );
+
+    expect(screen.getAllByLabelText('Event transfer')).toHaveLength(1);
+  });
+
+  it('does not duplicate events replayed after a reconnect', () => {
+    render(<EventLogViewer apiBaseUrl="http://anchor" />);
+    const first = MockEventSource.instances[0];
+    expect(first.url).toBe('http://anchor/api/events');
+
+    act(() => {
+      first.onopen?.();
+      first.emit({ ...transferEvent(CONTRACT_A, 'e1'), sequence: 1 });
+      first.emit({ ...transferEvent(CONTRACT_A, 'e2'), sequence: 2 });
+    });
+    expect(renderedIds()).toHaveLength(2);
+
+    act(() => {
+      first.onerror?.();
+    });
+    expect(first.closed).toBe(true);
+    expect(screen.getByText('Stream disconnected. Reconnecting…')).toBeTruthy();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    const second = MockEventSource.instances[1];
+    // Resumes from the last sequence it saw.
+    expect(second.url).toBe('http://anchor/api/events?since=2');
+
+    act(() => {
+      second.onopen?.();
+      // Server replays history, then sends a genuinely new event.
+      second.emit({ ...transferEvent(CONTRACT_A, 'e1'), sequence: 1 });
+      second.emit({ ...transferEvent(CONTRACT_A, 'e2'), sequence: 2 });
+      second.emit({ ...transferEvent(CONTRACT_A, 'e3'), sequence: 3 });
+    });
+
+    expect(renderedIds()).toHaveLength(3);
+    expect(screen.queryByText('Stream disconnected. Reconnecting…')).toBeNull();
+  });
+
+  it('deduplicates replayed events by id when the stream carries no sequence', () => {
+    render(<EventLogViewer apiBaseUrl="http://anchor" />);
+    const first = MockEventSource.instances[0];
+
+    act(() => {
+      first.emit(transferEvent(CONTRACT_A, 'e1'));
+      first.onerror?.();
+      vi.advanceTimersByTime(3000);
+    });
+    const second = MockEventSource.instances[1];
+    expect(second.url).toBe('http://anchor/api/events');
+
+    act(() => {
+      second.emit(transferEvent(CONTRACT_A, 'e1'));
+      second.emit(transferEvent(CONTRACT_A, 'e2'));
+    });
+
+    expect(renderedIds()).toHaveLength(2);
+  });
+
+  it('stops reconnecting after unmount', () => {
+    const { unmount } = render(<EventLogViewer apiBaseUrl="http://anchor" />);
+    const first = MockEventSource.instances[0];
+
+    act(() => {
+      first.onerror?.();
+    });
+    unmount();
+    act(() => {
+      vi.advanceTimersByTime(10000);
+    });
+
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+});

@@ -508,8 +508,8 @@ const AppShell = () => {
                 {activeTab === 'dashboard' && (
                   <DashboardOverview uiConfig={uiConfig} isLoading={loadingState === 'loading'} />
                 )}
-                {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />}
-                {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />}
+                {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}
+                {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}
                 {activeTab === 'history' && <TransactionHistory />}
                 {activeTab === 'sep38' && <Sep38QuotePanel />}
                 {activeTab === 'status' && <ServiceStatusPanel />}

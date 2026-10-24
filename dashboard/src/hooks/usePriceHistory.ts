@@ -30,8 +30,13 @@ export function usePriceHistory(
     let isMounted = true;
     const controller = new AbortController();
 
-    const fetchPriceHistory = async () => {
-      setLoading(true);
+    // A new asset pair invalidates whatever was loaded for the previous one;
+    // drop it so the chart shows a loading state instead of stale/blank data.
+    setData(null);
+
+    const fetchPriceHistory = async (background = false) => {
+      // Background refreshes keep the current chart on screen.
+      if (!background) setLoading(true);
       setError(null);
       try {
         const url = `/api/sep38/price-history?source_asset=${encodeURIComponent(sourceAsset)}&destination_asset=${encodeURIComponent(destinationAsset)}&duration=${encodeURIComponent(duration)}`;
@@ -72,7 +77,7 @@ export function usePriceHistory(
     fetchPriceHistory();
 
     if (refreshInterval && refreshInterval > 0) {
-      const intervalId = setInterval(fetchPriceHistory, refreshInterval);
+      const intervalId = setInterval(() => fetchPriceHistory(true), refreshInterval);
       return () => {
         isMounted = false;
         clearInterval(intervalId);

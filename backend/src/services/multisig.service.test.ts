@@ -253,6 +253,234 @@ describe('MultisigService', () => {
     });
   });
 
+  describe('threshold re-evaluation (#1527)', () => {
+    const baseTx = {
+      hash: Buffer.from('abc123', 'utf8').toString('hex'),
+      envelopeXdr: 'AAAAAA==',
+      creatorPublicKey: mockPublicKey1,
+      requiredSigners: [mockPublicKey1, mockPublicKey2, mockPublicKey3],
+      expiresAt: null,
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const sig = (signerPublicKey: string) => ({ signerPublicKey, signedAt: new Date() });
+
+    let attemptSubmission: jest.SpyInstance;
+
+    beforeEach(() => {
+      attemptSubmission = jest
+        .spyOn(multisigService as any, 'attemptSubmission')
+        .mockImplementation(async (id: any) => ({ id, status: MultisigStatus.SUBMITTED }));
+      (prisma.multisigTransaction.update as jest.Mock).mockImplementation(async ({ where, data }) => ({
+        ...baseTx,
+        id: where.id,
+        signatures: [],
+        ...data,
+      }));
+      (prisma.multisigNotification.createMany as jest.Mock).mockResolvedValue({ count: 0 });
+    });
+
+    afterEach(() => {
+      attemptSubmission.mockRestore();
+    });
+
+    it('evaluateStatus maps signature count and threshold to a status', () => {
+      expect(multisigService.evaluateStatus(0, 2)).toBe(MultisigStatus.PENDING);
+      expect(multisigService.evaluateStatus(1, 2)).toBe(MultisigStatus.PARTIALLY_SIGNED);
+      expect(multisigService.evaluateStatus(2, 2)).toBe(MultisigStatus.READY);
+      expect(multisigService.evaluateStatus(3, 2)).toBe(MultisigStatus.READY);
+    });
+
+    it('addSignature uses the current threshold when it was increased after signatures were collected', async () => {
+      const stale = {
+        ...baseTx,
+        id: 'tx-1',
+        threshold: 2,
+        currentSignatures: 1,
+        status: MultisigStatus.PARTIALLY_SIGNED,
+        signatures: [sig(mockPublicKey1)],
+      };
+      const fresh = { ...stale, threshold: 3, signatures: [sig(mockPublicKey1), sig(mockPublicKey2)] };
+
+      (prisma.multisigTransaction.findUnique as jest.Mock)
+        .mockResolvedValueOnce(stale)
+        .mockResolvedValueOnce(fresh);
+      (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue({
+        hash: () => Buffer.from('abc123', 'utf8'),
+        signatures: [],
+      });
+      (prisma.multisigSignature.create as jest.Mock).mockResolvedValue({});
+      const extract = jest.spyOn(multisigService as any, 'extractSignature').mockReturnValue('sig');
+      const merge = jest.spyOn(multisigService as any, 'mergeSignatures').mockResolvedValue('merged');
+
+      const result = await multisigService.addSignature({
+        transactionId: 'tx-1',
+        signerPublicKey: mockPublicKey2,
+        signedEnvelopeXdr: 'AAAAAA==',
+      });
+
+      expect(prisma.multisigTransaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            currentSignatures: 2,
+            status: MultisigStatus.PARTIALLY_SIGNED,
+          }),
+        })
+      );
+      expect(result.status).toBe(MultisigStatus.PARTIALLY_SIGNED);
+      expect(attemptSubmission).not.toHaveBeenCalled();
+
+      extract.mockRestore();
+      merge.mockRestore();
+    });
+
+    it('updateThreshold re-evaluates a READY transaction when the threshold is increased', async () => {
+      const ready = {
+        ...baseTx,
+        id: 'tx-2',
+        threshold: 2,
+        currentSignatures: 2,
+        status: MultisigStatus.READY,
+        signatures: [sig(mockPublicKey1), sig(mockPublicKey2)],
+      };
+
+      (prisma.multisigTransaction.findUnique as jest.Mock)
+        .mockResolvedValueOnce(ready)
+        .mockResolvedValueOnce({ ...ready, threshold: 3 });
+
+      const result = await multisigService.updateThreshold('tx-2', 3);
+
+      expect(prisma.multisigTransaction.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 'tx-2' },
+        data: { threshold: 3 },
+      });
+      expect(prisma.multisigTransaction.update).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: { status: MultisigStatus.PARTIALLY_SIGNED, currentSignatures: 2 },
+        })
+      );
+      expect(result.status).toBe(MultisigStatus.PARTIALLY_SIGNED);
+      expect(attemptSubmission).not.toHaveBeenCalled();
+    });
+
+    it('updateThreshold rejects thresholds outside the signer range', async () => {
+      (prisma.multisigTransaction.findUnique as jest.Mock).mockResolvedValueOnce({
+        ...baseTx,
+        id: 'tx-3',
+        threshold: 2,
+        currentSignatures: 0,
+        status: MultisigStatus.PENDING,
+        signatures: [],
+      });
+
+      await expect(multisigService.updateThreshold('tx-3', 4)).rejects.toThrow('Invalid threshold');
+      expect(prisma.multisigTransaction.update).not.toHaveBeenCalled();
+    });
+
+    it('reconcilePendingTransactions corrects drifted statuses, expires stale ones and submits ready ones', async () => {
+      const txs: Record<string, any> = {
+        // Stuck in PENDING although two signatures exist (threshold 3).
+        stuck: {
+          ...baseTx,
+          id: 'stuck',
+          threshold: 3,
+          currentSignatures: 0,
+          status: MultisigStatus.PENDING,
+          signatures: [sig(mockPublicKey1), sig(mockPublicKey2)],
+        },
+        // Threshold met but never promoted to READY.
+        ready: {
+          ...baseTx,
+          id: 'ready',
+          threshold: 2,
+          currentSignatures: 1,
+          status: MultisigStatus.PARTIALLY_SIGNED,
+          signatures: [sig(mockPublicKey1), sig(mockPublicKey3)],
+        },
+        // Already consistent.
+        ok: {
+          ...baseTx,
+          id: 'ok',
+          threshold: 2,
+          currentSignatures: 1,
+          status: MultisigStatus.PARTIALLY_SIGNED,
+          signatures: [sig(mockPublicKey1)],
+        },
+        expired: {
+          ...baseTx,
+          id: 'expired',
+          threshold: 2,
+          currentSignatures: 0,
+          status: MultisigStatus.PENDING,
+          signatures: [],
+          expiresAt: new Date(Date.now() - 1000),
+        },
+      };
+
+      (prisma.multisigTransaction.findMany as jest.Mock).mockResolvedValue(
+        Object.keys(txs).map(id => ({ id }))
+      );
+      (prisma.multisigTransaction.findUnique as jest.Mock).mockImplementation(
+        async ({ where }) => txs[where.id]
+      );
+
+      const summary = await multisigService.reconcilePendingTransactions();
+
+      expect(summary).toEqual({ checked: 4, updated: 3, failed: 0 });
+      expect(prisma.multisigTransaction.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            status: {
+              in: [MultisigStatus.PENDING, MultisigStatus.PARTIALLY_SIGNED, MultisigStatus.READY],
+            },
+          },
+        })
+      );
+      expect(prisma.multisigTransaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'stuck' },
+          data: { status: MultisigStatus.PARTIALLY_SIGNED, currentSignatures: 2 },
+        })
+      );
+      expect(prisma.multisigTransaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'ready' },
+          data: { status: MultisigStatus.READY, currentSignatures: 2 },
+        })
+      );
+      expect(prisma.multisigTransaction.update).toHaveBeenCalledWith({
+        where: { id: 'expired' },
+        data: { status: MultisigStatus.EXPIRED },
+      });
+      expect(prisma.multisigTransaction.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'ok' } })
+      );
+      expect(attemptSubmission).toHaveBeenCalledTimes(1);
+      expect(attemptSubmission).toHaveBeenCalledWith('ready');
+    });
+
+    it('reconcilePendingTransactions keeps going when one transaction fails', async () => {
+      (prisma.multisigTransaction.findMany as jest.Mock).mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
+      (prisma.multisigTransaction.findUnique as jest.Mock).mockImplementation(async ({ where }) => {
+        if (where.id === 'a') throw new Error('db down');
+        return {
+          ...baseTx,
+          id: 'b',
+          threshold: 3,
+          currentSignatures: 0,
+          status: MultisigStatus.PENDING,
+          signatures: [sig(mockPublicKey1)],
+        };
+      });
+
+      const summary = await multisigService.reconcilePendingTransactions();
+
+      expect(summary).toEqual({ checked: 2, updated: 1, failed: 1 });
+    });
+  });
+
   describe('getTransaction', () => {
     it('should retrieve transaction by ID', async () => {
       const mockTx = {

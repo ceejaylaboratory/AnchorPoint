@@ -26,11 +26,19 @@ type KycDocumentUploadProps = {
   account: string;
   fields: FieldRequirement[];
   onComplete?: (uploadIds: Record<string, string>) => void;
+  /** Notified whenever an upload starts or the last in-flight upload settles. */
+  onUploadingChange?: (uploading: boolean) => void;
 };
 
 const isFileField = (field: FieldRequirement) => field.type === 'file';
 
-export const KycDocumentUpload = ({ apiBaseUrl, account, fields, onComplete }: KycDocumentUploadProps) => {
+export const KycDocumentUpload = ({
+  apiBaseUrl,
+  account,
+  fields,
+  onComplete,
+  onUploadingChange,
+}: KycDocumentUploadProps) => {
   const fileFields = useMemo(() => fields.filter(isFileField), [fields]);
   const [uploadStates, setUploadStates] = useState<Record<string, FileUploadState>>({});
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
@@ -43,6 +51,12 @@ export const KycDocumentUpload = ({ apiBaseUrl, account, fields, onComplete }: K
       Object.values(urls).forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
+
+  const isUploading = Object.values(uploadStates).some((state) => state.status === 'uploading');
+
+  useEffect(() => {
+    onUploadingChange?.(isUploading);
+  }, [isUploading, onUploadingChange]);
 
   const updateFieldState = useCallback((key: string, patch: Partial<FileUploadState>) => {
     setUploadStates((prev) => ({

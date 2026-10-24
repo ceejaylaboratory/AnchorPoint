@@ -3,6 +3,13 @@ import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { MultisigStatus } from '@prisma/client';
 
+/** Statuses in which a transaction is still collecting (or may need to re-collect) signatures. */
+const COLLECTING_STATUSES: MultisigStatus[] = [
+  MultisigStatus.PENDING,
+  MultisigStatus.PARTIALLY_SIGNED,
+  MultisigStatus.READY,
+];
+
 export interface CreateMultisigTransactionParams {
   envelopeXdr: string;
   creatorPublicKey: string;
@@ -360,12 +367,20 @@ class MultisigService {
       },
     });
 
-    const newSignatureCount = multisigTx.currentSignatures + 1;
-
-    // Update the transaction with the new signature
-    const updatedStatus = newSignatureCount >= multisigTx.threshold
-      ? MultisigStatus.READY
-      : MultisigStatus.PARTIALLY_SIGNED;
+    // Re-read the transaction so the threshold and signature set reflect the
+    // current persisted state rather than the snapshot taken before this
+    // signature was written (the threshold may have changed in the meantime).
+    const fresh = await prisma.multisigTransaction.findUnique({
+      where: { id: transactionId },
+      include: { signatures: true },
+    });
+    const currentThreshold = fresh?.threshold ?? multisigTx.threshold;
+    const currentRequiredSigners = (fresh?.requiredSigners ?? requiredSigners) as string[];
+    const newSignatureCount = this.countValidSignatures(
+      [...(fresh?.signatures ?? multisigTx.signatures), { signerPublicKey }],
+      currentRequiredSigners
+    );
+    const updatedStatus = this.evaluateStatus(newSignatureCount, currentThreshold);
 
     // Merge the new signature into the envelope
     const mergedEnvelope = await this.mergeSignatures(multisigTx.envelopeXdr, signedEnvelopeXdr);
@@ -382,7 +397,7 @@ class MultisigService {
 
     logger.info(
       `Added signature from ${signerPublicKey} to transaction ${transactionId} ` +
-      `(${newSignatureCount}/${multisigTx.threshold})`
+      `(${newSignatureCount}/${currentThreshold})`
     );
 
     // Notify about the new signature
@@ -395,6 +410,165 @@ class MultisigService {
     }
 
     return this.formatTransactionDetails(updated);
+  }
+
+  /**
+   * Derive the signature-collection status from the number of valid
+   * signatures and the current threshold.
+   */
+  evaluateStatus(signatureCount: number, threshold: number): MultisigStatus {
+    if (signatureCount >= threshold) {
+      return MultisigStatus.READY;
+    }
+    return signatureCount > 0 ? MultisigStatus.PARTIALLY_SIGNED : MultisigStatus.PENDING;
+  }
+
+  /**
+   * Count distinct signatures that belong to the current required signer set.
+   */
+  private countValidSignatures(
+    signatures: Array<{ signerPublicKey: string }>,
+    requiredSigners: string[]
+  ): number {
+    const required = new Set(requiredSigners);
+    const signed = new Set(
+      signatures.map(sig => sig.signerPublicKey).filter(key => required.has(key))
+    );
+    return signed.size;
+  }
+
+  /**
+   * Change the signature threshold of a transaction that is still collecting
+   * signatures, and immediately re-evaluate its status against the signatures
+   * already collected.
+   */
+  async updateThreshold(transactionId: string, newThreshold: number): Promise<MultisigTransactionDetails> {
+    const multisigTx = await prisma.multisigTransaction.findUnique({
+      where: { id: transactionId },
+      include: { signatures: true },
+    });
+
+    if (!multisigTx) {
+      throw new Error('Multisig transaction not found');
+    }
+
+    if (!COLLECTING_STATUSES.includes(multisigTx.status)) {
+      throw new Error(`Cannot update threshold: transaction is ${multisigTx.status}`);
+    }
+
+    const requiredSigners = multisigTx.requiredSigners as string[];
+    if (!Number.isInteger(newThreshold) || newThreshold < 1 || newThreshold > requiredSigners.length) {
+      throw new Error('Invalid threshold: must be between 1 and number of required signers');
+    }
+
+    await prisma.multisigTransaction.update({
+      where: { id: transactionId },
+      data: { threshold: newThreshold },
+    });
+
+    logger.info(
+      `Updated threshold of multisig transaction ${transactionId} ` +
+      `from ${multisigTx.threshold} to ${newThreshold}`
+    );
+
+    const { transaction } = await this.reconcileTransaction(transactionId);
+    return transaction;
+  }
+
+  /**
+   * Re-evaluate a single transaction that is still collecting signatures
+   * against its current threshold and signature set, correcting its status
+   * and signature count when they have drifted.
+   */
+  async reconcileTransaction(
+    transactionId: string
+  ): Promise<{ transaction: MultisigTransactionDetails; changed: boolean }> {
+    const multisigTx = await prisma.multisigTransaction.findUnique({
+      where: { id: transactionId },
+      include: { signatures: true },
+    });
+
+    if (!multisigTx) {
+      throw new Error('Multisig transaction not found');
+    }
+
+    if (!COLLECTING_STATUSES.includes(multisigTx.status)) {
+      return { transaction: this.formatTransactionDetails(multisigTx), changed: false };
+    }
+
+    if (multisigTx.expiresAt && multisigTx.expiresAt <= new Date()) {
+      await this.markAsExpired(transactionId);
+      return {
+        transaction: this.formatTransactionDetails({ ...multisigTx, status: MultisigStatus.EXPIRED }),
+        changed: true,
+      };
+    }
+
+    const requiredSigners = multisigTx.requiredSigners as string[];
+    const signatureCount = this.countValidSignatures(multisigTx.signatures, requiredSigners);
+    const status = this.evaluateStatus(signatureCount, multisigTx.threshold);
+
+    if (status === multisigTx.status && signatureCount === multisigTx.currentSignatures) {
+      return { transaction: this.formatTransactionDetails(multisigTx), changed: false };
+    }
+
+    const updated = await prisma.multisigTransaction.update({
+      where: { id: transactionId },
+      data: { status, currentSignatures: signatureCount },
+      include: { signatures: true },
+    });
+
+    logger.info(
+      `Reconciled multisig transaction ${transactionId}: ${multisigTx.status} -> ${status} ` +
+      `(${signatureCount}/${multisigTx.threshold})`
+    );
+
+    if (status === MultisigStatus.READY && multisigTx.status !== MultisigStatus.READY) {
+      await this.notifyThresholdReached(transactionId, requiredSigners);
+      try {
+        return { transaction: await this.attemptSubmission(transactionId), changed: true };
+      } catch (error) {
+        // attemptSubmission has already marked the transaction FAILED and
+        // notified signers; report the reconciled state instead of throwing.
+        const failed = await this.getTransaction(transactionId);
+        return { transaction: failed ?? this.formatTransactionDetails(updated), changed: true };
+      }
+    }
+
+    return { transaction: this.formatTransactionDetails(updated), changed: true };
+  }
+
+  /**
+   * Re-check every transaction that is still collecting signatures so that
+   * transactions whose threshold changed after signing do not stay stuck.
+   * Intended to be run periodically by the multisig reconciliation scheduler.
+   */
+  async reconcilePendingTransactions(): Promise<{ checked: number; updated: number; failed: number }> {
+    const transactions = await prisma.multisigTransaction.findMany({
+      where: {
+        status: {
+          in: COLLECTING_STATUSES,
+        },
+      },
+      select: { id: true },
+    });
+
+    let updated = 0;
+    let failed = 0;
+
+    for (const { id } of transactions) {
+      try {
+        const { changed } = await this.reconcileTransaction(id);
+        if (changed) {
+          updated++;
+        }
+      } catch (error) {
+        failed++;
+        logger.error(`Failed to reconcile multisig transaction ${id}:`, error);
+      }
+    }
+
+    return { checked: transactions.length, updated, failed };
   }
 
   /**

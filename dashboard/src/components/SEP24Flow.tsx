@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
+import { AlertTriangle, ArrowUpRight, CheckCircle2, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RequirementList } from './RequirementList';
 import { WithdrawalForm } from './WithdrawalForm';
@@ -7,6 +7,8 @@ import { DepositForm } from './DepositForm';
 import { DepositErrorAlert } from './DepositErrorAlert';
 import { InteractiveWebview } from './InteractiveWebview';
 import { AssetDropdown } from './AssetDropdown';
+import { KycDocumentUpload } from './KycDocumentUpload';
+import { Modal } from './Modal';
 import type { AssetOption } from './AssetDropdown';
 import type { DepositError } from './DepositErrorAlert';
 import type { UiConfig } from '../types';
@@ -26,15 +28,25 @@ export const SEP24Flow = ({
   type,
   uiConfig,
   apiBaseUrl,
+  account,
 }: {
   type: 'deposit' | 'withdraw';
   uiConfig: UiConfig;
   apiBaseUrl?: string;
+  /** Stellar account the KYC documents are uploaded for; uploads are hidden without it. */
+  account?: string;
 }) => {
   const [step, setStep] = useState(1);
   const [selectedAsset, setSelectedAsset] = useState(ASSET_OPTIONS[0].code);
   const [depositError, setDepositError] = useState<DepositError | null>(null);
   const [kycError, setKycError] = useState<DepositError | null>(null);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploadInProgress, setUploadInProgress] = useState(false);
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const confirmTitleId = useId();
+  const confirmMessageId = useId();
+  const canUploadDocuments =
+    Boolean(apiBaseUrl && account) && uiConfig.fieldRequirements.kyc.some((field) => field.type === 'file');
   const transactionFields = uiConfig.fieldRequirements[type];
   const flowLabel = type === 'deposit' ? 'Deposit' : 'Withdrawal';
 
@@ -57,6 +69,28 @@ export const SEP24Flow = ({
     setDepositError(null);
     goToStep(4);
   };
+
+  // Once the upload settles there is nothing left to confirm.
+  useEffect(() => {
+    if (!uploadInProgress) setConfirmCloseOpen(false);
+  }, [uploadInProgress]);
+
+  const closeUploadModal = () => {
+    setUploadModalOpen(false);
+    setConfirmCloseOpen(false);
+    setUploadInProgress(false);
+  };
+
+  const documentUploadTrigger = canUploadDocuments && (
+    <button
+      type="button"
+      onClick={() => setUploadModalOpen(true)}
+      className="action-button inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+    >
+      <Upload size={16} aria-hidden="true" />
+      Upload KYC documents
+    </button>
+  );
 
   const handleKycDismiss = () => {
     // Show error when KYC is dismissed
@@ -242,6 +276,7 @@ export const SEP24Flow = ({
                 assetCode={selectedAsset}
                 onSubmit={() => handleDepositFormSubmit()}
               />
+              {documentUploadTrigger}
               <button
                 onClick={() => goToStep(1)}
                 className="rounded text-sm text-slate-500 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
@@ -278,6 +313,7 @@ export const SEP24Flow = ({
                 onDismiss={() => handleKycDismiss()}
                 title="SEP-24 KYC Webview"
               />
+              {documentUploadTrigger}
             </div>
             <RequirementList title="KYC Requirements" fields={uiConfig.fieldRequirements.kyc} />
           </motion.div>
@@ -313,6 +349,63 @@ export const SEP24Flow = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {canUploadDocuments && (
+        <Modal
+          isOpen={uploadModalOpen}
+          title="Upload KYC Documents"
+          description="Keep this window open until your documents finish uploading."
+          size="lg"
+          onClose={closeUploadModal}
+          preventClose={uploadInProgress}
+          onCloseBlocked={() => setConfirmCloseOpen(true)}
+        >
+          {confirmCloseOpen && (
+            <div
+              role="alertdialog"
+              aria-labelledby={confirmTitleId}
+              aria-describedby={confirmMessageId}
+              className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4"
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={20} className="mt-0.5 shrink-0 text-amber-400" aria-hidden="true" />
+                <div className="space-y-1">
+                  <p id={confirmTitleId} className="text-sm font-semibold text-amber-200">
+                    Upload in progress
+                  </p>
+                  <p id={confirmMessageId} className="text-sm text-amber-100/80">
+                    Closing now will discard the document that is still uploading. Do you want to close anyway?
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => setConfirmCloseOpen(false)}
+                  className="action-button rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+                >
+                  Keep uploading
+                </button>
+                <button
+                  type="button"
+                  onClick={closeUploadModal}
+                  className="action-button rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+                >
+                  Close and discard upload
+                </button>
+              </div>
+            </div>
+          )}
+          <KycDocumentUpload
+            apiBaseUrl={apiBaseUrl as string}
+            account={account as string}
+            fields={uiConfig.fieldRequirements.kyc}
+            onUploadingChange={setUploadInProgress}
+            onComplete={closeUploadModal}
+          />
+        </Modal>
+      )}
     </div>
   );
 };
