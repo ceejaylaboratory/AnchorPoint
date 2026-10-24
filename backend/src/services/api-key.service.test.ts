@@ -1,4 +1,4 @@
-import { ApiKeyService } from './api-key.service';
+import { API_KEY_FORMAT, ApiKeyFormatError, ApiKeyService } from './api-key.service';
 import prisma from '../lib/prisma';
 import crypto from 'crypto';
 
@@ -20,6 +20,7 @@ describe('ApiKeyService', () => {
   beforeEach(() => {
     service = new ApiKeyService();
     jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
   it('should generate a new API key', async () => {
@@ -58,6 +59,16 @@ describe('ApiKeyService', () => {
     }));
 
     const result = await service.createKey('user1', 'Pro');
-    expect(result.key).toMatch(/^[a-f0-9]{48}$/);
+    expect(result.key).toMatch(API_KEY_FORMAT);
+  });
+
+  it('should refuse to store a malformed generated key', async () => {
+    jest
+      .spyOn(crypto, 'randomBytes')
+      .mockImplementation(() => Buffer.from('short') as any);
+
+    await expect(service.createKey('user1', 'Pro')).rejects.toBeInstanceOf(ApiKeyFormatError);
+    expect(prisma.apiKey.create).not.toHaveBeenCalled();
+  });
   });
 });

@@ -25,6 +25,7 @@ const submitSchema = z.object({
 });
 
 
+
 /**
  * @swagger
  * /api/transactions:
@@ -143,6 +144,7 @@ router.get('/', authMiddleware, validate({ query: querySchema }), async (req: Au
       const eventRows = await prisma.contractEvent.findMany({
         where: { AND: eventAndClauses },
         select: { txHash: true },
+        distinct: ['txHash'],
       });
 
       matchingTxHashes = [...new Set(eventRows.map((row) => row.txHash).filter(Boolean))];

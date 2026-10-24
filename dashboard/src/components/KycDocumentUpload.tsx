@@ -178,9 +178,16 @@ export const KycDocumentUpload = ({
     .every((f) => uploadStates[f.key]?.status === 'complete');
 
   const handleSubmit = () => {
-    if (allRequiredComplete) {
-      onComplete?.(completedUploads);
+    if (!allRequiredComplete) {
+      return;
     }
+    onComplete?.(completedUploads);
+
+    // Drop file references and previews once documents are handed off.
+    Object.values(previewUrls.current).forEach((url) => URL.revokeObjectURL(url));
+    previewUrls.current = {};
+    dragCounter.current = {};
+    setUploadStates({});
   };
 
   if (fileFields.length === 0) {
