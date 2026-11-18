@@ -1,10 +1,27 @@
 import Redis from 'ioredis';
 import Redlock from 'redlock';
 import logger from '../utils/logger';
+import { RedisMonitor } from './redis-monitor';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
 const isTest = process.env.NODE_ENV === 'test';
+
+const isSentinelEnabled = () => process.env.REDIS_SENTINEL_ENABLED === 'true';
+
+const parseSentinels = (): Array<{ host: string; port: number }> => {
+  const raw = process.env.REDIS_SENTINELS || '';
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [host, port] = entry.split(':');
+      return { host: host || 'localhost', port: Number(port) || 26379 };
+    });
+};
+
+const getSentinelName = () => process.env.REDIS_SENTINEL_NAME || 'mymaster';
 
 export type RedisClientLike = {
   on: (event: string, handler: (...args: any[]) => void) => void;
@@ -65,13 +82,23 @@ const decorateDuplicateMethod = <T extends RedisClientLike>(client: T): T => {
 };
 
 const createRedisClient = () => {
-  const client = new Redis(redisUrl, {
+  const options = {
     maxRetriesPerRequest: 3,
     retryStrategy: (times: number) => {
       const delay = Math.min(times * 50, 2000);
       return delay;
     },
-  }) as unknown as RedisClientLike;
+  };
+
+  const client = (
+    isSentinelEnabled()
+      ? new Redis({
+          ...options,
+          sentinels: parseSentinels(),
+          name: getSentinelName(),
+        })
+      : new Redis(redisUrl, options)
+  ) as unknown as RedisClientLike;
 
   return decorateDuplicateMethod(attachRedisEventHandlers(client));
 };
@@ -111,3 +138,33 @@ export const redlock = new Redlock(
     automaticExtensionThreshold: 500, // time in ms before lock expiration to automatically extend it
   }
 );
+
+let redisMonitor: RedisMonitor | null = null;
+
+export const startRedisMonitor = (): RedisMonitor | null => {
+  if (isTest) {
+    return null;
+  }
+
+  if (redisMonitor) {
+    return redisMonitor;
+  }
+
+  const monitorClient = (redis as unknown as RedisClientLike).duplicate() as unknown as Redis;
+  redisMonitor = new RedisMonitor(monitorClient, {
+    sentinelName: getSentinelName(),
+    sentinels: isSentinelEnabled() ? parseSentinels() : undefined,
+  });
+  redisMonitor.start();
+  return redisMonitor;
+};
+
+export const stopRedisMonitor = async (): Promise<void> => {
+  if (!redisMonitor) {
+    return;
+  }
+
+  const monitor = redisMonitor;
+  redisMonitor = null;
+  await monitor.stop();
+};

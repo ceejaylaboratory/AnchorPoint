@@ -29,6 +29,15 @@ route:
         - alertname="DatabaseConnectionExhausted"
       receiver: slack-ops
       continue: true
+    # API error rate, slow query, and queue latency alerts are routed to the
+    # ops Slack channel and email so operators get an immediate signal.
+    - matchers:
+        - alertname=~"HighApiErrorRate|SlowDatabaseQueries|HighQueueLatency"
+      receiver: slack-ops
+      continue: true
+    - matchers:
+        - alertname=~"HighApiErrorRate|SlowDatabaseQueries|HighQueueLatency"
+      receiver: email-ops
 
 receivers:
   - name: pagerduty-critical
@@ -73,8 +82,34 @@ receivers:
             *Service:* {{ .Labels.service }}
             *Severity:* {{ .Labels.severity }}
             *Description:* {{ .Annotations.description }}
+            *Runbook:* {{ .Annotations.runbook_url }}
           {{ end }}
         send_resolved: true
+
+  # Email notifications for the ops team. SMTP settings are supplied via
+  # environment variables (with --config.expand-env=true) to keep credentials
+  # out of git.
+  - name: email-ops
+    email_configs:
+      - to: ${ALERTMANAGER_EMAIL_TO}
+        from: ${ALERTMANAGER_EMAIL_FROM}
+        smarthost: ${ALERTMANAGER_SMTP_SMARTHOST}
+        auth_username: ${ALERTMANAGER_SMTP_USERNAME}
+        auth_password: ${ALERTMANAGER_SMTP_PASSWORD}
+        require_tls: true
+        send_resolved: true
+        headers:
+          Subject: '{{ if eq .Status "resolved" }}[RESOLVED] {{ else }}[FIRING] {{ end }}{{ .CommonAnnotations.summary }}'
+        html: |-
+          {{ range .Alerts }}
+            <p>
+              <strong>Alert:</strong> {{ .Labels.alertname }}<br/>
+              <strong>Service:</strong> {{ .Labels.service }}<br/>
+              <strong>Severity:</strong> {{ .Labels.severity }}<br/>
+              <strong>Description:</strong> {{ .Annotations.description }}<br/>
+              <strong>Runbook:</strong> <a href="{{ .Annotations.runbook_url }}">{{ .Annotations.runbook_url }}</a>
+            </p>
+          {{ end }}
 
   # Dedicated channel for automated TLS certificate renewal notifications.
   # Set SLACK_WEBHOOK_URL in the Alertmanager environment (with --config.expand-env=true).

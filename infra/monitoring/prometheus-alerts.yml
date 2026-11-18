@@ -57,6 +57,81 @@ groups:
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
 
   # ---------------------------------------------------------------------------
+  # API error rate and latency alerts
+  # These rules catch customer-impacting degradation before a full outage.
+  # ---------------------------------------------------------------------------
+  - name: anchorpoint-api-errors
+    interval: 30s
+    rules:
+      # Fires when more than 1% of HTTP responses are 5xx over a 5 minute window.
+      - alert: HighApiErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+              /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.01
+          and sum(rate(http_requests_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: API 5xx error rate exceeds 1% of total traffic
+          description: >-
+            The ratio of HTTP 5xx responses to total requests has exceeded 1%
+            for more than 5 minutes. Current error ratio is
+            {{ printf "%.2f" (mul 100 (div (sum(rate(http_requests_total{status_code=~\"5..\"}[5m]))) (sum(rate(http_requests_total[5m]))))) }}%.
+            Investigate recent deploys, dependency failures, and upstream errors.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+  # ---------------------------------------------------------------------------
+  # Database and queue latency alerts
+  # ---------------------------------------------------------------------------
+  - name: anchorpoint-database
+    interval: 30s
+    rules:
+      # Fires when P95 database query latency exceeds 250ms over 10 minutes.
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(db_query_duration_seconds_bucket[10m])) by (le)
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          service: anchorpoint-database
+          team: platform
+        annotations:
+          summary: P95 database query latency exceeds 250ms
+          description: >-
+            The 95th percentile database query latency has exceeded 250ms for
+            more than 10 minutes. Check for missing indexes, lock contention,
+            long-running transactions, and connection pool saturation.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Fires when BullMQ contract execution queue delay exceeds 60 seconds.
+      - alert: HighQueueLatency
+        expr: |
+          max(
+            bullmq_queue_waiting_duration_seconds{queue="contract-execution"}
+          ) > 60
+        for: 5m
+        labels:
+          severity: warning
+          service: anchorpoint-worker
+          team: platform
+        annotations:
+          summary: BullMQ contract execution queue delay exceeds 60 seconds
+          description: >-
+            Jobs in the contract-execution queue have been waiting longer than
+            60 seconds. Check worker health, concurrency settings, and downstream
+            dependency latency.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+  # ---------------------------------------------------------------------------
   # TLS certificate lifecycle alerts
   # cert-manager exposes per-certificate expiry timestamps. These rules fire
   # before Let's Encrypt certificates lapse so the on-call can investigate a
@@ -86,6 +161,28 @@ groups:
             {{ printf "%.0f" ((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400) }}
             days. cert-manager should auto-renew 15 days before expiry; investigate
             why renewal has not occurred.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/k8s/cert-manager/CERTIFICATE_LIFECYCLE.md
+
+      # Renewal deadline: certificate will expire within 15 days. cert-manager
+      # renews 15 days before expiry, so this indicates renewal has failed.
+      - alert: AnchorPointCertificateRenewalOverdue
+        expr: |
+          (certmanager_certificate_expiration_timestamp_seconds - time())
+            / 86400 < 15
+          and certmanager_certificate_expiration_timestamp_seconds > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: cert-manager
+          team: platform
+        annotations:
+          summary: TLS certificate {{ $labels.name }} renewal is overdue
+          description: >-
+            The certificate "{{ $labels.name }}" in namespace
+            "{{ $labels.namespace }}" expires in
+            {{ printf "%.0f" ((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400) }}
+            days. Automated renewal should have completed by now; check the
+            cert-manager Certificate and Order resources for ACME failures.
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/k8s/cert-manager/CERTIFICATE_LIFECYCLE.md
 
       # Critical: certificate will expire within 7 days and is at imminent risk

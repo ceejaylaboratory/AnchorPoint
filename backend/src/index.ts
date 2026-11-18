@@ -44,7 +44,7 @@ import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup, verifyDecryptionCapabilityOnStartup, getKeyManagementService } from './lib/key-management.service';
 import queueDashboardRouter, { dashboardQueues } from './api/routes/queue-dashboard.route';
 import prisma from './lib/prisma';
-import { redis } from './lib/redis';
+import { redis, startRedisMonitor, stopRedisMonitor } from './lib/redis';
 import { validateStorageConfigOnStartup } from './services/storage-provider.service';
 import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { dbMetricsScheduler } from './workers/db-metrics.scheduler';
@@ -109,6 +109,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
       (queue): [string, () => Promise<unknown>] => [`${queue.name} queue`, () => queue.close()]
     ),
     ['Prisma client', () => prisma.$disconnect()],
+    ['Redis failover monitor', () => stopRedisMonitor()],
     ['Redis connection', () => redis.quit()],
     ['OpenTelemetry tracing', () => shutdownTracing()],
   ];
@@ -598,6 +599,12 @@ if (process.env.NODE_ENV !== 'test') {
         server = httpServer.listen(PORT, () => {
           logger.info(`Backend service listening at http://localhost:${PORT}`);
           logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+          if (process.env.NODE_ENV !== 'test') {
+            startRedisMonitor();
+            logger.info('Redis failover monitor enabled');
+          } else {
+            logger.info('Redis failover monitor skipped (test environment)');
+          }
           void notifyServerStarted();
           feeReportScheduler.start();
           uploadExpiryScheduler.start();

@@ -17,10 +17,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "anchor-point.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | default "letsencrypt-prod" | quote }}
+    acme.cert-manager.io/http01-edit-in-place: "true"
 spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
