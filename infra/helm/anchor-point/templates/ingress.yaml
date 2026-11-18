@@ -17,7 +17,18 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "anchor-point.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- $annotations := deepCopy (.Values.ingress.annotations | default dict) }}
+  {{- if and .Values.ingress.securityHeaders .Values.ingress.securityHeaders.enabled }}
+  {{- $sh := .Values.ingress.securityHeaders }}
+  {{- $frameAncestors := "'self'" }}
+  {{- range ($sh.sep24FrameAncestors | default list) }}
+  {{- $frameAncestors = printf "%s %s" $frameAncestors . }}
+  {{- end }}
+  {{- $csp := printf "default-src 'self'; script-src %s; style-src %s; img-src %s; font-src %s; connect-src %s; frame-ancestors %s; base-uri 'self'; form-action 'self'; object-src 'none'" ($sh.scriptSrc | default "'self'") ($sh.styleSrc | default "'self' 'unsafe-inline'") ($sh.imgSrc | default "'self' data:") ($sh.fontSrc | default "'self' data:") ($sh.connectSrc | default "'self'") $frameAncestors }}
+  {{- $snippet := printf "add_header Strict-Transport-Security \"max-age=63072000; includeSubDomains; preload\" always;\nadd_header X-Content-Type-Options \"nosniff\" always;\nadd_header X-Frame-Options \"DENY\" always;\nadd_header Referrer-Policy \"strict-origin-when-cross-origin\" always;\nadd_header Content-Security-Policy \"%s\" always;\n" $csp }}
+  {{- $_ := set $annotations "nginx.ingress.kubernetes.io/configuration-snippet" $snippet }}
+  {{- end }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

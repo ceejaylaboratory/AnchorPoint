@@ -99,6 +99,21 @@ const envSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   STELLAR_RPC_URLS: z.string().optional(),
+  // Docker/container DNS resolution tuning. Defaults to IPv4-first lookups to
+  // avoid IPv6 timeout penalties when resolving sibling containers.
+  DNS_RESULT_ORDER: z.enum(['ipv4first', 'verbatim', 'ipv6first']).default('ipv4first'),
+  // Number of retry attempts for transient DNS resolution failures.
+  DNS_RETRY_ATTEMPTS: z
+    .string()
+    .default('3')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(10)),
+  // Base delay (ms) between DNS resolution retries (exponential backoff).
+  DNS_RETRY_DELAY_MS: z
+    .string()
+    .default('100')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(10000)),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_DISTRIBUTION_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),
@@ -113,6 +128,10 @@ const envSchema = z.object({
     .pipe(z.number().int().min(0)),
   // Key Management Configuration
   KEY_MANAGEMENT_BACKEND: z.enum(['aws-kms', 'vault']).default('aws-kms'),
+  // KMS_KEY_ID is the identifier mapped from the Helm deployment template
+  // (values-prod.yaml). It is an alias for AWS_KMS_KEY_ARN and either may be
+  // supplied; at least one is required when the aws-kms backend is active.
+  KMS_KEY_ID: z.string().optional(),
   AWS_KMS_KEY_ARN: z.string().optional(),
   AWS_REGION: z.string().optional(),
   AWS_ACCESS_KEY_ID: z.string().optional(),
@@ -199,6 +218,13 @@ const envSchema = z.object({
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(60).max(86400)),
 }).superRefine((data, ctx) => {
+  if (data.KEY_MANAGEMENT_BACKEND === 'aws-kms' && !data.KMS_KEY_ID && !data.AWS_KMS_KEY_ARN) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'KMS_KEY_ID or AWS_KMS_KEY_ARN is required when KEY_MANAGEMENT_BACKEND is aws-kms',
+      path: ['KMS_KEY_ID'],
+    });
+  }
   if (
     !validateSep38QuotesCacheConfig({
       indicativeQuoteExpirationSeconds: data.SEP38_INDICATIVE_QUOTE_EXPIRATION_SECONDS,
@@ -256,7 +282,7 @@ export async function hydrateEncryptedConfigSecrets(): Promise<void> {
 
   const kmConfig = buildKeyManagementConfigFromEnv({
     KEY_MANAGEMENT_BACKEND: config.KEY_MANAGEMENT_BACKEND,
-    AWS_KMS_KEY_ARN: config.AWS_KMS_KEY_ARN,
+    AWS_KMS_KEY_ARN: config.AWS_KMS_KEY_ARN ?? config.KMS_KEY_ID,
     AWS_REGION: config.AWS_REGION,
     AWS_ACCESS_KEY_ID: config.AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY: config.AWS_SECRET_ACCESS_KEY,

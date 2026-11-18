@@ -10,6 +10,25 @@ Key design choices mirrored from infra/k8s/workers/deployment.yaml:
   - Metrics port 9464 exposed alongside HTTP port 3002
 =============================================================================
 */}}
+{{/*
+=============================================================================
+Validation — fail rendering early when mandatory production secrets are
+missing, instead of letting pods crash-loop on startup.
+=============================================================================
+*/}}
+{{- $requiredSecretKeys := list "DATABASE_URL" "JWT_SECRET" "REDIS_URL" "KMS_KEY_ID" "HORIZON_URL" }}
+{{- if .Values.secrets.existingSecret }}
+{{- required "secrets.existingSecret must be a non-empty string" .Values.secrets.existingSecret }}
+{{- else }}
+{{- range $requiredSecretKeys }}
+{{- if not (has . $.Values.secrets.keys) }}
+{{- fail (printf "mandatory secret key %q is missing from .Values.secrets.keys" .) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.loki.enabled }}
+{{- required "loki.pushUrl is required when loki.enabled=true" .Values.loki.pushUrl }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -85,6 +104,30 @@ spec:
                   key: {{ . }}
             {{- end }}
             {{- end }}
+            {{- if not (has "KMS_KEY_ID" .Values.secrets.keys) }}
+            # Explicit mapping: KMS key identifier used for envelope encryption.
+            - name: KMS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "anchor-point.secretName" . }}
+                  key: KMS_KEY_ID
+            {{- end }}
+            {{- if not (has "HORIZON_URL" .Values.secrets.keys) }}
+            # Explicit mapping: Stellar Horizon endpoint used by the indexer.
+            - name: HORIZON_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "anchor-point.secretName" . }}
+                  key: HORIZON_URL
+            {{- end }}
+            # Structured JSON logging so Promtail/Loki can extract labels
+            # (app, environment, level, route, status_code, trace_id).
+            - name: LOG_FORMAT
+              value: {{ .Values.logging.format | default "json" | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logging.level | default "info" | quote }}
+            - name: LOG_ENVIRONMENT
+              value: {{ .Values.environment | default .Release.Namespace | quote }}
             {{- if .Values.postgres.enabled }}
             # Credentials first: the kubelet expands $(VAR) in an env value
             # only from variables defined earlier in this list, so DATABASE_URL
@@ -118,6 +161,49 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- if .Values.loki.enabled }}
+          # Promtail sidecar: tails this pod's container log files and ships
+          # them to Loki. Mounts the node's pod log directory read-only.
+          - name: promtail
+            image: "{{ .Values.loki.promtail.image.repository }}:{{ .Values.loki.promtail.image.tag }}"
+            imagePullPolicy: {{ .Values.loki.promtail.image.pullPolicy }}
+            args:
+              - -config.file=/etc/promtail/promtail.yaml
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 10001
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+            env:
+              - name: HOSTNAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: spec.nodeName
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.name
+              - name: NAMESPACE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.namespace
+              - name: LOKI_PUSH_URL
+                value: {{ .Values.loki.pushUrl | quote }}
+            volumeMounts:
+              - name: promtail-config
+                mountPath: /etc/promtail
+                readOnly: true
+              - name: pod-logs
+                mountPath: /var/log/pods
+                readOnly: true
+              - name: promtail-positions
+                mountPath: /run/promtail
+            resources:
+              {{- toYaml .Values.loki.promtail.resources | nindent 14 }}
+          {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
@@ -129,6 +215,17 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
+        {{- if .Values.loki.enabled }}
+        - name: promtail-config
+          configMap:
+            name: {{ include "anchor-point.fullname" . }}-promtail
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        - name: promtail-positions
+          emptyDir: {}
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

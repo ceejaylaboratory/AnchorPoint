@@ -41,8 +41,18 @@ ingress:
     cert-manager.io/cluster-issuer: "anchorpoint-prod-issuer"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/hsts: "true"
-    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
     nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+    # Strict security headers (HSTS preload, CSP, clickjacking protection).
+    # frame-ancestors allows the designated SEP-24 partner domains to embed
+    # interactive flows while blocking all other framing.
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=63072000; includeSubDomains; preload";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://*.partner.example.com";
     # Rate limiting to protect the production API
     nginx.ingress.kubernetes.io/limit-rps: "50"
   hosts:
@@ -97,6 +107,8 @@ secrets:
     - STELLAR_PASSPHRASE
     - STELLAR_DEPLOYER_SECRET
     - JWT_SECRET
+    - KMS_KEY_ID
+    - HORIZON_URL
 
 # -- Datastores and dashboard ------------------------------------------------
 # Production keeps Redis and Postgres external (managed instances with
@@ -137,7 +149,15 @@ dashboard:
       cert-manager.io/cluster-issuer: "anchorpoint-prod-issuer"
       nginx.ingress.kubernetes.io/ssl-redirect: "true"
       nginx.ingress.kubernetes.io/hsts: "true"
-      nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+      nginx.ingress.kubernetes.io/hsts-max-age: "63072000"
+      nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+      nginx.ingress.kubernetes.io/hsts-preload: "true"
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        more_set_headers "Strict-Transport-Security: max-age=63072000; includeSubDomains; preload";
+        more_set_headers "X-Content-Type-Options: nosniff";
+        more_set_headers "X-Frame-Options: DENY";
+        more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+        more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://*.partner.example.com";
     hosts:
       - host: dashboard.anchorpoint.example.com
         paths:
@@ -147,3 +167,41 @@ dashboard:
       - secretName: anchorpoint-dashboard-prod-tls
         hosts:
           - dashboard.anchorpoint.example.com
+
+# -- Centralized log aggregation (Loki + Promtail) ---------------------------
+# Container logs are shipped to Loki by Promtail and queried in Grafana
+# Explore. Retention is enforced by Loki (720h = 30 days).
+loki:
+  enabled: true
+  image:
+    repository: grafana/loki
+    tag: "2.9.6"
+    pullPolicy: IfNotPresent
+  retention: "720h"
+  storage:
+    chunkStore: filesystem
+    chunkTargetSize: "1572864"
+    maxChunkAge: "1h"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+promtail:
+  enabled: true
+  image:
+    repository: grafana/promtail
+    tag: "2.9.6"
+    pullPolicy: IfNotPresent
+  lokiUrl: "http://anchor-point-loki:3100/loki/api/v1/push"
+  environment: "production"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
