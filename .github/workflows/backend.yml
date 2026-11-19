@@ -14,13 +14,24 @@ on:
 
 jobs:
   validate:
-    name: Validate Migration Integrity
+    name: Validate Migration Integrity (${{ matrix.db_name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - db_name: cidb_ci_1
+            shadow_db_name: shadowdb_ci_1
+          - db_name: cidb_ci_2
+            shadow_db_name: shadowdb_ci_2
     env:
       PGHOST: 127.0.0.1
       PGPORT: 5432
       PGUSER: postgres
       PGPASSWORD: postgres
+      # Unique database per matrix runner so concurrent jobs never share state.
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/${{ matrix.db_name }}"
+      SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/${{ matrix.shadow_db_name }}"
 
     services:
       redis:
@@ -37,7 +48,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cidb
+          POSTGRES_DB: ${{ matrix.db_name }}
         ports:
           - 5432:5432
         options: >-
@@ -50,7 +61,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shadowdb
+          POSTGRES_DB: ${{ matrix.shadow_db_name }}
         ports:
           - 5433:5432
         options: >-
@@ -80,23 +91,17 @@ jobs:
       # downstream commands (migrate deploy, migrate diff, ts-node scripts)
       # have the correct client bindings available.
       - name: Generate Prisma client
-        env:
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: npx prisma generate
 
       # Fast environment check — fails immediately with a clear message if
       # DATABASE_URL is missing or malformed, rather than surfacing a cryptic
       # Prisma error several steps later.
       - name: Validate migration environment
-        env:
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: node scripts/validate-migration-env.js
 
       # Clean the verification database schema before running migrations
       # This ensures a fresh state and prevents "relation already exists" errors
       - name: Clean verification database schema
-        env:
-          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
         run: |
           npx prisma db execute --url "$DATABASE_URL" --stdin <<EOF
           DROP SCHEMA IF EXISTS public CASCADE;
@@ -105,23 +110,16 @@ jobs:
 
       - name: Verify Migrations Against Temporary Database
         env:
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
-          SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
           VERIFY_MIGRATIONS_ALLOW_RESET: "true"
         run: npm run migrate:verify
 
       - name: Run Migration Integrity Checker
-        env:
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
-          SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
         run: node scripts/check-migrations.js
 
       # Emit migration status as an artefact so reviewers can see which
       # migrations are applied without re-running CI.
       - name: Report migration status
         if: always()
-        env:
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: |
           echo "## Migration Status" > migration-status.md
           npx prisma migrate status >> migration-status.md 2>&1 || true
@@ -130,7 +128,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: migration-status
+          name: migration-status-${{ matrix.db_name }}
           path: backend/migration-status.md
           retention-days: 7
 
@@ -146,8 +144,6 @@ jobs:
           done
 
       - name: Run DB migrations
-        env:
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: npx prisma migrate deploy || npx prisma db push
 
       - name: Run Lint
@@ -157,10 +153,23 @@ jobs:
         run: npm run swagger:validate
 
       - name: Run Tests
-        env:
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
-          SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
         run: npm test
+
+      # Repeatedly run the integration suite to prove there is no flakiness.
+      # Each iteration starts from a clean schema so state cannot leak between runs.
+      - name: Verify zero flakiness (10 consecutive runs)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            echo "::group::Integration test run $i/10"
+            npx prisma db execute --url "$DATABASE_URL" --stdin <<EOF
+          DROP SCHEMA IF EXISTS public CASCADE;
+          CREATE SCHEMA public;
+          EOF
+            npx prisma migrate deploy
+            npm test
+            echo "::endgroup::"
+          done
 
       - name: Cleanup test artifacts
         if: always()

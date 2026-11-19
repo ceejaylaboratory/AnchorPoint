@@ -51,6 +51,42 @@ npm run test:coverage
 
 Current coverage threshold is set to **95%** for branches, functions, lines, and statements.
 
+### Local Test Database Setup
+Integration tests require a local PostgreSQL instance (and Redis for queue-backed tests). Each test run uses its own database so concurrent suites never share state.
+
+1. Start the dependencies with Docker Compose:
+   ```bash
+   docker compose up -d postgres redis
+   ```
+   This exposes PostgreSQL on `localhost:5432` and Redis on `localhost:6379`.
+
+2. Point the backend at dedicated test databases (never your development database):
+   ```bash
+   export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/anchorpoint_test?schema=public"
+   export SHADOW_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/anchorpoint_test_shadow?schema=public"
+   export REDIS_URL="redis://localhost:6379"
+   ```
+   Create the databases if they do not exist yet:
+   ```bash
+   createdb -h localhost -U postgres anchorpoint_test
+   createdb -h localhost -U postgres anchorpoint_test_shadow
+   ```
+
+3. Apply migrations to the test database:
+   ```bash
+   npx prisma migrate deploy
+   ```
+
+4. Run the Jest suite. The global teardown helper (`jest.teardown.js`) truncates all tables between suites, so no manual cleanup is needed:
+   ```bash
+   npm test
+   ```
+
+Notes:
+- `testTimeout` is set to `30000` ms to accommodate asynchronous Stellar network integration tests.
+- If a run is interrupted, re-run `npm test`; the teardown hook resets table state on the next run.
+- CI provisions an isolated Postgres service container with a unique database name per matrix runner, so local and CI behavior match.
+
 ### Quality Control
 To run the linter:
 ```bash

@@ -18,8 +18,7 @@ module.exports = {
     "^@noble/ed25519$": "<rootDir>/src/__mocks__/@noble/ed25519.ts",
     "^uint8array-extras$": "<rootDir>/src/__mocks__/uint8array-extras.ts",
   },
+  testTimeout: 30000,
   globalSetup: "<rootDir>/jest.setup.js",
   globalTeardown: "<rootDir>/jest.teardown.js",
 };
-
-
