@@ -1,0 +1,133 @@
+# Promtail configuration for centralized log aggregation (issue #1673)
+# Scrapes Docker container logs, parses JSON log lines from backend and Nginx,
+# and ships them to Grafana Loki with structured labels.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Retry/backoff so transient Loki restarts do not drop log lines.
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+    batchwait: 1s
+    batchsize: 1048576 # 1MB
+    tenant_id: ""
+
+scrape_configs:
+  # ---------------------------------------------------------------------------
+  # Docker container logs scraped directly from the host filesystem.
+  # Promtail's docker service discovery enriches targets with container
+  # metadata (container name, image, labels) which we map to the `app` label.
+  # ---------------------------------------------------------------------------
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          # Only scrape containers that opt in via a label.
+          - name: label
+            values: ["logging=promtail"]
+    relabel_configs:
+      # Derive a stable `app` label from the container name, stripping the
+      # compose project prefix and replica suffix (e.g. "backend-1" -> "backend").
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "app"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: "compose_project"
+      - source_labels: ["__meta_docker_container_label_environment"]
+        target_label: "environment"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        regex: "(backend|worker|nginx)"
+        action: keep
+      # Fallback: if no compose service label, use the container name as app.
+      - source_labels: ["app", "__meta_docker_container_name"]
+        regex: ";/(.*)"
+        target_label: "app"
+        replacement: "$1"
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: "stream"
+      - source_labels: ["__meta_docker_container_id"]
+        target_label: "container_id"
+      - target_label: "__path__"
+        replacement: "/var/lib/docker/containers/*/*-json.log"
+
+    pipeline_stages:
+      # Docker wraps each log line in its own JSON envelope; unwrap it first so
+      # the inner application log line becomes the log message.
+      - docker: {}
+
+      # Backend / worker services emit structured JSON logs. Parse them and
+      # promote selected fields to labels. Lines that are not valid JSON are
+      # passed through untouched (no labels extracted).
+      - json:
+          expressions:
+            level: level
+            route: route
+            status_code: status_code
+            traceId: traceId
+            requestId: requestId
+            app: app
+            environment: environment
+            msg: message
+          drop_malformed: false
+
+      # Nginx access logs are emitted as JSON too (log_format json_combined).
+      # If the backend JSON parse produced nothing, try the Nginx field names.
+      - json:
+          expressions:
+            level: level
+            route: request_uri
+            status_code: status
+            traceId: trace_id
+            requestId: request_id
+          drop_malformed: false
+
+      # Normalize / default labels so every stream has a consistent label set.
+      - labels:
+          level:
+          route:
+          status_code:
+          traceId:
+          requestId:
+
+      # Keep trace/request IDs as searchable structured metadata (Loki 2.9+)
+      # in addition to labels, so they can be filtered without high cardinality
+      # label explosion. Falls back gracefully on older Loki versions.
+      - structured_metadata:
+          traceId:
+          requestId:
+
+      # Normalize log level to lowercase for consistent querying.
+      - template:
+          source: level
+          template: "{{ if .Value }}{{ .Value | ToLower }}{{ else }}info{{ end }}"
+
+      # Drop noisy health-check access logs to reduce volume.
+      - drop:
+          source: route
+          expression: "^/(health|healthz|ready|metrics)$"
+          drop_counter_reason: health_check
+
+      # Timestamp: prefer the application-provided timestamp, else Docker's.
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          action_on_failure: skip
+
+      # Ensure a useful output line: use parsed message if present.
+      - output:
+          source: msg
+```
+
+Note: the `output` stage above references `msg` which may be empty for Nginx lines; Promtail falls back to the original log line when the source is missing, so this is safe. If your Loki version predates `structured_metadata` (2.9), remove that stage — the `traceId`/`requestId` labels already make them searchable.

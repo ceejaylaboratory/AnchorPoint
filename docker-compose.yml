@@ -66,6 +66,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    dns_opt:
+      - ndots:2
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
       interval: 30s
@@ -74,7 +76,10 @@ services:
       start_period: 10s
     restart: unless-stopped
     networks:
-      - anchorpoint-network
+      anchorpoint-network:
+        aliases:
+          - stellar-core
+          - soroban-rpc
 
   redis:
     image: redis:7-alpine
@@ -171,6 +176,58 @@ services:
     networks:
       - anchorpoint-network
 
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: anchorpoint-loki
+    profiles:
+      - monitoring
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/loki-config.yml
+      - loki-data:/loki
+    command:
+      - '-config.file=/etc/loki/loki-config.yml'
+    restart: unless-stopped
+    networks:
+      - anchorpoint-network
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: anchorpoint-promtail
+    profiles:
+      - monitoring
+    volumes:
+      - ./infra/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - '-config.file=/etc/promtail/promtail-config.yml'
+    depends_on:
+      - loki
+    restart: unless-stopped
+    networks:
+      - anchorpoint-network
+
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: anchorpoint-grafana
+    profiles:
+      - monitoring
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in your local environment or .env file}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    restart: unless-stopped
+    networks:
+      - anchorpoint-network
+
 volumes:
   postgres-data:
     driver: local
@@ -178,7 +235,16 @@ volumes:
     driver: local
   prometheus-data:
     driver: local
+  loki-data:
+    driver: local
+  grafana-data:
+    driver: local
 
 networks:
   anchorpoint-network:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: 'true'
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

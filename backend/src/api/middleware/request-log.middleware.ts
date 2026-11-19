@@ -1,10 +1,15 @@
 import { Request, Response, NextFunction } from "express";
 import logger from "../../utils/logger";
 import { loadSamplingConfig } from "../../utils/sampling-config";
+import { getTraceContext } from "../../utils/tracing";
 
 /**
  * Express middleware that logs structured HTTP request completion entries.
  * Requirements: 1.4, 1.5, 7.1, 7.2, 7.3, 7.4, 8.2, 8.4
+ *
+ * Emits top-level `route`, `statusCode`, `requestId`, and `traceId` fields
+ * so Promtail can extract them as Loki labels for querying by trace ID and
+ * request ID in Grafana Explore (Issue #1673).
  */
 export function requestLogMiddleware(
   req: Request,
@@ -36,12 +41,21 @@ export function requestLogMiddleware(
     const level =
       httpStatusCode >= 500 ? "error" : httpStatusCode >= 400 ? "warn" : "info";
 
+    // Resolve trace ID from the active tracing context so logs can be
+    // correlated with traces in Grafana (Issue #1673).
+    const traceId = getTraceContext()?.traceId ?? res.locals["traceId"];
+
     logger.log(level, `${httpMethod} ${httpRoute} ${httpStatusCode}`, {
+      // Top-level fields extracted as Loki labels by Promtail
+      route: httpRoute,
+      statusCode: httpStatusCode,
+      requestId,
+      traceId,
+      // Additional structured context
       httpMethod,
       httpRoute,
       httpStatusCode,
       durationMs,
-      requestId,
     });
   });
 
