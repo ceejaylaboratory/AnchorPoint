@@ -7,7 +7,7 @@
 # This script:
 #   1. Downloads a base backup and WAL archive segments from S3/GCS.
 #   2. Spins up a temporary Docker Postgres container (postgres:16-alpine).
-#   3. Restores the base backup, configures recovery (standby.signal +
+#   3. Restores the base backup, configures recovery (recovery.signal +
 #      restore_command + recovery_target_time) and replays WAL.
 #   4. Waits for recovery to complete and the DB to accept connections.
 #   5. Runs integrity validation queries (row counts, FK consistency,
@@ -341,16 +341,23 @@ prepare_pgdata() {
   # Support both tar.gz and plain tar archives.
   case "$backup_file" in
     *.tar.gz|*.tgz)
-      tar -xzf "$backup_file" -C "$pgdata" --strip-components=1
+      tar -xzf "$backup_file" -C "$pgdata"
       ;;
     *.tar)
-      tar -xf "$backup_file" -C "$pgdata" --strip-components=1
+      tar -xf "$backup_file" -C "$pgdata"
       ;;
     *)
       err "Unsupported base backup format: $backup_file"
       return 1
       ;;
   esac
+
+  # Require the physical PostgreSQL data-directory marker; never accept a
+  # malformed archive that could lead to an empty database initialization.
+  if [[ ! -s "$pgdata/PG_VERSION" ]]; then
+    err "Backup archive does not contain PG_VERSION at the data directory root"
+    return 1
+  fi
 
   # Ensure the postgres user inside the container owns the data dir.
   chmod -R u+rwX "$pgdata" || true
@@ -362,8 +369,8 @@ write_recovery_config() {
 
   log "Writing recovery configuration (target=${RECOVERY_TARGET_TIME})"
 
-  # Postgres 12+ uses standby.signal instead of recovery.conf.
-  touch "$pgdata/standby.signal"
+  # PostgreSQL 12+ uses recovery.signal for archive/PITR recovery.
+  touch "$pgdata/recovery.signal"
 
   # restore_command copies WAL segments from the downloaded archive.
   # The container mounts the WAL dir at /wal.
@@ -498,28 +505,28 @@ validate_integrity() {
   # --- Foreign key consistency ---------------------------------------------
   # Orphaned Transaction.userId
   local orphan_tx
-  orphan_tx=$(psql_exec "SELECT COUNT(*) FROM \"Transaction\" t LEFT JOIN \"Customer\" c ON t.\"userId\" = c.id WHERE c.id IS NULL;" 2>/dev/null || echo "error")
+  orphan_tx=$(psql_exec "SELECT COUNT(*) FROM \"Transaction\" t LEFT JOIN \"User\" u ON t.\"userId\" = u.id WHERE u.id IS NULL;" 2>/dev/null || echo "error")
   if [[ "$orphan_tx" == "error" ]]; then
     err "Failed to check orphaned Transaction.userId"
     failures=$(( failures + 1 ))
   elif [[ "$orphan_tx" != "0" ]]; then
-    err "Found ${orphan_tx} orphaned Transaction rows (userId not in Customer)"
+    err "Found ${orphan_tx} orphaned Transaction rows (userId not in User)"
     failures=$(( failures + 1 ))
   else
-    log "FK check Transaction.userId -> Customer.id: OK"
+    log "FK check Transaction.userId -> User.id: OK"
   fi
 
   # Orphaned ApiKey.userId
   local orphan_key
-  orphan_key=$(psql_exec "SELECT COUNT(*) FROM \"ApiKey\" k LEFT JOIN \"Customer\" c ON k.\"userId\" = c.id WHERE c.id IS NULL;" 2>/dev/null || echo "error")
+  orphan_key=$(psql_exec "SELECT COUNT(*) FROM \"ApiKey\" k LEFT JOIN \"User\" u ON k.\"userId\" = u.id WHERE u.id IS NULL;" 2>/dev/null || echo "error")
   if [[ "$orphan_key" == "error" ]]; then
     err "Failed to check orphaned ApiKey.userId"
     failures=$(( failures + 1 ))
   elif [[ "$orphan_key" != "0" ]]; then
-    err "Found ${orphan_key} orphaned ApiKey rows (userId not in Customer)"
+    err "Found ${orphan_key} orphaned ApiKey rows (userId not in User)"
     failures=$(( failures + 1 ))
   else
-    log "FK check ApiKey.userId -> Customer.id: OK"
+    log "FK check ApiKey.userId -> User.id: OK"
   fi
 
   # --- Table checksums ------------------------------------------------------
