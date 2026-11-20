@@ -801,7 +801,7 @@ router.post('/fees/schedule', requireWriteAccess, validate({ body: createFeeSche
     });
 
     await adminAuditService.recordConfigChange({
-      action: 'ADMIN_FEE_SCHEDULE_CREATE' as any,
+      action: 'ADMIN_FEE_SCHEDULE_CREATE',
       actor: getAuditActor(req),
       targetEntity: `fee_schedule:${schedule.id}`,
       after: schedule,
@@ -841,7 +841,7 @@ router.post('/fee-schedules', requireWriteAccess, validate({ body: createFeeSche
     });
 
     await adminAuditService.recordConfigChange({
-      action: 'ADMIN_FEE_SCHEDULE_CREATE' as any,
+      action: 'ADMIN_FEE_SCHEDULE_CREATE',
       actor: getAuditActor(req),
       targetEntity: `fee_schedule:${schedule.id}`,
       after: schedule,
