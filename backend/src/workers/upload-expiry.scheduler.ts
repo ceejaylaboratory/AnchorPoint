@@ -2,6 +2,7 @@ import cron, { ScheduledTask } from 'node-cron';
 import { uploadStore } from '../services/upload-store.service';
 import { storageProvider } from '../services/storage-provider.service';
 import prisma from '../lib/prisma';
+import { pingHeartbeat } from '../lib/heartbeat';
 import logger from '../utils/logger';
 
 const TTL_DAYS = 30;
@@ -12,6 +13,7 @@ export class UploadExpiryScheduler {
   start(): void {
     // Run every minute to expire stale uploads
     this.task = cron.schedule('* * * * *', async () => {
+      let succeeded = true;
       try {
         // In-memory fallback expiry
         const expiredCount = uploadStore.expireStale();
@@ -20,12 +22,18 @@ export class UploadExpiryScheduler {
         }
       } catch (error) {
         logger.error('Failed to run in-memory upload expiry task', { error });
+        succeeded = false;
       }
 
       try {
         await this.expireDbUploads();
       } catch (error) {
         logger.error('Failed to run DB upload expiry task', { error });
+        succeeded = false;
+      }
+
+      if (succeeded) {
+        await pingHeartbeat('upload-expiry', process.env.HEARTBEAT_UPLOAD_EXPIRY_URL);
       }
     });
 
