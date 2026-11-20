@@ -36,8 +36,8 @@ const createAdminProposalSchema = z.object({
   actionType: z.string().min(1, 'actionType is required'),
   description: z.string().min(1, 'description is required'),
   payload: z.record(z.string(), z.any()),
-  requiredSigners: z.array(z.string()).min(1, 'At least one required signer is required'),
-  threshold: z.number().int().min(1).optional(),
+  requiredSigners: z.array(z.string()).min(2, 'At least two required signers are required'),
+  threshold: z.number().int().min(2, 'Threshold must be at least 2').optional(),
 });
 
 const approveAdminProposalSchema = z.object({
@@ -537,6 +537,7 @@ router.post(
  *                   type: string
  *               threshold:
  *                 type: integer
+ *                 minimum: 2
  *                 default: 2
  *     responses:
  *       201:

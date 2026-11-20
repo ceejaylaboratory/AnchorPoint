@@ -733,4 +733,64 @@ describe('MultisigService', () => {
       ).toThrow('Invalid transaction envelope XDR');
     });
   });
+
+  describe('admin proposals (#929)', () => {
+    const baseParams = {
+      actionType: 'CONFIG_UPDATE',
+      description: 'Update surge multiplier',
+      payload: { RELAYER_FEE_SURGE_MULTIPLIER: 1.5 },
+      creatorPublicKey: mockPublicKey1,
+    };
+
+    it('rejects proposals with a single required signer', async () => {
+      await expect(
+        multisigService.createAdminProposal({ ...baseParams, requiredSigners: [mockPublicKey1] })
+      ).rejects.toThrow('At least 2 required signers');
+    });
+
+    it('rejects a threshold below the 2-signature minimum', async () => {
+      await expect(
+        multisigService.createAdminProposal({
+          ...baseParams,
+          requiredSigners: [mockPublicKey1, mockPublicKey2, mockPublicKey3],
+          threshold: 1,
+        })
+      ).rejects.toThrow('Invalid threshold');
+    });
+
+    it('requires 2 of 3 approvals before execution', async () => {
+      const proposal = await multisigService.createAdminProposal({
+        ...baseParams,
+        requiredSigners: [mockPublicKey1, mockPublicKey2, mockPublicKey3],
+      });
+      expect(proposal.threshold).toBe(2);
+      expect(proposal.status).toBe('PROPOSED');
+
+      const afterFirst = await multisigService.approveAdminProposal(proposal.id, mockPublicKey1, 'sig1');
+      expect(afterFirst.status).toBe('PROPOSED');
+      await expect(
+        multisigService.executeAdminProposal(proposal.id, mockPublicKey1)
+      ).rejects.toThrow('must be APPROVED');
+
+      const afterSecond = await multisigService.approveAdminProposal(proposal.id, mockPublicKey2, 'sig2');
+      expect(afterSecond.status).toBe('APPROVED');
+      expect(afterSecond.signatures.map(s => s.signature)).toEqual(['sig1', 'sig2']);
+
+      const { proposal: executed } = await multisigService.executeAdminProposal(proposal.id, mockPublicKey2);
+      expect(executed.status).toBe('EXECUTED');
+    });
+
+    it('moves a rejected proposal to REJECTED and blocks execution', async () => {
+      const proposal = await multisigService.createAdminProposal({
+        ...baseParams,
+        requiredSigners: [mockPublicKey1, mockPublicKey2],
+      });
+
+      const rejected = await multisigService.rejectAdminProposal(proposal.id, mockPublicKey2, 'unsafe');
+      expect(rejected.status).toBe('REJECTED');
+      await expect(
+        multisigService.executeAdminProposal(proposal.id, mockPublicKey1)
+      ).rejects.toThrow('must be APPROVED');
+    });
+  });
 });

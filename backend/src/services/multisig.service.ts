@@ -117,6 +117,9 @@ export interface CreateAdminProposalParams {
   threshold?: number;
 }
 
+/** Minimum co-signer approvals required before an admin action can execute. */
+export const MIN_ADMIN_PROPOSAL_THRESHOLD = 2;
+
 class MultisigService {
   private adminProposals: Map<string, AdminProposal> = new Map();
 
@@ -1025,11 +1028,18 @@ class MultisigService {
       throw new Error('Duplicate signers are not allowed');
     }
 
-    // Default threshold is minimum 2 or signers length if fewer than 2
-    const targetThreshold = threshold ?? Math.min(2, requiredSigners.length);
+    if (requiredSigners.length < MIN_ADMIN_PROPOSAL_THRESHOLD) {
+      throw new Error(
+        `At least ${MIN_ADMIN_PROPOSAL_THRESHOLD} required signers must be specified for administrative actions`
+      );
+    }
 
-    if (targetThreshold < 1 || targetThreshold > requiredSigners.length) {
-      throw new Error(`Invalid threshold: must be between 1 and ${requiredSigners.length}`);
+    const targetThreshold = threshold ?? MIN_ADMIN_PROPOSAL_THRESHOLD;
+
+    if (targetThreshold < MIN_ADMIN_PROPOSAL_THRESHOLD || targetThreshold > requiredSigners.length) {
+      throw new Error(
+        `Invalid threshold: must be between ${MIN_ADMIN_PROPOSAL_THRESHOLD} and ${requiredSigners.length}`
+      );
     }
 
     const id = uuidv4();
@@ -1157,7 +1167,10 @@ class MultisigService {
       throw new Error(`Cannot execute proposal: current status is ${proposal.status}, must be APPROVED`);
     }
 
-    if (proposal.currentSignatures < proposal.threshold) {
+    if (
+      proposal.currentSignatures < proposal.threshold ||
+      proposal.currentSignatures < MIN_ADMIN_PROPOSAL_THRESHOLD
+    ) {
       throw new Error(
         `Threshold not reached: ${proposal.currentSignatures}/${proposal.threshold} signatures collected`
       );
