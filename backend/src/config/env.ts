@@ -217,6 +217,16 @@ const envSchema = z.object({
     .default('900')
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(60).max(86400)),
+  // Redis Sentinel configuration used by the failover monitor.
+  // Comma-separated list of Sentinel endpoints, e.g. "sentinel-1:26379,sentinel-2:26379".
+  REDIS_SENTINELS: z.string().optional(),
+  // Name of the monitored master as registered with Sentinel.
+  REDIS_SENTINEL_MASTER_NAME: z.string().min(1).default('mymaster'),
+  // Toggle Sentinel failover monitoring on/off.
+  REDIS_SENTINEL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((val: string) => val === 'true'),
 }).superRefine((data, ctx) => {
   if (data.KEY_MANAGEMENT_BACKEND === 'aws-kms' && !data.KMS_KEY_ID && !data.AWS_KMS_KEY_ARN) {
     ctx.addIssue({

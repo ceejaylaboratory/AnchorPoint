@@ -4,8 +4,15 @@
 # This ClusterIssuer uses the Let's Encrypt production environment.
 # Switch to this after testing with the staging issuer.
 #
-# IMPORTANT: Before using, replace 'your-email@example.com' with a valid email.
-# This email is used for ACME registration and certificate expiration notices.
+# IMPORTANT: The ACME registration email below is used for certificate
+# expiration notices and account recovery. Update it to your ops alias if
+# needed (e.g. via a Kustomize overlay / secret), but never commit secrets.
+#
+# Issuer name: anchorpoint-prod-issuer
+#   This is the ClusterIssuer referenced by Ingress annotations:
+#     cert-manager.io/cluster-issuer: anchorpoint-prod-issuer
+#   Keep this name in sync with the ingress manifests in
+#   infra/k8s/ingress-nginx/.
 #
 # Rate Limits (production):
 #   - 50 certificates per registered domain per week
@@ -30,7 +37,7 @@ spec:
     server: https://acme-v02.api.letsencrypt.org/directory
     
     # Email for ACME registration and notifications
-    email: your-email@example.com
+    email: platform@anchorpoint.example.com
     
     # Private key for ACME account (stored in Kubernetes)
     privateKeySecretRef:
@@ -39,6 +46,7 @@ spec:
     # ACME challenge configuration
     solvers:
       # HTTP-01 challenge - requires ingress controller with annotation support
+      # Used for standard (non-wildcard) hostnames.
       - http01:
           ingress:
             # Ingress class for the solver (nginx)
@@ -47,3 +55,28 @@ spec:
             podNamespace: ingress-nginx
             # Service type for the ingress controller service
             serviceType: ClusterIP
+
+      # DNS-01 challenge - required for wildcard certificates (e.g. *.anchorpoint.example.com)
+      # and useful when HTTP-01 is not reachable from the public internet.
+      #
+      # NOTE: This solver is disabled by default. To enable it:
+      #   1. Uncomment the block below.
+      #   2. Create the referenced credentials Secret in the cert-manager namespace
+      #      (e.g. via External Secrets / Sealed Secrets - never commit plaintext).
+      #   3. Ensure the DNS provider supports the ACME DNS-01 TXT record.
+      #
+      # - dns01:
+      #     # Example: Route53 provider (swap for your DNS provider)
+      #     route53:
+      #       region: us-east-1
+      #       # Secret containing AWS credentials (key: secret-access-key)
+      #       accessKeyIDSecretRef:
+      #         name: anchorpoint-prod-issuer-route53
+      #         key: access-key-id
+      #       secretAccessKeySecretRef:
+      #         name: anchorpoint-prod-issuer-route53
+      #         key: secret-access-key
+      #   selector:
+      #     # Only use DNS-01 for wildcard hostnames
+      #     dnsZones:
+      #       - "anchorpoint.example.com"

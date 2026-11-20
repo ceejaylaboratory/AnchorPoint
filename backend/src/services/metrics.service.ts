@@ -21,6 +21,8 @@ export class MetricsService {
   private transactionReconciliationTotal: Counter<string>;
   private sepFlowDuration: Histogram<string>;
   private batchPaymentOperationsTotal: Counter<string>;
+  private redisFailoverEventsTotal: Counter<string>;
+  private redisConnectedClients: Gauge<string>;
 
   constructor() {
     this.registry = new promClient.Registry();
@@ -188,6 +190,21 @@ export class MetricsService {
       labelNames: ['batch_id', 'asset_code', 'status'] as const,
       registers: [this.registry],
     });
+
+    // #1677: Redis Sentinel failover events (e.g. +switch-master, +reboot, +sdown)
+    this.redisFailoverEventsTotal = new promClient.Counter({
+      name: 'redis_failover_events_total',
+      help: 'Total number of Redis Sentinel failover events by event type and master identity',
+      labelNames: ['event', 'old_master', 'new_master'] as const,
+      registers: [this.registry],
+    });
+
+    // #1677: Number of clients currently connected to the Redis instance
+    this.redisConnectedClients = new promClient.Gauge({
+      name: 'redis_connected_clients',
+      help: 'Number of clients currently connected to Redis',
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -233,6 +250,20 @@ export class MetricsService {
    */
   incrementBatchPaymentOperation(batchId: string, assetCode: string, status: string): void {
     this.batchPaymentOperationsTotal.inc({ batch_id: batchId, asset_code: assetCode, status });
+  }
+
+  /**
+   * #1677: Record a Redis Sentinel failover event.
+   */
+  incrementRedisFailoverEvent(event: string, oldMaster: string, newMaster: string): void {
+    this.redisFailoverEventsTotal.inc({ event, old_master: oldMaster, new_master: newMaster });
+  }
+
+  /**
+   * #1677: Set the number of clients currently connected to Redis.
+   */
+  setRedisConnectedClients(count: number): void {
+    this.redisConnectedClients.set(count);
   }
 
   /**
