@@ -288,9 +288,11 @@ export class RelayerService {
       const estimate = await this.getFeeEstimate(1.5); // Apply higher multiplier for bump
       const innerFee = parseInt(innerTx.fee, 10) || 100;
       feeToApply = Math.max(estimate.recommendedFee, innerFee * 2);
-      if (this.config.maxFeeCap && feeToApply > this.config.maxFeeCap) {
-        feeToApply = this.config.maxFeeCap;
-      }
+    }
+
+    // The relayer pays the bump fee, so cap caller-supplied fees as well
+    if (this.config.maxFeeCap && feeToApply > this.config.maxFeeCap) {
+      feeToApply = this.config.maxFeeCap;
     }
 
     const feeBumpTx = TransactionBuilder.buildFeeBumpTransaction(

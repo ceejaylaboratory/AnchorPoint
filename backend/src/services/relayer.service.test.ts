@@ -257,5 +257,39 @@ describe('RelayerService', () => {
       expect(estimate.recommendedFee).toBe(120); // 100 * 1.2
     });
   });
+
+  describe('buildFeeBumpTransaction', () => {
+    const passphrase = 'Test SDF Network ; September 2015';
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('should cap a caller-supplied bump fee at maxFeeCap', async () => {
+      const cappedService = new RelayerService({ ...mockRelayerConfig, maxFeeCap: 500 });
+      const { TransactionBuilder } = require('@stellar/stellar-sdk');
+      jest.spyOn(TransactionBuilder, 'fromXDR').mockReturnValue({ fee: '100' } as any);
+      const buildSpy = jest
+        .spyOn(TransactionBuilder, 'buildFeeBumpTransaction')
+        .mockReturnValue({ sign: jest.fn() } as any);
+
+      await cappedService.buildFeeBumpTransaction('AAAA', 50000, passphrase);
+
+      expect(buildSpy).toHaveBeenCalledWith(expect.anything(), '500', expect.anything(), passphrase);
+    });
+
+    it('should keep a caller-supplied bump fee that is within maxFeeCap', async () => {
+      const cappedService = new RelayerService({ ...mockRelayerConfig, maxFeeCap: 500 });
+      const { TransactionBuilder } = require('@stellar/stellar-sdk');
+      jest.spyOn(TransactionBuilder, 'fromXDR').mockReturnValue({ fee: '100' } as any);
+      const buildSpy = jest
+        .spyOn(TransactionBuilder, 'buildFeeBumpTransaction')
+        .mockReturnValue({ sign: jest.fn() } as any);
+
+      await cappedService.buildFeeBumpTransaction('AAAA', 300, passphrase);
+
+      expect(buildSpy).toHaveBeenCalledWith(expect.anything(), '300', expect.anything(), passphrase);
+    });
+  });
 });
 
