@@ -187,6 +187,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
 process.on('SIGINT', () => { void gracefulShutdown('SIGINT'); });
 process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
+process.on('exit', (code) => {
+  logger.info(`Process exiting with code ${code}`);
+});
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
