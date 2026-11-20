@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 jest.mock('../lib/prisma', () => ({
   transaction: {
     update: jest.fn(),
+    updateMany: jest.fn(),
     findMany: jest.fn(),
   },
 }));
@@ -94,6 +95,46 @@ describe('Sep24Worker', () => {
         'claim-bal-1',
         'https://client.com/webhook'
       );
+    });
+
+    it('should notify using the claimable balance ID recorded on the transaction row', async () => {
+      (prisma.transaction.findMany as jest.Mock).mockResolvedValueOnce([
+        { id: 'tx-2', type: 'DEPOSIT', status: 'PENDING_ANCHOR', claimableBalanceId: 'claim-bal-db' },
+      ]);
+      (Sep24Service.getCallback as jest.Mock).mockResolvedValueOnce({
+        callbackUrl: 'https://client.com/webhook',
+        kind: 'deposit',
+      });
+      (prisma.transaction.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
+      (Sep24Service.notifyClaimableBalance as jest.Mock).mockResolvedValueOnce({
+        delivered: true,
+        attempts: 1,
+      });
+
+      const count = await sep24Worker.processPendingClaimableDeposits();
+
+      expect(count).toBe(1);
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: { id: 'tx-2', status: { notIn: ['PENDING_EXTERNAL', 'COMPLETED', 'ERROR'] } },
+        data: { status: 'PENDING_EXTERNAL' },
+      });
+      expect(Sep24Service.notifyClaimableBalance).toHaveBeenCalledWith(
+        'tx-2',
+        'claim-bal-db',
+        'https://client.com/webhook'
+      );
+    });
+
+    it('should skip deposits without a callback URL', async () => {
+      (prisma.transaction.findMany as jest.Mock).mockResolvedValueOnce([
+        { id: 'tx-3', type: 'DEPOSIT', status: 'PENDING_ANCHOR', claimableBalanceId: 'claim-bal-3' },
+      ]);
+      (Sep24Service.getCallback as jest.Mock).mockResolvedValueOnce(null);
+
+      const count = await sep24Worker.processPendingClaimableDeposits();
+
+      expect(count).toBe(0);
+      expect(Sep24Service.notifyClaimableBalance).not.toHaveBeenCalled();
     });
   });
 });

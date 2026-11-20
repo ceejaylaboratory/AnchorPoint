@@ -79,7 +79,13 @@ export class Sep24Worker {
       const pendingDeposits = await prisma.transaction.findMany({
         where: {
           type: 'DEPOSIT',
-          status: 'PENDING_EXTERNAL',
+          OR: [
+            { status: 'PENDING_EXTERNAL' },
+            {
+              claimableBalanceId: { not: null },
+              status: { notIn: ['COMPLETED', 'ERROR'] },
+            },
+          ],
         },
         take: 20,
       });
@@ -87,12 +93,18 @@ export class Sep24Worker {
       let processedCount = 0;
       for (const tx of pendingDeposits) {
         const stored = await Sep24Service.getCallback(tx.id);
-        if (stored?.callbackUrl && stored?.claimableBalanceId) {
-          await Sep24Service.notifyClaimableBalance(
-            tx.id,
-            stored.claimableBalanceId,
-            stored.callbackUrl
-          );
+        // The payment path records the claimable balance ID on the transaction row
+        const claimableBalanceId = stored?.claimableBalanceId ?? tx.claimableBalanceId;
+        if (stored?.callbackUrl && claimableBalanceId) {
+          if (tx.status === 'PENDING_EXTERNAL') {
+            await Sep24Service.notifyClaimableBalance(
+              tx.id,
+              claimableBalanceId,
+              stored.callbackUrl
+            );
+          } else {
+            await this.processDepositClaimable(tx.id, claimableBalanceId, stored.callbackUrl);
+          }
           processedCount++;
         }
       }
