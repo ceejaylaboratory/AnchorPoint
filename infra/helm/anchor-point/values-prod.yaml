@@ -78,9 +78,12 @@ resources:
 autoscaling:
   enabled: true
   minReplicas: 3
-  maxReplicas: 20
-  targetCPUUtilizationPercentage: 60
-  targetMemoryUtilizationPercentage: 70
+  maxReplicas: 15
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  # 5 min windows in both directions to avoid thrashing during volatility
+  scaleUpStabilizationWindowSeconds: 300
+  scaleDownStabilizationWindowSeconds: 300
 
 # -- PDB (enabled in production for HA) ---------------------------------------
 podDisruptionBudget:

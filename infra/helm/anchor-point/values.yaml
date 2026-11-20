@@ -86,6 +86,9 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
+  # Stabilization windows (seconds) that prevent replica thrashing
+  scaleUpStabilizationWindowSeconds: 60
+  scaleDownStabilizationWindowSeconds: 300
 
 # -- Health probes ------------------------------------------------------------
 livenessProbe:
