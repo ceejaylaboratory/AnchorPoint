@@ -92,6 +92,19 @@ class RollbackGenerator {
       };
     }
 
+    // ALTER TABLE ADD CONSTRAINT ... FOREIGN KEY -> ALTER TABLE DROP CONSTRAINT
+    // Emitted before the DROP TABLEs (operations are reversed), so tables can be
+    // dropped in any order without violating foreign keys.
+    if (upperStatement.includes('ALTER TABLE') && upperStatement.includes('ADD CONSTRAINT') && upperStatement.includes('FOREIGN KEY')) {
+      const tableName = this.extractTableName(statement, 'ALTER TABLE');
+      const constraintName = this.extractColumnName(statement, 'ADD CONSTRAINT');
+      return {
+        original: statement,
+        rollback: `ALTER TABLE "${tableName}" DROP CONSTRAINT IF EXISTS "${constraintName}";`,
+        confidence: 'high',
+      };
+    }
+
     // ALTER TABLE ADD COLUMN -> ALTER TABLE DROP COLUMN
     if (upperStatement.includes('ALTER TABLE') && upperStatement.includes('ADD COLUMN')) {
       const tableName = this.extractTableName(statement, 'ALTER TABLE');

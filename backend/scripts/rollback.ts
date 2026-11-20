@@ -28,18 +28,10 @@ interface FKViolation {
 }
 
 interface FKRow {
-  id: number;
-  seq: number;
   table: string;
   from: string;
+  referencedTable: string;
   to: string;
-  on_update: string;
-  on_delete: string;
-  match: string;
-}
-
-interface TableRow {
-  name: string;
 }
 
 interface CountRow {
@@ -111,7 +103,7 @@ class RollbackVerifier {
       }
 
       // 5. Apply rollback SQL
-      await this.applyRollback(rollbackSql);
+      await this.applyRollback(rollbackSql, droppedTables);
       console.log('\n✅ Rollback applied successfully.');
     } finally {
       await this.prisma.$disconnect();
@@ -187,39 +179,69 @@ class RollbackVerifier {
   private async checkForeignKeyViolations(droppedTables: string[]): Promise<FKViolation[]> {
     if (droppedTables.length === 0) return [];
 
-    // Get all user tables
-    const tables = await this.prisma.$queryRawUnsafe<TableRow[]>(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_prisma_%'`
-    );
-
     const violations: FKViolation[] = [];
 
-    for (const { name: tableName } of tables) {
-      // Get FK list for this table
-      const fks = await this.prisma.$queryRawUnsafe<FKRow[]>(
-        `PRAGMA foreign_key_list("${tableName}")`
+    for (const fk of await this.getForeignKeys()) {
+      if (!droppedTables.includes(fk.referencedTable)) continue;
+      // The referencing table is dropped too (before its parent), so nothing is orphaned.
+      if (droppedTables.includes(fk.table)) continue;
+
+      // Count rows in this table that reference the to-be-dropped table
+      const countResult = await this.prisma.$queryRawUnsafe<CountRow[]>(
+        `SELECT COUNT(*) AS count FROM "${fk.table}" WHERE "${fk.from}" IS NOT NULL`
       );
+      const affectedRowCount = Number(countResult[0]?.count ?? 0);
 
-      for (const fk of fks) {
-        if (!droppedTables.includes(fk.table)) continue;
-
-        // Count rows in this table that reference the to-be-dropped table
-        const countResult = await this.prisma.$queryRawUnsafe<CountRow[]>(
-          `SELECT COUNT(*) AS count FROM "${tableName}" WHERE "${fk.from}" IS NOT NULL`
-        );
-        const affectedRowCount = Number(countResult[0]?.count ?? 0);
-
-        violations.push({
-          referencingTable: tableName,
-          referencingColumn: fk.from,
-          referencedTable: fk.table,
-          referencedColumn: fk.to ?? 'id',
-          affectedRowCount,
-        });
-      }
+      violations.push({
+        referencingTable: fk.table,
+        referencingColumn: fk.from,
+        referencedTable: fk.referencedTable,
+        referencedColumn: fk.to ?? 'id',
+        affectedRowCount,
+      });
     }
 
     return violations;
+  }
+
+  /**
+   * List every foreign key in the current Postgres schema.
+   */
+  private async getForeignKeys(): Promise<FKRow[]> {
+    return this.prisma.$queryRawUnsafe<FKRow[]>(
+      `SELECT tc.table_name::text AS "table", kcu.column_name::text AS "from",
+              ccu.table_name::text AS "referencedTable", ccu.column_name::text AS "to"
+         FROM information_schema.table_constraints tc
+         JOIN information_schema.key_column_usage kcu
+           ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+         JOIN information_schema.constraint_column_usage ccu
+           ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = current_schema()`
+    );
+  }
+
+  /**
+   * Order tables so that children (referencing tables) are dropped before
+   * the parents they reference (reverse topological order).
+   */
+  private orderTablesForDrop(tables: string[], fks: FKRow[]): string[] {
+    const remaining = new Set(tables);
+    const ordered: string[] = [];
+
+    while (remaining.size > 0) {
+      // A table can be dropped once no other remaining table references it.
+      const next = Array.from(remaining).filter(
+        t => !fks.some(fk => fk.referencedTable === t && fk.table !== t && remaining.has(fk.table))
+      );
+      // Cycle: fall back to the remaining tables as-is.
+      const batch = next.length > 0 ? next : Array.from(remaining);
+      batch.forEach(t => {
+        ordered.push(t);
+        remaining.delete(t);
+      });
+    }
+
+    return ordered;
   }
 
   /**
@@ -294,33 +316,61 @@ class RollbackVerifier {
   /**
    * Apply rollback SQL statements one by one.
    */
-  private async applyRollback(sql: string): Promise<void> {
+  private async applyRollback(sql: string, droppedTables: string[]): Promise<void> {
     console.log('\n🚀 Applying rollback SQL...');
 
     const statements = sql
       .split(';')
       .map(s => s.trim())
-      .filter(s => s.length > 0 && !s.startsWith('--'));
+      // Strip comment lines (generated rollback.sql prefixes every statement
+      // with comments) and skip pure-comment blocks
+      .map(stmt =>
+        stmt
+          .split('\n')
+          .filter(l => !l.trim().startsWith('--'))
+          .join('\n')
+          .trim()
+      )
+      .filter(stmt => stmt.length > 0);
+
+    // Re-order the DROP TABLE statements (in place, keeping their slots) so
+    // children are dropped before their parents.
+    if (droppedTables.length > 1) {
+      const dropOrder = this.orderTablesForDrop(droppedTables, await this.getForeignKeys());
+      const dropSlots = statements
+        .map((stmt, i) => (this.extractDroppedTables(stmt).length > 0 ? i : -1))
+        .filter(i => i >= 0);
+      const dropStatements = dropSlots
+        .map(i => statements[i])
+        .sort(
+          (a, b) =>
+            dropOrder.indexOf(this.extractDroppedTables(a)[0]) -
+            dropOrder.indexOf(this.extractDroppedTables(b)[0])
+        );
+      dropSlots.forEach((slot, i) => {
+        statements[slot] = dropStatements[i];
+      });
+    }
 
     let applied = 0;
-    for (const stmt of statements) {
-      // Skip pure-comment blocks
-      const nonComment = stmt
-        .split('\n')
-        .filter(l => !l.trim().startsWith('--'))
-        .join('\n')
-        .trim();
-      if (!nonComment) continue;
-
-      try {
-        await this.prisma.$executeRawUnsafe(nonComment);
-        applied++;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`\n❌ Failed to execute statement:\n   ${nonComment}\n   Error: ${msg}`);
-        throw err;
-      }
-    }
+    // Run everything in one transaction so a failure leaves the schema untouched.
+    // Deferrable constraints are only checked at commit.
+    await this.prisma.$transaction(
+      async tx => {
+        await tx.$executeRawUnsafe('SET CONSTRAINTS ALL DEFERRED');
+        for (const stmt of statements) {
+          try {
+            await tx.$executeRawUnsafe(stmt);
+            applied++;
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`\n❌ Failed to execute statement:\n   ${stmt}\n   Error: ${msg}`);
+            throw err;
+          }
+        }
+      },
+      { timeout: 120000 }
+    );
 
     console.log(`   Applied ${applied} statement${applied !== 1 ? 's' : ''}.`);
   }

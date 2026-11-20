@@ -304,12 +304,13 @@ Before deploying migrations to production:
 
 1. **Locate rollback SQL** — finds `rollback.sql` in the target migration directory. If it does not exist, it auto-generates one using `RollbackGenerator`.
 2. **Parse DROP TABLE statements** — extracts tables that would be removed by the rollback.
-3. **FK impact analysis** — for every table referencing a to-be-dropped table, counts rows that would become orphaned:
-   - Uses `PRAGMA foreign_key_list(table)` to discover FK relationships.
-   - Uses `PRAGMA foreign_key_check` to surface any pre-existing violations.
+3. **FK impact analysis** — for every table referencing a to-be-dropped table (and not itself being dropped), counts rows that would become orphaned:
+   - Queries Postgres `information_schema` (`table_constraints`, `key_column_usage`, `constraint_column_usage`) to discover FK relationships.
 4. **Print integrity report** — categorises each FK reference as **safe** (0 referencing rows) or **blocking** (≥1 orphaned rows).
 5. **Confirm before applying** — prompts for `y/N` unless `--force` is passed.
-6. **Apply rollback** — executes each SQL statement via Prisma's `$executeRawUnsafe`.
+6. **Apply rollback** — executes each SQL statement via Prisma's `$executeRawUnsafe` inside a single transaction (with `SET CONSTRAINTS ALL DEFERRED`), so a failure leaves the schema untouched. `DROP TABLE` statements are re-ordered in reverse topological order — child tables are dropped before the parents they reference — so Postgres never rejects a drop because of a dependent foreign key.
+
+`generate-rollback.ts` reverses `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY` into `ALTER TABLE ... DROP CONSTRAINT IF EXISTS ...`. Because rollback operations are emitted in reverse order, these constraint drops run before any `DROP TABLE`.
 
 ### Usage
 
