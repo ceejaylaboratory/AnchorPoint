@@ -42,10 +42,18 @@ const getLogLevel = () => {
   return process.env.NODE_ENV === "production" ? "info" : "debug";
 };
 
-const SENSITIVE_KEYS = /secret|token|password|tax_id|email/i;
+const SENSITIVE_KEYS = /secret|token|password|tax_id|email|jwt|authorization|private_?key/i;
+const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
+const STELLAR_SECRET_PATTERN = /\bS[A-Z2-7]{55}\b/g;
+
+const maskString = (value: string): string =>
+  value
+    .replace(JWT_PATTERN, "***REDACTED***")
+    .replace(STELLAR_SECRET_PATTERN, "***REDACTED***");
 
 export const maskPIIFormat = winston.format((info) => {
   const redact = (obj: any): any => {
+    if (typeof obj === "string") return maskString(obj);
     if (obj === null || typeof obj !== "object") return obj;
     if (Array.isArray(obj)) return obj.map(redact);
 
@@ -65,6 +73,8 @@ export const maskPIIFormat = winston.format((info) => {
       info[key] = "***REDACTED***";
     } else if (typeof key === "string" && typeof info[key] === "object") {
       info[key] = redact(info[key]);
+    } else if (typeof key === "string" && typeof info[key] === "string") {
+      info[key] = maskString(info[key]);
     }
   }
 
