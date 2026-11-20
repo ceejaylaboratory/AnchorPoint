@@ -40,7 +40,7 @@ export class ApiKeyService {
       : null;
 
     const record = await prisma.apiKey.create({
-      data: { key, ownerId, tier },
+      data: { key, ownerId, tier, expiresAt },
     });
 
     return {
@@ -60,6 +60,7 @@ export class ApiKeyService {
     });
 
     if (!record || !record.isActive) return null;
+    if (record.expiresAt && record.expiresAt <= new Date()) return null;
 
     return {
       id: record.id,
@@ -68,6 +69,8 @@ export class ApiKeyService {
       tier: record.tier as Tier,
       isActive: record.isActive,
       createdAt: record.createdAt,
+      expiresAt: record.expiresAt,
+      lastUsedAt: record.lastUsedAt,
     };
   }
 
@@ -82,6 +85,11 @@ export class ApiKeyService {
 
     const newKey = await this.createKey(ownerId, oldKey.tier as Tier);
     const oldKeyExpiresAt = new Date(Date.now() + overlapDays * 24 * 60 * 60 * 1000);
+
+    await prisma.apiKey.update({
+      where: { id: oldKey.id },
+      data: { expiresAt: oldKeyExpiresAt },
+    });
 
     return {
       newKey,

@@ -73,6 +73,10 @@ export const apiKeyAuthMiddleware = async (req: AuthRequest, res: Response, next
       return res.status(401).json({ status: 'error', message: 'Invalid or inactive API key' });
     }
 
+    if (record.expiresAt && record.expiresAt <= new Date()) {
+      return res.status(401).json({ status: 'error', message: 'API key has expired' });
+    }
+
     // Rate Limiting
     const limit = record.tier === 'Pro' ? 10000 : record.tier === 'Enterprise' ? 100000 : 100;
     const rateLimitKey = `rate-limit:apikey:${record.key}`;
@@ -89,7 +93,7 @@ export const apiKeyAuthMiddleware = async (req: AuthRequest, res: Response, next
     // Usage Tracking
     await prisma.apiKey.update({
       where: { id: record.id },
-      data: { usageCount: { increment: 1 } },
+      data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
     });
 
     req.user = { publicKey: record.ownerId, tier: record.tier as Tier };

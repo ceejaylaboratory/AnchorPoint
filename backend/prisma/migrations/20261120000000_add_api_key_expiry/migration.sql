@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "ApiKey" ADD COLUMN "expiresAt" TIMESTAMP(3);
+ALTER TABLE "ApiKey" ADD COLUMN "lastUsedAt" TIMESTAMP(3);

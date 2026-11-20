@@ -39,11 +39,15 @@ export const apiKeyMiddleware = async (req: Request, res: Response, next: NextFu
     // Look up in database if not cached
     const keyRecord = await prisma.apiKey.findUnique({
       where: { key: apiKey },
-      select: { tier: true },
+      select: { tier: true, expiresAt: true },
     });
 
     if (!keyRecord) {
       return res.status(401).json({ error: 'Invalid API Key' });
+    }
+
+    if (keyRecord.expiresAt && keyRecord.expiresAt <= new Date()) {
+      return res.status(401).json({ error: 'API Key has expired' });
     }
 
     // Cache the result in Redis with a 5-minute TTL

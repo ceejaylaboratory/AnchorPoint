@@ -74,6 +74,8 @@ model ApiKey {
   tier      Tier     @default(Free)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
 
   @@index([key])
   @@index([userId])
@@ -539,6 +541,8 @@ model ApiKey {
   tier      Tier     @default(Free)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
 
   @@index([key])
   @@index([userId])
