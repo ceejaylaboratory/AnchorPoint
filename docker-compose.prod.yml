@@ -135,7 +135,7 @@ services:
       - ./scripts/smoke-test.sh:/smoke-test.sh:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - "apk add --no-cache bash curl >/dev/null && bash /smoke-test.sh"
+      - "apk add --no-cache bash curl jq >/dev/null && bash /smoke-test.sh"
     restart: "no"
     networks:
       - anchorpoint-production-network

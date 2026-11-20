@@ -50,6 +50,25 @@ function healthyHandler(req, res) {
     '/sep24/info',
     '/sep38/info',
   ]);
+  if (url.pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'UP' }));
+    return;
+  }
+  if (url.pathname === '/.well-known/stellar.toml') {
+    res.writeHead(200, { 'Content-Type': 'text/toml' });
+    res.end(`version = "1.0.0"\nsigning_key = "${ACCOUNT}"\n`);
+    return;
+  }
+  if (url.pathname === '/info') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      signing_key: ACCOUNT,
+      assets: [{ code: 'USDC', status: 'live' }],
+      fee_variations: { deposit: { USDC: { min_amount: '1' } }, withdraw: { USDC: { min_amount: '1' } } },
+    }));
+    return;
+  }
   if (okPaths.has(url.pathname)) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
@@ -91,6 +110,9 @@ async function main() {
     }
     if (!healthy.stdout.includes('GET /info')) {
       throw new Error('healthy run did not probe GET /info');
+    }
+    if (!healthy.stdout.includes('has a valid SIGNING_KEY')) {
+      throw new Error('healthy run did not validate the stellar.toml SIGNING_KEY');
     }
   } finally {
     healthyServer.close();
