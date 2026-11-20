@@ -3,6 +3,7 @@ import { ASSETS, getIssuer } from '../../config/assets';
 import { stellarService } from '../../services/stellar.service';
 import { NETWORKS } from '../../config/networks';
 import { sep1InfoCache } from '../../services/sep1-info-cache.service';
+import { configService } from '../../services/config.service';
 import logger from '../../utils/logger';
 
 export interface StellarAsset {
@@ -37,6 +38,7 @@ export interface StellarInfo {
   horizon_url: string;
   url: string;
   documentation?: string;
+  org?: { name?: string; logo?: string; official_email?: string };
   preflight_commit?: boolean;
   fee_variations?: {
     deposit?: Record<string, { min_amount?: string; max_amount?: string; fee_fixed?: number; fee_percent?: number; fee_minimum?: number }>;
@@ -44,14 +46,26 @@ export interface StellarInfo {
   };
 }
 
+/** How long a rendered stellar.toml is served from memory before re-rendering. */
+const TOML_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let tomlCache: { body: string; expiresAt: number } | null = null;
+
+/** Drops the in-memory rendered stellar.toml so the next request re-renders it. */
+export function clearStellarTomlCache(): void {
+  tomlCache = null;
+}
+
 /**
- * Builds the StellarInfo payload from environment variables and static asset
- * configuration.  Extracted so it can be called both from the HTTP handler
+ * Builds the StellarInfo payload from environment variables, the active
+ * database configuration and static asset configuration.  Extracted so it can be called both from the HTTP handler
  * and from the cache-aside compute function.
  */
 function buildStellarInfo(): StellarInfo {
   const currentNetwork = stellarService.getNetwork();
   const networkConfig = NETWORKS[currentNetwork];
+
+  const uiConfig = configService.getUiConfig();
 
   const feeVariationEntries = (type: 'deposit' | 'withdraw') =>
     Object.fromEntries(
@@ -94,6 +108,11 @@ function buildStellarInfo(): StellarInfo {
     horizon_url: networkConfig.horizonUrl,
     url: process.env.BASE_URL || 'http://localhost:3002',
     documentation: process.env.DOCUMENTATION_URL,
+    org: {
+      name: uiConfig?.brandName,
+      logo: uiConfig?.logoUrl,
+      official_email: uiConfig?.supportEmail,
+    },
     preflight_commit: process.env.PREFLIGHT_COMMIT === 'true',
     fee_variations: {
       deposit: feeVariationEntries('deposit'),
@@ -121,6 +140,11 @@ export const getInfo = async (req: Request, res: Response): Promise<Response> =>
   const isTomlPath = requestPath.includes('stellar.toml');
   const isToml = isTomlPath || format === 'toml' || acceptHeader.includes('text/toml') || acceptHeader.includes('application/toml');
 
+  if (isToml && tomlCache && tomlCache.expiresAt > Date.now()) {
+    res.setHeader('Content-Type', 'text/toml');
+    return res.send(tomlCache.body);
+  }
+
   let stellarInfo: StellarInfo;
   try {
     stellarInfo = await sep1InfoCache.getOrCompute(buildStellarInfo) as StellarInfo;
@@ -138,8 +162,10 @@ export const getInfo = async (req: Request, res: Response): Promise<Response> =>
   ) as StellarInfo;
 
   if (isToml) {
+    const body = convertToTOML(filteredInfo);
+    tomlCache = { body, expiresAt: Date.now() + TOML_CACHE_TTL_MS };
     res.setHeader('Content-Type', 'text/toml');
-    return res.send(convertToTOML(filteredInfo));
+    return res.send(body);
   }
 
   return res.json(filteredInfo);
@@ -184,6 +210,13 @@ function convertToTOML(info: StellarInfo): string {
     if (asset.fee_percent !== undefined) lines.push(`fee_percent = ${asset.fee_percent}`);
     if (asset.fee_minimum !== undefined) lines.push(`fee_minimum = ${asset.fee_minimum}`);
   });
+
+  if (info.org && (info.org.name || info.org.logo || info.org.official_email)) {
+    lines.push('', '[DOCUMENTATION]');
+    if (info.org.name) lines.push(`ORG_NAME = "${info.org.name}"`);
+    if (info.org.logo) lines.push(`ORG_LOGO = "${info.org.logo}"`);
+    if (info.org.official_email) lines.push(`ORG_OFFICIAL_EMAIL = "${info.org.official_email}"`);
+  }
 
   
   // Add fee variations if present

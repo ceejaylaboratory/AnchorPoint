@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
-import { getInfo } from './info.controller';
+import { getInfo, clearStellarTomlCache } from './info.controller';
+import { configService } from '../../services/config.service';
 
 jest.mock('../../config/assets', () => {
   const mockAssets = [
@@ -61,6 +62,7 @@ describe('Info Controller', () => {
     } as any;
 
     jest.clearAllMocks();
+    clearStellarTomlCache();
     process.env.STELLAR_NETWORK = 'testnet';
     process.env.BASE_URL = 'http://localhost:3002';
     process.env.SIGNING_KEY = 'GBBD47IF6LWLVNC7F7YSACOA73YI4COI3V5O2S46F7S44GUL44YQY4O2';
@@ -264,6 +266,68 @@ describe('Info Controller', () => {
 
       const response = jsonMock.mock.calls[0][0];
       expect(response.transfer_server_sep24).toBe('https://sep24.example.com');
+    });
+  });
+
+  describe('getInfo - TOML rendering (#927)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('serves the rendered TOML from memory within the 5-minute TTL', async () => {
+      mockRequest.query = { format: 'toml' };
+      process.env.DOCUMENTATION_URL = 'https://docs.one.example';
+      await getInfo(mockRequest as Request, mockResponse as Response);
+      const first = sendMock.mock.calls[0][0];
+
+      process.env.DOCUMENTATION_URL = 'https://docs.two.example';
+      await getInfo(mockRequest as Request, mockResponse as Response);
+
+      expect(sendMock.mock.calls[1][0]).toBe(first);
+      expect(first).toContain('https://docs.one.example');
+      delete process.env.DOCUMENTATION_URL;
+    });
+
+    it('re-renders the TOML once the TTL has expired', async () => {
+      const now = Date.now();
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(now);
+      mockRequest.query = { format: 'toml' };
+      process.env.DOCUMENTATION_URL = 'https://docs.one.example';
+      await getInfo(mockRequest as Request, mockResponse as Response);
+
+      process.env.DOCUMENTATION_URL = 'https://docs.two.example';
+      nowSpy.mockReturnValue(now + 5 * 60 * 1000 + 1);
+      await getInfo(mockRequest as Request, mockResponse as Response);
+
+      expect(sendMock.mock.calls[1][0]).toContain('https://docs.two.example');
+      delete process.env.DOCUMENTATION_URL;
+    });
+
+    it('sets the CORS header on stellar.toml responses', async () => {
+      mockRequest.query = { format: 'toml' };
+      await getInfo(mockRequest as Request, mockResponse as Response);
+      await getInfo(mockRequest as Request, mockResponse as Response);
+
+      expect(setHeaderMock).toHaveBeenCalledWith('Access-Control-Allow-Origin', '*');
+      expect(setHeaderMock.mock.calls.filter(c => c[0] === 'Access-Control-Allow-Origin')).toHaveLength(2);
+    });
+
+    it('renders the DOCUMENTATION section from the database configuration', async () => {
+      jest.spyOn(configService, 'getUiConfig').mockReturnValue({
+        ...configService.getUiConfig(),
+        brandName: 'Acme Anchor',
+        logoUrl: 'https://acme.example/logo.png',
+        supportEmail: 'ops@acme.example',
+      });
+      mockRequest.query = { format: 'toml' };
+
+      await getInfo(mockRequest as Request, mockResponse as Response);
+
+      const tomlOutput = sendMock.mock.calls[0][0];
+      expect(tomlOutput).toContain('[DOCUMENTATION]');
+      expect(tomlOutput).toContain('ORG_NAME = "Acme Anchor"');
+      expect(tomlOutput).toContain('ORG_LOGO = "https://acme.example/logo.png"');
+      expect(tomlOutput).toContain('ORG_OFFICIAL_EMAIL = "ops@acme.example"');
     });
   });
 });
