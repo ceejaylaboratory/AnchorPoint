@@ -48,3 +48,22 @@ scrape_configs:
         target_label: instance
       - target_label: __address_
         replacement: blackbox-exporter:9115
+
+  # Synthetic blackbox probes against the public SEP discovery endpoints, as
+  # seen by external clients (exercises DNS, TLS and the reverse proxy).
+  - job_name: 'anchorpoint-public-endpoints'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://api.anchorpoint-testnet.example.com/.well-known/stellar.toml
+          - https://api.anchorpoint-testnet.example.com/health
+          - https://api.anchorpoint-testnet.example.com/api/info
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

@@ -9,6 +9,7 @@ This directory contains the monitoring configuration used to detect AnchorPoint 
 3. A warning signal for probe flapping before a full outage occurs.
 4. HTTP 5xx error rate spikes (`HighErrorRate`, root `alerts.yml`).
 5. Database connection pool exhaustion (`DatabaseConnectionExhausted`, root `alerts.yml`).
+6. External synthetic probes against the public SEP discovery endpoints `/.well-known/stellar.toml`, `/health` and `/api/info` (job `anchorpoint-public-endpoints`), alerting with `EndpointDown` on a non-200 response for 2 minutes and `SslCertExpiringSoon` when the served certificate expires in under 14 days.
 
 ## Alert routing
 
@@ -20,7 +21,7 @@ Warning alerts use the same PagerDuty routing key so they remain visible in the 
 
 - `prometheus-alerts.yml`: Prometheus alert rules for API downtime.
 - `alertmanager.yml`: PagerDuty + Slack routing and grouping policy.
-- `blackbox.yml`: Synthetic HTTP probe module for the `/health` endpoint.
+- `blackbox.yml`: Synthetic HTTP probe module (`http_2xx`, 5s timeout, TLS verification) for the `/health` endpoint and the public SEP discovery endpoints.
 - `../prometheus/alerts.rules.yml`: Performance alert rules (latency, error rate).
 - `../../alerts.yml`: Error-spike and database-pool alert rules (#1008).
 
