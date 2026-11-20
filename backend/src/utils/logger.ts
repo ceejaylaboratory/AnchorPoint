@@ -15,6 +15,21 @@ export function correlationIdFormat(): winston.Logform.Format {
   })();
 }
 
+// Ensure traceId / requestId are present as top-level fields so Loki/Promtail
+// can extract them as structured labels and Grafana can correlate logs to traces.
+export function traceFieldsFormat(): winston.Logform.Format {
+  return winston.format((info) => {
+    const ctx = tracingManager.getCurrentContext();
+    if (ctx?.traceId && info["traceId"] === undefined) {
+      info["traceId"] = ctx.traceId;
+    }
+    if (ctx?.requestId && info["requestId"] === undefined) {
+      info["requestId"] = ctx.requestId;
+    }
+    return info;
+  })();
+}
+
 // Determine log level from environment
 const getLogLevel = () => {
   const envLogLevel = process.env.LOG_LEVEL?.toLowerCase();
@@ -56,15 +71,38 @@ export const maskPIIFormat = winston.format((info) => {
   return info;
 });
 
+// LOG_FORMAT env switch: "json" (default, required for Loki label extraction)
+// or "pretty" for local development. Production always emits JSON.
+const isProductionEnv = process.env.NODE_ENV === "production";
+const requestedLogFormat = process.env.LOG_FORMAT?.toLowerCase();
+const usePrettyFormat = !isProductionEnv && requestedLogFormat === "pretty";
+
 // Structured JSON format chain: trace context first, then structured JSON
-const logFormat = winston.format.combine(
+const jsonLogFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   traceContextFormat(),
   correlationIdFormat(),
+  traceFieldsFormat(),
   structuredJsonFormat(),
   maskPIIFormat(),
   winston.format.json()
 );
+
+const prettyLogFormat = winston.format.combine(
+  winston.format.errors({ stack: true }),
+  traceContextFormat(),
+  correlationIdFormat(),
+  traceFieldsFormat(),
+  maskPIIFormat(),
+  winston.format.colorize(),
+  winston.format.timestamp(),
+  winston.format.printf(({ timestamp, level, message, ...meta }) => {
+    const extra = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : "";
+    return `${timestamp} ${level}: ${message}${extra}`;
+  })
+);
+
+const logFormat = usePrettyFormat ? prettyLogFormat : jsonLogFormat;
 
 // Create logger instance with structured JSON format in all environments
 const logger = winston.createLogger({
@@ -76,6 +114,58 @@ const logger = winston.createLogger({
 
 const isProduction = process.env.NODE_ENV === "production";
 const logstashHost = process.env.LOGSTASH_HOST;
+const lokiUrl = process.env.LOKI_URL;
+
+// Optional direct Loki push transport (gated by LOKI_URL). This aggregates
+// container logs even when Promtail is not deployed alongside the service.
+if (lokiUrl) {
+  const lokiLabels: Record<string, string> = {
+    app: "anchorpoint-backend",
+    environment: process.env.NODE_ENV ?? "development",
+    job: "anchorpoint-backend",
+  };
+
+  logger.add(
+    new winston.transports.Http({
+      host: (() => {
+        try {
+          return new URL(lokiUrl).hostname;
+        } catch {
+          return undefined;
+        }
+      })(),
+      port: (() => {
+        try {
+          const parsed = new URL(lokiUrl);
+          return parsed.port ? parseInt(parsed.port, 10) : parsed.protocol === "https:" ? 443 : 80;
+        } catch {
+          return undefined;
+        }
+      })(),
+      path: (() => {
+        try {
+          return new URL(lokiUrl).pathname;
+        } catch {
+          return "/loki/api/v1/push";
+        }
+      })(),
+      ssl: lokiUrl.startsWith("https://"),
+      format: winston.format.combine(
+        winston.format((info) => {
+          // Wrap the log line in Loki's push payload shape.
+          const line = JSON.stringify(info);
+          info["streams"] = [
+            {
+              stream: lokiLabels,
+              values: [[`${Date.now()}000000`, line]],
+            },
+          ];
+          return info;
+        })(),
+      ),
+    }),
+  );
+}
 
 // Conditionally add LogstashTransport when LOGSTASH_HOST is set (Req 2.2, 9.4)
 if (logstashHost) {

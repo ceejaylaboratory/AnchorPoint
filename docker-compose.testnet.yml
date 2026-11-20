@@ -31,8 +31,13 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+    dns_opt:
+      - ndots:2
     networks:
-      - anchorpoint-testnet-network
+      anchorpoint-testnet-network:
+        aliases:
+          - stellar-core
+          - soroban-rpc
 
   redis:
     image: redis:7-alpine
@@ -90,6 +95,39 @@ services:
     networks:
       - anchorpoint-testnet-network
 
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: anchorpoint-loki-testnet
+    profiles:
+      - monitoring
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-testnet-data:/loki
+    command:
+      - "-config.file=/etc/loki/loki-config.yml"
+    restart: unless-stopped
+    networks:
+      - anchorpoint-testnet-network
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: anchorpoint-promtail-testnet
+    profiles:
+      - monitoring
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./infra/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+    command:
+      - "-config.file=/etc/promtail/promtail-config.yml"
+    depends_on:
+      - loki
+    restart: unless-stopped
+    networks:
+      - anchorpoint-testnet-network
+
 volumes:
   backend-testnet-data:
     driver: local
@@ -97,7 +135,12 @@ volumes:
     driver: local
   prometheus-testnet-data:
     driver: local
+  loki-testnet-data:
+    driver: local
 
 networks:
   anchorpoint-testnet-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16

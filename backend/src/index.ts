@@ -1,5 +1,6 @@
 // Must be the first import so OpenTelemetry instruments http/express/ioredis (#1201).
 import { shutdownTracing } from './utils/tracing';
+import dns from 'dns';
 import http from 'http';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
@@ -58,6 +59,63 @@ import { feeReportWorker } from './workers/fee-report.worker';
 import contractQueueService from './services/contract-queue.service';
 import { checkMigrationsOnStartup } from './services/migration-check.service';
 import { notifyServerStarted } from './services/startup-notify.service';
+
+// Prefer IPv4 for DNS resolution. Docker's embedded DNS can stall on AAAA lookups
+// for container hostnames (stellar-core, soroban-rpc), causing ETIMEDOUT/ENOTFOUND
+// errors. Setting this before any HTTP client is created avoids the IPv6 penalty.
+dns.setDefaultResultOrder('ipv4first');
+
+// Hostnames served by the local Docker network that are prone to intermittent
+// DNS resolution failures. Outbound requests to these hosts are retried.
+const DOCKER_DNS_HOSTS = ['stellar-core', 'soroban-rpc'];
+
+function isDockerDnsHost(hostname: string | undefined | null): boolean {
+  if (!hostname) {
+    return false;
+  }
+  const normalized = hostname.toLowerCase();
+  return DOCKER_DNS_HOSTS.some((host) => normalized === host || normalized.startsWith(`${host}.`));
+}
+
+/**
+ * Wrap an outbound HTTP request so transient DNS failures (ENOTFOUND, EAI_AGAIN,
+ * ETIMEDOUT) against local Docker hostnames are retried with backoff.
+ */
+function withDnsRetry<T extends http.Agent>(agent: T, maxRetries = 3): T {
+  const originalCreateConnection = agent.createConnection.bind(agent);
+
+  agent.createConnection = ((options: Record<string, unknown>, callback?: (...args: unknown[]) => void) => {
+    const hostname = (options as { host?: string }).host;
+    if (!isDockerDnsHost(hostname)) {
+      return originalCreateConnection(options as never, callback as never);
+    }
+
+    let attempt = 0;
+    const attemptConnection = (): void => {
+      attempt += 1;
+      const socket = originalCreateConnection(options as never, ((err: Error | null, ...rest: unknown[]) => {
+        const code = (err as NodeJS.ErrnoException | null)?.code;
+        const retryable = code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'ETIMEDOUT';
+        if (err && retryable && attempt < maxRetries) {
+          const delay = 50 * 2 ** (attempt - 1);
+          logger.warn(
+            `DNS resolution for ${hostname} failed (${code}), retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`
+          );
+          setTimeout(attemptConnection, delay).unref();
+          return;
+        }
+        if (callback) {
+          callback(err, ...rest);
+        }
+      }) as never);
+      return socket;
+    };
+
+    return attemptConnection();
+  }) as T['createConnection'];
+
+  return agent;
+}
 
 let server: ReturnType<typeof app.listen> | null = null;
 let isShuttingDown = false;
@@ -138,6 +196,11 @@ notificationService.registerProvider(NotificationType.PUSH, createPushProvider()
 
 const app = express();
 const httpServer = http.createServer(app);
+// Outbound agents for local Docker services, hardened against DNS timeouts.
+const dockerHttpAgent = withDnsRetry(new http.Agent({ keepAlive: true }));
+const dockerHttpsAgent = withDnsRetry(new http.Agent({ keepAlive: true }));
+app.set('dockerHttpAgent', dockerHttpAgent);
+app.set('dockerHttpsAgent', dockerHttpsAgent);
 app.disable('x-powered-by');
 app.use(
   helmet({
@@ -145,13 +208,14 @@ app.use(
       useDefaults: false,
       directives: {
         defaultSrc: ["'self'"],
-        frameAncestors: ["'none'"],
+        scriptSrc: ["'self'"],
         objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
       },
     },
-    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
     frameguard: { action: 'deny' },
-    referrerPolicy: { policy: 'no-referrer' },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   })
 );
 app.use(securityHeadersMiddleware);

@@ -38,15 +38,11 @@ data "aws_region" "current" {}
 #
 #   1. Root account            — mandatory AWS requirement, full admin
 #   2. key_administrator_arns  — DevOps/CI lifecycle management only
-#   3. api_server_role_arn     — AnchorPoint API server: encrypt/decrypt only
-#   4. worker_role_arn         — BullMQ worker process: encrypt/decrypt only
-#                                Kept separate from the API role because the
-#                                worker runs as its own independent process and
-#                                decrypts Stellar signing keys during settlement
-#                                and contract-call job execution. Bundling both
-#                                into one principal would violate least privilege
-#                                if either process is compromised independently.
-#   5. CloudTrail (optional)   — log delivery encryption
+#   3. task_role_arn           — AnchorPoint ECS/EKS task role: encrypt/decrypt
+#                                and data-key generation only. This is the sole
+#                                workload principal permitted to use the key for
+#                                envelope encryption and secret hydration.
+#   4. CloudTrail (optional)   — log delivery encryption
 # ------------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "kms_policy" {
@@ -100,60 +96,33 @@ data "aws_iam_policy_document" "kms_policy" {
     }
   }
 
-  # ── 3. API server role — encrypt/decrypt only ────────────────────────────────
-  # The AnchorPoint Node.js API uses this to encrypt provider keys on ingestion
-  # and decrypt them during SEP-10 challenge generation and SEP-24 flows.
+  # ── 3. AnchorPoint ECS/EKS task role — least-privilege usage ─────────────────
+  # The AnchorPoint backend uses this to encrypt provider keys on ingestion and
+  # decrypt them during SEP-10 challenge generation and SEP-24 flows, as well as
+  # to generate data keys for envelope encryption and secret hydration.
   dynamic "statement" {
-    for_each = var.api_server_role_arn != "" ? [1] : []
+    for_each = var.task_role_arn != "" ? [1] : []
 
     content {
-      sid    = "AllowAPIServerUsage"
+      sid    = "AllowAnchorPointTaskRoleUsage"
       effect = "Allow"
 
       principals {
         type        = "AWS"
-        identifiers = [var.api_server_role_arn]
+        identifiers = [var.task_role_arn]
       }
 
       actions = [
         "kms:Encrypt",
         "kms:Decrypt",
-        "kms:ReEncrypt*",
-        "kms:GenerateDataKey*",
-        "kms:DescribeKey",
+        "kms:GenerateDataKey",
       ]
 
       resources = ["*"]
     }
   }
 
-  # ── 4. BullMQ worker role — encrypt/decrypt only ─────────────────────────────
-  # Separate principal from the API server role (see policy header comment above).
-  dynamic "statement" {
-    for_each = var.worker_role_arn != "" ? [1] : []
-
-    content {
-      sid    = "AllowWorkerUsage"
-      effect = "Allow"
-
-      principals {
-        type        = "AWS"
-        identifiers = [var.worker_role_arn]
-      }
-
-      actions = [
-        "kms:Encrypt",
-        "kms:Decrypt",
-        "kms:ReEncrypt*",
-        "kms:GenerateDataKey*",
-        "kms:DescribeKey",
-      ]
-
-      resources = ["*"]
-    }
-  }
-
-  # ── 5. CloudTrail log encryption (optional) ──────────────────────────────────
+  # ── 4. CloudTrail log encryption (optional) ──────────────────────────────────
   dynamic "statement" {
     for_each = var.enable_cloudtrail_encryption ? [1] : []
 
@@ -219,12 +188,12 @@ resource "aws_kms_key" "anchorpoint_stellar_keys" {
 #
 # Application code references the alias, not the raw key ID. This means key
 # rotation or replacement is transparent to the backend service.
-# Format: alias/<environment>/<key_alias>
-# e.g.    alias/testnet/anchorpoint-stellar-keys
+# Format: alias/anchorpoint-<environment>
+# e.g.    alias/anchorpoint-production
 # ------------------------------------------------------------------------------
 
 resource "aws_kms_alias" "anchorpoint_stellar_keys" {
-  name          = "alias/${var.environment}/${var.key_alias}"
+  name          = "alias/anchorpoint-${var.environment}"
   target_key_id = aws_kms_key.anchorpoint_stellar_keys.key_id
 }
 

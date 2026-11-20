@@ -4,6 +4,11 @@
 # Grafana watches the path below and automatically loads / reloads any JSON
 # dashboard files it finds there.  New dashboards are picked up within the
 # updateIntervalSeconds window without requiring a restart.
+#
+# The path /etc/grafana/dashboards is where the local Grafana docker service
+# mounts deploy/grafana/dashboards, which includes stellar-rpc-overview.json
+# (Stellar Horizon / Soroban RPC latency and rate-limit dashboard).  The short
+# update interval ensures newly added or edited dashboards auto-load quickly.
 # ---------------------------------------------------------------------------
 apiVersion: 1
 
@@ -14,7 +19,7 @@ providers:
     folderUid: anchorpoint
     type: file
     disableDeletion: false
-    updateIntervalSeconds: 30
+    updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
       path: /etc/grafana/dashboards

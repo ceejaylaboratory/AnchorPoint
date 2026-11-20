@@ -61,8 +61,31 @@ export function structuredJsonFormat(): winston.Logform.Format {
       }
     }
 
-    // 5. traceId / spanId are already injected (or intentionally absent) by
-    //    traceContextFormat() which runs earlier in the chain — nothing to do.
+    // 5. Promote correlation / request fields to top-level keys so Promtail can
+    //    extract them as Loki labels (traceId, spanId, requestId, route,
+    //    statusCode). Only set when present to avoid emitting empty labels.
+    const correlationFields = [
+      "traceId",
+      "spanId",
+      "requestId",
+      "route",
+      "statusCode",
+    ] as const;
+    for (const field of correlationFields) {
+      const value = (info as Record<string, unknown>)[field];
+      if (value !== undefined && value !== null) {
+        info[field] = value;
+      }
+    }
+
+    // 6. Ensure `app` label is present, derived from the `service` defaultMeta
+    //    injected by Winston (falls back to an explicit `app` value if set).
+    const service = (info as Record<string, unknown>)["service"];
+    if (typeof service === "string" && service.length > 0) {
+      info["app"] = service;
+    } else if (typeof info["app"] !== "string") {
+      info["app"] = "backend";
+    }
 
     return info;
   })();
