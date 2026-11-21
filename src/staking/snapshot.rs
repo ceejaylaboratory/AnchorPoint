@@ -1,4 +1,3 @@
-#![no_std]
 //! Balance Snapshot Module for Fair Reward Distribution
 //!
 //! Implements a checkpoint-based snapshot mechanism that records each user's
@@ -64,12 +63,17 @@ pub struct SnapshotStaking;
 
 #[contractimpl]
 impl SnapshotStaking {
-
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
-        if env.storage().instance().has(&soroban_sdk::symbol_short!("sec_reg")) {
+        if env
+            .storage()
+            .instance()
+            .has(&soroban_sdk::symbol_short!("sec_reg"))
+        {
             panic!("already set");
         }
-        env.storage().instance().set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
     }
 
     // ── Admin ─────────────────────────────────────────────────────────────
@@ -79,10 +83,16 @@ impl SnapshotStaking {
         if env.storage().instance().has(&DataKey::SnapshotEpoch) {
             panic!("already initialized");
         }
-        env.storage().instance().set(&DataKey::SnapshotEpoch, &0_u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::SnapshotEpoch, &0_u32);
         env.storage().instance().set(&DataKey::TotalStaked, &0_i128);
-        env.storage().instance().set(&DataKey::TotalRewardsDistributed, &0_i128);
-        env.storage().instance().set(&DataKey::ParticipantCount, &0_u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalRewardsDistributed, &0_i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::ParticipantCount, &0_u32);
     }
 
     /// Advance to the next epoch and freeze the current total staked.
@@ -106,9 +116,7 @@ impl SnapshotStaking {
         Self::record_epoch_snapshot(env.clone(), epoch);
 
         let next = epoch + 1;
-        env.storage()
-            .instance()
-            .set(&DataKey::SnapshotEpoch, &next);
+        env.storage().instance().set(&DataKey::SnapshotEpoch, &next);
 
         env.events().publish((symbol_short!("new_epoch"),), next);
 
@@ -119,9 +127,16 @@ impl SnapshotStaking {
 
     /// Record a stake of `amount` for `user` at the current epoch.
     pub fn stake(env: Env, user: Address, amount: i128) {
-
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&env, "is_paused"),
+                soroban_sdk::vec![&env],
+            );
             if is_paused {
                 panic!("contract is paused");
             }
@@ -132,7 +147,7 @@ impl SnapshotStaking {
 
         let epoch = Self::current_epoch(env.clone());
         let prev = Self::_balance_at_epoch(&env, &user, epoch);
-        
+
         // Track new participants: if user had no prior stake, increment count
         if prev == 0 {
             let count: u32 = env
@@ -144,7 +159,7 @@ impl SnapshotStaking {
                 .instance()
                 .set(&DataKey::ParticipantCount, &(count + 1));
         }
-        
+
         Self::_write_checkpoint(&env, &user, epoch, prev + amount);
 
         let total: i128 = env
@@ -163,9 +178,16 @@ impl SnapshotStaking {
 
     /// Record an unstake of `amount` for `user` at the current epoch.
     pub fn unstake(env: Env, user: Address, amount: i128) {
-
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&env, "is_paused"),
+                soroban_sdk::vec![&env],
+            );
             if is_paused {
                 panic!("contract is paused");
             }
@@ -266,8 +288,10 @@ impl SnapshotStaking {
         env.storage().persistent().set(&key, &snapshot);
         anchorpoint_utils::storage::extend_persistent_ttl_with(&env, &key, TTL_BUMP, TTL_BUMP);
 
-        env.events()
-            .publish((symbol_short!("snap"),), (epoch, snapshot.total_staked, snapshot.participant_count));
+        env.events().publish(
+            (symbol_short!("snap"),),
+            (epoch, snapshot.total_staked, snapshot.participant_count),
+        );
     }
 
     /// Query a historic epoch snapshot.
@@ -441,7 +465,7 @@ mod tests {
         let (_env, client, alice, _bob) = setup();
         client.stake(&alice, &1000);
         client.advance_epoch(); // epoch 0 closes with 1000
-        
+
         client.unstake(&alice, &500);
         assert_eq!(client.balance_at(&alice, &0), 1000);
         assert_eq!(client.balance_at(&alice, &1), 500);
@@ -452,10 +476,15 @@ mod tests {
     #[contractimpl]
     impl MockRegistry {
         pub fn is_paused(env: Env) -> bool {
-            env.storage().instance().get(&soroban_sdk::symbol_short!("paused")).unwrap_or(false)
+            env.storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("paused"))
+                .unwrap_or(false)
         }
         pub fn set_paused(env: Env, paused: bool) {
-            env.storage().instance().set(&soroban_sdk::symbol_short!("paused"), &paused);
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("paused"), &paused);
         }
     }
 
@@ -466,7 +495,7 @@ mod tests {
         let registry_id = env.register(MockRegistry, ());
         let registry_client = MockRegistryClient::new(&env, &registry_id);
         registry_client.set_paused(&true);
-        
+
         client.set_security_registry(&registry_id);
         client.stake(&alice, &100);
     }
@@ -477,9 +506,9 @@ mod tests {
         let (env, client, alice, _bob) = setup();
         let registry_id = env.register(MockRegistry, ());
         let registry_client = MockRegistryClient::new(&env, &registry_id);
-        
+
         client.stake(&alice, &1000);
-        
+
         registry_client.set_paused(&true);
         client.set_security_registry(&registry_id);
         client.unstake(&alice, &100);
@@ -580,4 +609,3 @@ mod tests {
         assert_eq!(snapshot_0.participant_count, 1);
     }
 }
-

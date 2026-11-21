@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 soroban-sdk = "26.0.1"
 anchorpoint-utils = { path = "../utils" }
+ethnum = { version = "1.5.3", default-features = false }
 
 [dev-dependencies]
 soroban-sdk = { version = "26.0.1", features = ["testutils"] }

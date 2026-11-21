@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 soroban-sdk.workspace = true
+ethnum = { version = "1.5.3", default-features = false }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
