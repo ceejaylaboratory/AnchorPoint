@@ -18,6 +18,9 @@ import {
   Activity
 } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
+import { CopyableText } from './CopyableText';
+import { TableShortcutHints } from './TableShortcutHints';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
 
 export interface VaultRecord {
   id: string;
@@ -355,6 +358,32 @@ export const AdminWidgets: React.FC<AdminWidgetsProps> = ({
       .reduce((acc, v) => acc + (v.collateralAmount * v.collateralPrice), 0);
   }, [vaults]);
 
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= processedVaults.length) setSelectedRowIndex(0);
+  }, [processedVaults.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = tableRef.current?.querySelectorAll<HTMLTableRowElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-testid="copyable-text-btn"]')?.click();
+  };
+
+  const handleOpenRow = (index: number) => {
+    const row = tableRef.current?.querySelectorAll<HTMLTableRowElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-row-action]')?.focus();
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: tableRef,
+    rowCount: processedVaults.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+    onOpenRow: handleOpenRow,
+  });
+
   const toggleSort = () => {
     setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
   };
@@ -591,9 +620,12 @@ export const AdminWidgets: React.FC<AdminWidgetsProps> = ({
       </div>
 
       {/* Main Sortable Table */}
+      <div className="flex justify-end px-1 pb-2">
+        <TableShortcutHints copyLabel="vault ID" detailsLabel="focus liquidation action" />
+      </div>
       <div className="glass-card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse" data-testid="liquidation-table">
+          <table ref={tableRef} data-keyboard-table className="w-full text-left border-collapse" data-testid="liquidation-table">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-xs uppercase tracking-wider font-semibold">
                 <th className="p-4">Vault ID</th>
@@ -619,7 +651,7 @@ export const AdminWidgets: React.FC<AdminWidgetsProps> = ({
                   </td>
                 </tr>
               ) : (
-                processedVaults.map(vault => {
+                processedVaults.map((vault, rowIndex) => {
                   const hf = vault.healthFactor ?? 0;
                   const isUnderCollateralized = hf < 1.1 && vault.status !== 'liquidated';
                   const isLiquidated = vault.status === 'liquidated';
@@ -630,7 +662,13 @@ export const AdminWidgets: React.FC<AdminWidgetsProps> = ({
                     <tr
                       key={vault.id}
                       data-testid={`vault-row-${vault.id}`}
-                      className={`transition-colors ${
+                      data-keyboard-row
+                      tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+                      aria-selected={selectedRowIndex === rowIndex}
+                      onFocus={() => setSelectedRowIndex(rowIndex)}
+                      className={`transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60 ${
+                        selectedRowIndex === rowIndex ? 'bg-slate-800/40' : ''
+                      } ${
                         isUnderCollateralized
                           ? 'bg-rose-950/30 hover:bg-rose-950/40 border-l-4 border-l-rose-500'
                           : isLiquidated
@@ -639,11 +677,11 @@ export const AdminWidgets: React.FC<AdminWidgetsProps> = ({
                       }`}
                     >
                       <td className="p-4 font-mono font-medium text-slate-200">
-                        {vault.id}
+                        <CopyableText value={vault.id} label="Vault ID" truncate={false} />
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-1.5 text-xs font-mono text-slate-400">
-                          <span>{vault.borrower}</span>
+                          <CopyableText value={vault.borrower} label="Borrower address" />
                           <ExternalLink size={12} className="cursor-pointer hover:text-primary" />
                         </div>
                       </td>
@@ -710,6 +748,7 @@ export const AdminWidgets: React.FC<AdminWidgetsProps> = ({
                         ) : isUnderCollateralized ? (
                           <button
                             data-testid={`trigger-liquidation-${vault.id}`}
+                            data-row-action
                             disabled={liquidatingId === vault.id}
                             onClick={() => handleTriggerLiquidation(vault)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-900/40 transition-all active:scale-95 disabled:opacity-50"
@@ -949,6 +988,19 @@ export const OracleMonitor: React.FC<OracleMonitorProps> = ({
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'warning' | 'error' } | null>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= priceFeeds.length) setSelectedRowIndex(0);
+  }, [priceFeeds.length, selectedRowIndex]);
+
+  useTableRowKeyboardNavigation({
+    containerRef: tableRef,
+    rowCount: priceFeeds.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+  });
 
   // Fetch price feeds from API
   const fetchPriceFeeds = useCallback(async () => {
@@ -1137,8 +1189,12 @@ export const OracleMonitor: React.FC<OracleMonitorProps> = ({
           </button>
         </div>
 
+        <div className="flex justify-end px-4 pb-2">
+          <TableShortcutHints />
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse" data-testid="price-feeds-table">
+          <table ref={tableRef} data-keyboard-table className="w-full text-left border-collapse" data-testid="price-feeds-table">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-xs uppercase tracking-wider font-semibold">
                 <th className="p-4">Asset Pair</th>
@@ -1149,7 +1205,7 @@ export const OracleMonitor: React.FC<OracleMonitorProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 text-sm">
-              {priceFeeds.map((feed) => {
+              {priceFeeds.map((feed, rowIndex) => {
                 const age = computeFeedAgeSeconds(feed.timestamp);
                 const isStale = feed.status === 'stale';
                 const isFailed = feed.status === 'failed';
@@ -1158,7 +1214,13 @@ export const OracleMonitor: React.FC<OracleMonitorProps> = ({
                   <tr
                     key={feed.id}
                     data-testid={`price-feed-${feed.id}`}
-                    className={`transition-colors ${
+                    data-keyboard-row
+                    tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+                    aria-selected={selectedRowIndex === rowIndex}
+                    onFocus={() => setSelectedRowIndex(rowIndex)}
+                    className={`transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60 ${
+                      selectedRowIndex === rowIndex ? 'bg-slate-800/40' : ''
+                    } ${
                       isFailed
                         ? 'bg-rose-950/30 hover:bg-rose-950/40 border-l-4 border-l-rose-500'
                         : isStale

@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { useTransactionStore } from '../store/transactionStore';
 import { useTransactionSocket } from '../hooks/useTransactionSocket';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
+import { TableShortcutHints } from './TableShortcutHints';
 
 export interface Transaction {
   id: string;
@@ -154,6 +156,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const [selectedType, setSelectedType] = useState<string>('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
   const [expandedTxIds, setExpandedTxIds] = useState<Set<string>>(new Set());
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
   // Advanced filters
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [statusMulti, setStatusMulti] = useState<string[]>(() => {
@@ -306,6 +309,29 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         size: estimatedRowHeight,
         tx
       }));
+
+  useEffect(() => {
+    if (selectedRowIndex >= itemsToRender.length) setSelectedRowIndex(0);
+  }, [itemsToRender.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = parentRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-testid="copyable-text-btn"]')?.click();
+  };
+
+  const handleOpenRow = (index: number) => {
+    const tx = itemsToRender[index]?.tx;
+    if (tx) toggleExpand(tx.id);
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: parentRef,
+    rowCount: itemsToRender.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+    onOpenRow: handleOpenRow,
+  });
 
   const handleToggleVolume = (count: number) => {
     setDataCount(count);
@@ -502,6 +528,11 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         )}
       </div>
 
+      {/* Keyboard affordances for the virtualized table */}
+      <div className="hidden justify-end px-1 md:flex">
+        <TableShortcutHints copyLabel="transaction hash" detailsLabel="expand transaction details" />
+      </div>
+
       {/* Virtualized Table Container */}
       <div className="glass-card border border-slate-800 overflow-hidden shadow-2xl">
         {/* Fixed Header: hidden on mobile (<768px), visible on desktop (>=768px) */}
@@ -537,7 +568,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                 position: 'relative'
               }}
             >
-              {itemsToRender.map(item => {
+              {itemsToRender.map((item, rowIndex) => {
                 const tx = item.tx;
                 if (!tx) return null;
                 const isExpanded = expandedTxIds.has(tx.id);
@@ -549,8 +580,15 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                     ref={rowVirtualizer.measureElement}
                     data-index={item.index}
                     data-testid={`tx-row-${item.index}`}
+                    data-keyboard-row
                     data-animating={isRecentlyUpdated ? 'true' : undefined}
-                    className={`absolute top-0 left-0 w-full border-b border-slate-800/60 hover:bg-slate-900/60 transition-all duration-700 text-sm ${
+                    role="row"
+                    tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+                    aria-selected={selectedRowIndex === rowIndex}
+                    onFocus={() => setSelectedRowIndex(rowIndex)}
+                    className={`absolute top-0 left-0 w-full border-b border-slate-800/60 hover:bg-slate-900/60 transition-all duration-700 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60 ${
+                      selectedRowIndex === rowIndex ? 'bg-slate-800/50' : ''
+                    } ${
                       isRecentlyUpdated
                         ? 'bg-emerald-500/20 ring-1 ring-inset ring-emerald-500/40 animate-pulse'
                         : ''
