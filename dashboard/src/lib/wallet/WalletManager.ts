@@ -3,6 +3,7 @@ import { FreighterAdapter } from './FreighterAdapter';
 import { AlbedoAdapter } from './AlbedoAdapter';
 import { XBullAdapter } from './XBullAdapter';
 import { RabetAdapter } from './RabetAdapter';
+import { LedgerAdapter } from './LedgerAdapter';
 
 export interface WalletOption {
   id: string;
@@ -32,6 +33,7 @@ export class WalletManager {
     this.adapters.set('albedo', new AlbedoAdapter());
     this.adapters.set('xbull', new XBullAdapter());
     this.adapters.set('rabet', new RabetAdapter());
+    this.adapters.set('ledger', new LedgerAdapter());
   }
 
   getAdapter(id: string): WalletAdapter | undefined {
@@ -66,6 +68,13 @@ export class WalletManager {
         name: 'Rabet',
         description: 'Use the Rabet wallet for Stellar transactions.',
         accent: 'from-emerald-500/20 to-lime-500/20',
+        installed: false,
+      },
+      {
+        id: 'ledger',
+        name: 'Ledger',
+        description: 'Sign transactions with your Ledger hardware wallet via WebUSB.',
+        accent: 'from-slate-500/20 to-zinc-500/20',
         installed: false,
       },
     ];
