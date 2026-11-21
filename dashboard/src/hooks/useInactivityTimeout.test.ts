@@ -173,7 +173,7 @@ describe('useInactivityTimeout', () => {
   it('uses default timeout of 15 minutes', () => {
     const onTimeout = vi.fn();
 
-    // @ts-expect-error - Testing default parameter
+    // `undefined` selects the default parameter.
     renderHook(() => useInactivityTimeout(undefined, onTimeout));
 
     const defaultTimeout = 15 * 60 * 1000; // 15 minutes

@@ -223,7 +223,6 @@ describe('index.html theme boot script (no flash of wrong theme)', () => {
   const html = readFileSync(resolve(__dirname, '../../index.html'), 'utf8');
   const match = html.match(/<script id="theme-boot">([\s\S]*?)<\/script>/);
   const runBootScript = () => {
-    // eslint-disable-next-line no-new-func
     new Function(match![1])();
   };
 
