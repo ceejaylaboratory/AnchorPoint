@@ -7,6 +7,9 @@ import {
   toDecodedJson,
   type DecodedEvent,
 } from '../lib/xdrEvents';
+import { CopyableText } from './CopyableText';
+import { TableShortcutHints } from './TableShortcutHints';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -179,6 +182,7 @@ const CopyDecodedButton: React.FC<{ json: string; label: string }> = ({ json, la
       type="button"
       onClick={handleCopy}
       aria-label={label}
+      data-row-action
       className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-700 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
     >
       {copied ? <Check size={11} aria-hidden="true" /> : <Copy size={11} aria-hidden="true" />}
@@ -424,6 +428,32 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
     return result;
   }, [events, contractFilter, severityFilter, debouncedSearch]);
 
+  const logRef = useRef<HTMLDivElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= filtered.length) setSelectedRowIndex(0);
+  }, [filtered.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = logRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-testid="copyable-text-btn"]')?.click();
+  };
+
+  const handleOpenRow = (index: number) => {
+    const row = logRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-row-action]')?.focus();
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: logRef,
+    rowCount: filtered.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+    onOpenRow: handleOpenRow,
+  });
+
   const handleClear = useCallback(() => setEvents([]), []);
   const handleClearSearch = useCallback(() => setSearchInput(''), []);
 
@@ -531,7 +561,13 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
         </div>
       </div>
 
+      <div className="flex justify-end border-b border-slate-800 px-4 py-1">
+        <TableShortcutHints copyLabel="contract ID" detailsLabel="copy decoded JSON" />
+      </div>
+
       <div
+        ref={logRef}
+        data-keyboard-table
         role="log"
         aria-live="polite"
         aria-label="Contract events"
@@ -562,7 +598,7 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
             )}
           </div>
         ) : (
-          filtered.map((event) => {
+          filtered.map((event, rowIndex) => {
             const json = toDecodedJson({
               contractId: event.contractId,
               topics: event.decoded.topics.map((topic) => topic.value),
@@ -573,7 +609,14 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
               <article
                 key={event.id}
                 aria-label={`Event ${event.topic}`}
-                className="mb-3 rounded-lg border border-slate-800 bg-slate-900 p-3"
+                data-keyboard-row
+                data-testid={`event-row-${rowIndex}`}
+                tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+                aria-selected={selectedRowIndex === rowIndex}
+                onFocus={() => setSelectedRowIndex(rowIndex)}
+                className={`mb-3 rounded-lg border border-slate-800 bg-slate-900 p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${
+                  selectedRowIndex === rowIndex ? 'ring-1 ring-inset ring-blue-500/30' : ''
+                }`}
               >
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <TopicBadge topic={event.topic} />
@@ -582,8 +625,8 @@ export const EventLogViewer: React.FC<EventLogViewerProps> = ({
                     {event.timestamp}
                   </time>
                   {event.contractId && (
-                    <span className="text-[10px] text-slate-600" title={event.contractId}>
-                      {shortenId(event.contractId)}
+                    <span className="text-[10px] text-slate-600">
+                      <CopyableText value={event.contractId} label="Contract ID" />
                     </span>
                   )}
                   <CopyDecodedButton

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { LogoMark } from './LogoMark';
 import { MetricsChart } from './MetricsChart';
@@ -7,6 +7,9 @@ import { StakingCalculator } from './StakingCalculator';
 import { StakingDashboard } from './StakingDashboard';
 import { TransactionStatusBadge, type TransactionStatus } from './TransactionStatusBadge';
 import type { UiConfig } from '../types';
+import { CopyableText } from './CopyableText';
+import { TableShortcutHints } from './TableShortcutHints';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
 
 export type StatusFilter = 'All' | 'Pending' | 'Completed' | 'Failed';
 
@@ -110,6 +113,27 @@ export const DashboardOverview = ({ uiConfig, isLoading = false }: DashboardOver
     });
   }, [statusFilter, query]);
 
+  const visibleTransactions = filteredTransactions.slice(0, 6);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= visibleTransactions.length) setSelectedRowIndex(0);
+  }, [visibleTransactions.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = listRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-testid="copyable-text-btn"]')?.click();
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: listRef,
+    rowCount: visibleTransactions.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+  });
+
   // Metric summaries reflect the active filter.
   const stats = useMemo(() => {
     const totalVolume = filteredTransactions.reduce((sum, tx) => sum + tx.amount, 0);
@@ -184,37 +208,51 @@ export const DashboardOverview = ({ uiConfig, isLoading = false }: DashboardOver
         </div>
 
         <div className="mt-4 space-y-2">
-          {filteredTransactions.length === 0 ? (
+          {visibleTransactions.length > 0 && (
+            <div className="flex justify-end">
+              <TableShortcutHints copyLabel="transaction reference" />
+            </div>
+          )}
+          {visibleTransactions.length === 0 ? (
             <p className="py-8 text-center text-sm text-slate-400">
               No transactions match the selected filters.
             </p>
           ) : (
-            filteredTransactions.slice(0, 6).map((tx) => (
-              <div
-                key={tx.id}
-                className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-950/30 px-4 py-3"
-              >
-                <div className="flex items-center gap-3">
-                  {tx.type === 'Deposit' ? (
-                    <ArrowDownLeft size={16} className="text-emerald-400" aria-hidden="true" />
-                  ) : (
-                    <ArrowUpRight size={16} className="text-rose-400" aria-hidden="true" />
-                  )}
-                  <div>
-                    <p className="text-sm font-medium">
-                      {tx.type} · {tx.asset}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      <time dateTime={tx.date}>{tx.date}</time> · {tx.reference}
-                    </p>
+            <div ref={listRef} data-keyboard-table className="space-y-2">
+              {visibleTransactions.map((tx, rowIndex) => (
+                <div
+                  key={tx.id}
+                  data-keyboard-row
+                  tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+                  aria-selected={selectedRowIndex === rowIndex}
+                  onFocus={() => setSelectedRowIndex(rowIndex)}
+                  className={`flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-950/30 px-4 py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    selectedRowIndex === rowIndex ? 'ring-1 ring-inset ring-primary/30' : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    {tx.type === 'Deposit' ? (
+                      <ArrowDownLeft size={16} className="text-emerald-400" aria-hidden="true" />
+                    ) : (
+                      <ArrowUpRight size={16} className="text-rose-400" aria-hidden="true" />
+                    )}
+                    <div>
+                      <p className="text-sm font-medium">
+                        {tx.type} · {tx.asset}
+                      </p>
+                      <p className="flex items-center gap-1 text-xs text-slate-500">
+                        <time dateTime={tx.date}>{tx.date}</time> ·
+                        <CopyableText value={tx.reference} label="Transaction reference" />
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-sm">${fmtAmount(tx.amount)}</span>
+                    <TransactionStatusBadge status={tx.status} />
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-sm">${fmtAmount(tx.amount)}</span>
-                  <TransactionStatusBadge status={tx.status} />
-                </div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </div>

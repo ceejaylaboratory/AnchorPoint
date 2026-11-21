@@ -1,5 +1,8 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
+import { CopyButton } from './Common/CopyButton';
+import { TableShortcutHints } from './TableShortcutHints';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
 import {
   AddressBookError,
   addContact,
@@ -39,6 +42,31 @@ export const AddressBook = () => {
   const [error, setError] = useState<string | null>(null);
   const [fundingWarning, setFundingWarning] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const listRef = useRef<HTMLUListElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= contacts.length) setSelectedRowIndex(0);
+  }, [contacts.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = listRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('button[aria-label^="Copy"]')?.click();
+  };
+
+  const handleOpenRow = (index: number) => {
+    const row = listRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-row-action]')?.focus();
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: listRef,
+    rowCount: contacts.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+    onOpenRow: handleOpenRow,
+  });
 
   const refresh = () => setContacts(listContacts());
 
@@ -163,37 +191,52 @@ export const AddressBook = () => {
       {contacts.length === 0 ? (
         <p className="text-sm text-slate-500">No saved contacts yet.</p>
       ) : (
-        <ul className="space-y-2">
-          {contacts.map((contact) => (
-            <li
-              key={contact.id}
-              className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3"
-            >
-              <div className="min-w-0">
-                <p className="font-semibold text-slate-100">{contact.name}</p>
-                <p className="truncate font-mono text-xs text-slate-400">{contact.publicKey}</p>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  aria-label={`Edit ${contact.name}`}
-                  onClick={() => startEdit(contact)}
-                  className="rounded-lg border border-slate-700 p-2 text-slate-300"
-                >
-                  <Pencil size={14} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Delete ${contact.name}`}
-                  onClick={() => handleDelete(contact.id)}
-                  className="rounded-lg border border-slate-700 p-2 text-rose-300"
-                >
-                  <Trash2 size={14} aria-hidden="true" />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <>
+          <div className="mb-2 flex justify-end">
+            <TableShortcutHints copyLabel="public key" detailsLabel="edit contact" />
+          </div>
+          <ul ref={listRef} data-keyboard-table className="space-y-2">
+            {contacts.map((contact, rowIndex) => (
+              <li
+                key={contact.id}
+                data-keyboard-row
+                tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+                aria-selected={selectedRowIndex === rowIndex}
+                onFocus={() => setSelectedRowIndex(rowIndex)}
+                className={`flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                  selectedRowIndex === rowIndex ? 'ring-1 ring-inset ring-primary/30' : ''
+                }`}
+              >
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-100">{contact.name}</p>
+                  <div className="flex min-w-0 items-center gap-1">
+                    <p className="truncate font-mono text-xs text-slate-400">{contact.publicKey}</p>
+                    <CopyButton value={contact.publicKey} label={`${contact.name} public key`} />
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    data-row-action
+                    aria-label={`Edit ${contact.name}`}
+                    onClick={() => startEdit(contact)}
+                    className="rounded-lg border border-slate-700 p-2 text-slate-300"
+                  >
+                    <Pencil size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${contact.name}`}
+                    onClick={() => handleDelete(contact.id)}
+                    className="rounded-lg border border-slate-700 p-2 text-rose-300"
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );
