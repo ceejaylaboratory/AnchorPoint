@@ -1,5 +1,8 @@
-import React, { Component, ReactNode, ErrorInfo } from 'react';
+import { Component, ReactNode, ErrorInfo } from 'react';
 import { AlertTriangle, RefreshCcw, Copy, Check } from 'lucide-react';
+import { buildDiagnosticReport, formatDiagnosticReport, redactSensitiveData } from '../lib/diagnostics';
+
+export { buildDiagnosticReport, formatDiagnosticReport, redactSensitiveData } from '../lib/diagnostics';
 
 interface Props {
   children?: ReactNode;
@@ -12,36 +15,26 @@ interface State {
   errorInfo: ErrorInfo | null;
   copied: boolean;
   reported: boolean;
+  reloading: boolean;
 }
 
-function getSessionId(): string {
-  try {
-    let id = sessionStorage.getItem('ap-session-id');
-    if (!id) {
-      id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-      sessionStorage.setItem('ap-session-id', id);
-    }
-    return id;
-  } catch {
-    return 'unknown-session';
-  }
-}
-
+/**
+ * Submit an anonymized diagnostic bundle to an optional collector.
+ *
+ * `VITE_ERROR_REPORT_URL` may point at any crash endpoint (including a
+ * Sentry-compatible ingest proxy). Reports are skipped when it is unset.
+ */
 export async function reportError(error: Error, errorInfo: ErrorInfo | null): Promise<boolean> {
   const url = (import.meta.env.VITE_ERROR_REPORT_URL as string | undefined) ?? '';
   if (!url) return false;
+
   try {
-    const res = await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: error?.message ?? String(error),
-        stack: error?.stack ?? null,
-        componentStack: errorInfo?.componentStack ?? null,
-        sessionId: getSessionId(),
-      }),
+      body: JSON.stringify(buildDiagnosticReport(error, errorInfo)),
     });
-    return res.ok;
+    return response.ok;
   } catch {
     return false;
   }
@@ -54,7 +47,10 @@ export class GlobalErrorBoundary extends Component<Props, State> {
     errorInfo: null,
     copied: false,
     reported: false,
+    reloading: false,
   };
+
+  private copyResetTimer: number | undefined;
 
   public static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
@@ -68,26 +64,59 @@ export class GlobalErrorBoundary extends Component<Props, State> {
     });
   }
 
+  public componentWillUnmount() {
+    if (this.copyResetTimer !== undefined) {
+      window.clearTimeout(this.copyResetTimer);
+      this.copyResetTimer = undefined;
+    }
+  }
+
   private handleReload = () => {
-    window.location.reload();
+    // Clearing the crash state keeps the UI recoverable if navigation is
+    // blocked (for example in an embedded preview or a unit test).
+    this.setState({
+      hasError: false,
+      error: null,
+      errorInfo: null,
+      copied: false,
+      reported: false,
+      reloading: true,
+    });
+    try {
+      window.location.reload();
+    } catch {
+      /* navigation unavailable in this environment */
+    }
   };
 
-  private handleCopyStackTrace = async () => {
+  private handleCopyDiagnosticInfo = async () => {
     const { error, errorInfo } = this.state;
-    const stackTrace = [error?.stack ?? error?.toString(), errorInfo?.componentStack]
-      .filter(Boolean)
-      .join('\n\nComponent Stack:');
+    const diagnosticInfo = formatDiagnosticReport(buildDiagnosticReport(error, errorInfo));
 
     try {
-      await navigator.clipboard.writeText(stackTrace);
+      await navigator.clipboard.writeText(diagnosticInfo);
       this.setState({ copied: true });
-      window.setTimeout(() => this.setState({ copied: false }), 2000);
+      if (this.copyResetTimer !== undefined) window.clearTimeout(this.copyResetTimer);
+      this.copyResetTimer = window.setTimeout(() => {
+        this.copyResetTimer = undefined;
+        this.setState({ copied: false });
+      }, 2000);
     } catch {
       /* clipboard not available */
     }
   };
 
   public render() {
+    if (this.state.reloading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background text-slate-50 p-6">
+          <p className="glass-card p-6 text-center text-slate-300" role="status">
+            Reloading AnchorPoint…
+          </p>
+        </div>
+      );
+    }
+
     if (this.state.hasError) {
       if (this.props.compact) {
         return (
@@ -104,29 +133,37 @@ export class GlobalErrorBoundary extends Component<Props, State> {
             <div className="h-16 w-16 bg-red-500/10 rounded-full flex items-center justify-center border border-red-500/20">
               <AlertTriangle className="text-red-400" size={32} />
             </div>
-            
+
             <div className="space-y-2">
               <h1 className="text-2xl font-bold font-display text-slate-50">System Error</h1>
               <p className="text-slate-400 text-sm">
-                An unexpected error occurred while rendering the application interface. Our team has been notified.
+                An unexpected error occurred while rendering the application interface. Copy the
+                anonymized diagnostic info to report it, or reload to try again.
               </p>
             </div>
-            
+
             {this.state.error && (
               <div className="w-full bg-slate-950/80 rounded-lg p-4 mt-2 text-left overflow-x-auto border border-slate-600">
                 <p className="text-xs font-mono text-red-300/80 break-words whitespace-pre-wrap">
-                  {this.state.error.toString()}
+                  {redactSensitiveData(this.state.error.toString())}
                 </p>
               </div>
             )}
-            
+
             <div className="mt-6 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
               <button
                 onClick={this.handleReload}
                 className="action-button flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/20 w-full sm:w-auto border border-blue-500"
               >
                 <RefreshCcw size={18} />
-                Reload Application
+                Reload App
+              </button>
+              <button
+                onClick={this.handleCopyDiagnosticInfo}
+                className="action-button flex items-center justify-center gap-2 bg-slate-800 text-slate-200 px-6 py-2.5 rounded-lg font-medium hover:bg-slate-700 w-full sm:w-auto border border-slate-600"
+              >
+                {this.state.copied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
+                {this.state.copied ? 'Copied!' : 'Copy Diagnostic Info'}
               </button>
               <a
                 href="mailto:support@anchorpoint.local?subject=Problem%20Report"
@@ -135,13 +172,6 @@ export class GlobalErrorBoundary extends Component<Props, State> {
               >
                 Report Problem
               </a>
-              <button
-                onClick={this.handleCopyStackTrace}
-                className="action-button flex items-center justify-center gap-2 bg-slate-800 text-slate-200 px-6 py-2.5 rounded-lg font-medium hover:bg-slate-700 w-full sm:w-auto border border-slate-600"
-              >
-                {this.state.copied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
-                {this.state.copied ? 'Copied!' : 'Copy Error Details'}
-              </button>
             </div>
             {this.state.reported && (
               <p className="text-xs text-emerald-400" data-testid="error-reported-note">
