@@ -344,3 +344,8 @@ Master intuitive gameplay controls designed for both casual players and experien
  * Follow simple command-line instructions to set up and run the project locally.
  * Join the community forum to share strategies, speedruns, and custom mods.
  * Report issues or suggest features directly via our public GitHub tracker.
+
+## Handsoff notes
+
+<!-- handsoff-issue-1647 -->
+- #1647: fix(contracts/swap): enforce minimum output amount (slippage check) in single-transaction multi-hop swaps
