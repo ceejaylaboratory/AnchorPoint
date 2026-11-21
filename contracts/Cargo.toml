@@ -2,7 +2,7 @@
 members = [
     "yield", "nft_metadata", "liquid_staking", "xlm_wrapper", 
     "registry", "swap", "staking", "random_gen", "bridge_stub", 
-    "revenue_distributor", "anchorpoint", "governance"
+    "revenue_distributor", "anchorpoint", "governance", "e2e_tests"
 ]
 resolver = "2"
 
