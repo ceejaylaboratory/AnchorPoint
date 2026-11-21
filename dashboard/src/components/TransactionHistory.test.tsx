@@ -231,6 +231,57 @@ describe('TransactionHistory - Virtualized Transaction History Table for 10,000+
       expect(badge).toBeInTheDocument();
     });
   });
+
+  describe('Infinite scrolling', () => {
+    it('renders an infinite-scroll loader when more items are available', () => {
+      // 200 items total but only INFINITE_SCROLL_PAGE_SIZE shown initially.
+      const { INFINITE_SCROLL_PAGE_SIZE } = require('./TransactionHistory');
+      const data = Array.from({ length: 200 }, (_, i) => ({
+        id: `TX-${i + 1}`,
+        hash: `0xhash${i}`,
+        type: 'Deposit' as const,
+        asset: 'USDC',
+        amount: '10.00',
+        counterparty: 'GABC',
+        status: 'Completed' as const,
+        date: '2024-03-20',
+        timestamp: 1710500000 - i * 90000,
+        fee: '0.00001 XLM',
+      }));
+
+      render(<TransactionHistory initialData={data} totalInitialCount={200} />);
+
+      if (200 > INFINITE_SCROLL_PAGE_SIZE) {
+        expect(screen.getByTestId('infinite-scroll-loader')).toBeInTheDocument();
+      }
+    });
+
+    it('does not render infinite-scroll-loader when all items fit in one page', () => {
+      const { INFINITE_SCROLL_PAGE_SIZE } = require('./TransactionHistory');
+      const count = Math.min(10, INFINITE_SCROLL_PAGE_SIZE);
+      const data = Array.from({ length: count }, (_, i) => ({
+        id: `TX-SMALL-${i}`,
+        hash: `0xhash${i}`,
+        type: 'Deposit' as const,
+        asset: 'USDC',
+        amount: '5.00',
+        counterparty: 'GABC',
+        status: 'Completed' as const,
+        date: '2024-03-20',
+        timestamp: 1710500000,
+        fee: '0.00001 XLM',
+      }));
+
+      render(<TransactionHistory initialData={data} totalInitialCount={count} />);
+      expect(screen.queryByTestId('infinite-scroll-loader')).toBeNull();
+    });
+
+    it('exports INFINITE_SCROLL_PAGE_SIZE of 100 and INFINITE_SCROLL_THRESHOLD_PX of 200', () => {
+      const { INFINITE_SCROLL_PAGE_SIZE, INFINITE_SCROLL_THRESHOLD_PX } = require('./TransactionHistory');
+      expect(INFINITE_SCROLL_PAGE_SIZE).toBe(100);
+      expect(INFINITE_SCROLL_THRESHOLD_PX).toBe(200);
+    });
+  });
 });
 
 

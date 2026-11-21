@@ -5,12 +5,25 @@ import logger from '../utils/logger';
 /** Number of ledgers processed per bulk indexing batch. */
 export const EVENT_INDEXER_BATCH_SIZE = 50;
 
+/** Maximum number of events to accumulate before a bulk DB write is forced. */
+export const WRITE_BATCH_SIZE = 100;
+/** Maximum time (ms) to hold events in the write buffer before flushing. */
+export const WRITE_FLUSH_INTERVAL_MS = 500;
+
+type PendingEvent = Parameters<typeof prisma.contractEvent.createMany>[0]['data'][number];
+
 export class EventIndexerService {
     private rpcServer: rpc.Server;
     private isRunning: boolean = false;
     private pollInterval: number = 5000; // 5 seconds
     /** In-memory cursor advanced transactionally with each successful batch. */
     private lastIndexedLedger: number | null = null;
+
+    // ── Write-batching buffer ───────────────────────────────────────────────
+    /** Events waiting to be written to the database in bulk. */
+    private writeBuffer: PendingEvent[] = [];
+    /** Handle for the periodic flush timer. */
+    private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(rpcUrl: string = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org') {
         this.rpcServer = new rpc.Server(rpcUrl);
@@ -23,14 +36,21 @@ export class EventIndexerService {
         if (this.isRunning) return;
         this.isRunning = true;
         logger.info('Event Indexer Service started');
+        this.scheduleFlush();
         this.poll();
     }
 
     /**
-     * Stop the event indexing service
+     * Stop the event indexing service and flush any pending buffered events.
      */
-    public stop() {
+    public async stop() {
         this.isRunning = false;
+        if (this.flushTimer !== null) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = null;
+        }
+        // Drain the buffer before the process exits so no events are dropped.
+        await this.flushBuffer();
         logger.info('Event Indexer Service stopped');
     }
 
@@ -45,6 +65,42 @@ export class EventIndexerService {
                 logger.error('Error in Event Indexer poll loop:', error);
             }
             await new Promise(resolve => setTimeout(resolve, this.pollInterval));
+        }
+    }
+
+    /**
+     * Schedule the next periodic buffer flush.
+     */
+    private scheduleFlush() {
+        if (this.flushTimer !== null) return;
+        this.flushTimer = setTimeout(async () => {
+            this.flushTimer = null;
+            await this.flushBuffer();
+            if (this.isRunning) this.scheduleFlush();
+        }, WRITE_FLUSH_INTERVAL_MS);
+    }
+
+    /**
+     * Write all accumulated events in a single bulk INSERT and clear the
+     * buffer.  Uses `skipDuplicates: true` so concurrent callers are safe.
+     */
+    public async flushBuffer(): Promise<void> {
+        if (this.writeBuffer.length === 0) return;
+
+        const batch = this.writeBuffer.splice(0, this.writeBuffer.length);
+        logger.info(`Flushing ${batch.length} buffered events to database`);
+
+        try {
+            await prisma.contractEvent.createMany({
+                data: batch,
+                skipDuplicates: true,
+            });
+            logger.debug(`Successfully wrote ${batch.length} events in bulk`);
+        } catch (error) {
+            logger.error('Bulk event write failed; events may be retried on next poll:', error);
+            // Re-queue failed events at the front so they are retried.
+            this.writeBuffer.unshift(...batch);
+            throw error;
         }
     }
 
@@ -103,19 +159,49 @@ export class EventIndexerService {
         if (events.length > 0) {
             logger.info(`Found ${events.length} events to index in ledger range ${startLedger}–${endLedger}`);
 
-            const results = await Promise.allSettled(
-                events.map((event: any) => this.processEvent(event))
-            );
+            for (const event of events) {
+                this.enqueueEvent(event);
+            }
 
-            const failed = results.filter((r) => r.status === 'rejected').length;
-            if (failed > 0) {
-                logger.warn(`${failed}/${events.length} events failed during concurrent indexing`);
+            // Flush immediately when the buffer is full to cap write latency.
+            if (this.writeBuffer.length >= WRITE_BATCH_SIZE) {
+                await this.flushBuffer();
             }
         }
 
         // Advance last-indexed ledger transactionally so the cursor only moves
         // after the batch write path has completed.
         await this.commitLastIndexedLedger(endLedger);
+    }
+
+    /**
+     * Parse a raw Soroban event and add it to the write buffer.
+     */
+    private enqueueEvent(event: any): void {
+        try {
+            const topics = event.topic.map((t: any) => {
+                const scVal = xdr.ScVal.fromXDR(t, 'base64');
+                return scValToNative(scVal);
+            });
+
+            const valueScVal = xdr.ScVal.fromXDR(event.value, 'base64');
+            const value = scValToNative(valueScVal);
+
+            this.writeBuffer.push({
+                contractEventId: event.id,
+                contractId: event.contractId,
+                ledger: event.ledger,
+                ledgerClosedAt: new Date(event.ledgerClosedAt),
+                txHash: event.txHash,
+                topics: JSON.stringify(topics),
+                value: JSON.stringify(value),
+                type: event.type,
+            });
+
+            logger.debug(`Enqueued event ${event.id} (buffer size: ${this.writeBuffer.length})`);
+        } catch (error) {
+            logger.warn(`Failed to parse event ${event.id}, skipping:`, error);
+        }
     }
 
     /**
@@ -138,38 +224,6 @@ export class EventIndexerService {
         });
 
         logger.debug(`Event indexer cursor advanced to ledger ${this.lastIndexedLedger}`);
-    }
-
-    /**
-     * Parse and store a single event
-     */
-    private async processEvent(event: any) {
-        // Parse XDR topics and value
-        const topics = event.topic.map((t: any) => {
-            const scVal = xdr.ScVal.fromXDR(t, 'base64');
-            return scValToNative(scVal);
-        });
-
-        const valueScVal = xdr.ScVal.fromXDR(event.value, 'base64');
-        const value = scValToNative(valueScVal);
-
-        // Store in database
-        await prisma.contractEvent.upsert({
-            where: { contractEventId: event.id },
-            update: {},
-            create: {
-                contractEventId: event.id,
-                contractId: event.contractId,
-                ledger: event.ledger,
-                ledgerClosedAt: new Date(event.ledgerClosedAt),
-                txHash: event.txHash,
-                topics: JSON.stringify(topics),
-                value: JSON.stringify(value),
-                type: event.type
-            }
-        });
-
-        logger.debug(`Indexed event ${event.id} from contract ${event.contractId}`);
     }
 
     /**
@@ -214,6 +268,9 @@ export class EventIndexerService {
                 gap,
                 isHealthy: gap < 1000,
                 batchSize: EVENT_INDEXER_BATCH_SIZE,
+                writeBatchSize: WRITE_BATCH_SIZE,
+                writeFlushIntervalMs: WRITE_FLUSH_INTERVAL_MS,
+                pendingBufferSize: this.writeBuffer.length,
                 timestamp: new Date().toISOString()
             };
         } catch (error) {

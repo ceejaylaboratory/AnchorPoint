@@ -23,6 +23,7 @@ export class MetricsService {
   private batchPaymentOperationsTotal: Counter<string>;
   private redisFailoverEventsTotal: Counter<string>;
   private redisConnectedClients: Gauge<string>;
+  private sepTransactionCompletionDuration: Histogram<string>;
 
   constructor() {
     this.registry = new promClient.Registry();
@@ -205,6 +206,18 @@ export class MetricsService {
       help: 'Number of clients currently connected to Redis',
       registers: [this.registry],
     });
+
+    // #1600: SEP transaction end-to-end completion duration histogram.
+    // Records the elapsed time from transaction creation to a terminal status
+    // (completed or error). Buckets are sized for financial flows where
+    // typical completion times range from seconds to 30 minutes.
+    this.sepTransactionCompletionDuration = new promClient.Histogram({
+      name: 'sep_transaction_duration_seconds',
+      help: 'End-to-end duration of SEP transactions from creation to terminal status (completed/error)',
+      labelNames: ['sep_type', 'asset', 'status'] as const,
+      buckets: [10, 30, 60, 120, 300, 600, 1800],
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -219,6 +232,24 @@ export class MetricsService {
    */
   observeSepTransactionDuration(sep: string, operation: string, durationSeconds: number): void {
     this.sepTransactionDuration.observe({ sep, operation }, durationSeconds);
+  }
+
+  /**
+   * #1600: Record the end-to-end duration of a SEP transaction from creation
+   * to a terminal status (completed or error).
+   *
+   * @param sepType   SEP protocol identifier, e.g. 'sep24', 'sep31'.
+   * @param asset     Asset code involved, e.g. 'USDC'.
+   * @param status    Terminal status: 'completed' | 'error'.
+   * @param durationSeconds  Elapsed seconds from transaction creation to now.
+   */
+  observeSepTransactionCompletionDuration(
+    sepType: string,
+    asset: string,
+    status: 'completed' | 'error',
+    durationSeconds: number,
+  ): void {
+    this.sepTransactionCompletionDuration.observe({ sep_type: sepType, asset, status }, durationSeconds);
   }
 
   /**
