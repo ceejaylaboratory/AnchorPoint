@@ -11,4 +11,5 @@ soroban-sdk.workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2.2.0"
+# Replay-protection tests exercise nonce/domain-separated signing via the testutils feature.
 soroban-sdk = { workspace = true, features = ["testutils"] }
