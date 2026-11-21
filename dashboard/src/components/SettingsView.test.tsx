@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import SettingsView, { LanguageSelector } from './SettingsView';
+import SettingsView, { BiometricSettingsSection, LanguageSelector } from './SettingsView';
 import { I18nProvider } from '../i18n/config';
 import { ThemeProvider } from '../contexts/ThemeContext';
+import { loadBiometricSettings } from '../lib/biometricSettings';
 import type { UiConfig } from '../types';
 
 const mockUiConfig: UiConfig = {
@@ -20,6 +21,7 @@ const mockUiConfig: UiConfig = {
 describe('SettingsView and LanguageSelector', () => {
   beforeEach(() => {
     document.documentElement.dir = 'ltr';
+    localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -85,5 +87,44 @@ describe('SettingsView and LanguageSelector', () => {
     expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Language' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Branding Configuration' })).toBeTruthy();
+  });
+});
+
+describe('BiometricSettingsSection', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('is opt-out by default and persists the opt-in toggle', () => {
+    render(
+      <I18nProvider>
+        <BiometricSettingsSection />
+      </I18nProvider>,
+    );
+
+    const toggle = screen.getByRole('switch', {
+      name: 'Require Biometrics for High-Value Transactions',
+    });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(loadBiometricSettings().enabled).toBe(false);
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    expect(loadBiometricSettings()).toEqual({ enabled: true, thresholdUsd: 1_000 });
+  });
+
+  it('persists a custom high-value threshold on blur', () => {
+    render(
+      <I18nProvider>
+        <BiometricSettingsSection />
+      </I18nProvider>,
+    );
+
+    const threshold = screen.getByLabelText('High-value threshold (USD)');
+    fireEvent.change(threshold, { target: { value: '2500' } });
+    fireEvent.blur(threshold);
+
+    expect(loadBiometricSettings()).toEqual({ enabled: false, thresholdUsd: 2_500 });
   });
 });

@@ -6,6 +6,9 @@ import { z } from 'zod';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import type { FieldRequirement } from '../types';
 import type { DepositError } from './DepositErrorAlert';
+import type { BiometricVerificationResult } from '../lib/webauthn';
+import { getTransactionAmount, requiresBiometricConfirmation } from '../lib/biometricSettings';
+import { BiometricConfirmation } from './BiometricConfirmation';
 import { DepositErrorAlert } from './DepositErrorAlert';
 import { useTranslation } from '../i18n/config';
 
@@ -30,6 +33,8 @@ interface DepositFormProps {
   assetLimits?: AssetLimits;
   /** Called with validated form values when the user submits */
   onSubmit: (values: FormValues) => void;
+  /** Override for the WebAuthn ceremony (used in tests / alternate authenticators). */
+  onAuthenticate?: () => Promise<BiometricVerificationResult>;
 }
 
 type TranslateFn = (key: string, params?: Record<string, string | number>) => string;
@@ -187,10 +192,12 @@ export const DepositForm = ({
   assetCode,
   assetLimits,
   onSubmit,
+  onAuthenticate,
 }: DepositFormProps) => {
   const formId = useId();
   const { t } = useTranslation();
   const [formError, setFormError] = useState<DepositError | null>(null);
+  const [pendingValues, setPendingValues] = useState<FormValues | null>(null);
 
   const limits = useMemo(
     () => assetLimits ?? getAssetLimits(assetCode),
@@ -231,7 +238,20 @@ export const DepositForm = ({
 
   const handleValid = (submitted: FormValues) => {
     setFormError(null);
+    // Hold the submission until the high-value confirmation succeeds. Reading
+    // storage here (rather than on mount) picks up changes made in Settings.
+    if (requiresBiometricConfirmation(getTransactionAmount(submitted))) {
+      setPendingValues(submitted);
+      return;
+    }
     onSubmit(submitted);
+  };
+
+  const confirmPending = () => {
+    if (!pendingValues) return;
+    const values = pendingValues;
+    setPendingValues(null);
+    onSubmit(values);
   };
 
   // RHF hands the fresh error map to this callback; the `errors` captured from
@@ -251,118 +271,129 @@ export const DepositForm = ({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(handleValid, handleInvalid)}
-      noValidate
-      aria-label={t('deposit.formAriaLabel', { asset: assetCode })}
-      className="space-y-5"
-    >
-      {/* Form-level error alert from submission or network failures */}
-      <DepositErrorAlert error={formError} onDismiss={() => setFormError(null)} dismissible />
+    <>
+      <form
+        onSubmit={handleSubmit(handleValid, handleInvalid)}
+        noValidate
+        aria-label={t('deposit.formAriaLabel', { asset: assetCode })}
+        className="space-y-5"
+      >
+        {/* Form-level error alert from submission or network failures */}
+        <DepositErrorAlert error={formError} onDismiss={() => setFormError(null)} dismissible />
 
-      {/* Summary error alert shown after first submit attempt with field errors */}
-      {isSubmitted && hasErrors && !formError && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3"
-        >
-          <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-400" aria-hidden="true" />
-          <p className="text-sm text-amber-300">
-            {t('deposit.errors.inlineSummary', {
-              count: errorCount,
-              s: errorCount !== 1 ? 's' : '',
-            })}
-          </p>
-        </div>
-      )}
+        {/* Summary error alert shown after first submit attempt with field errors */}
+        {isSubmitted && hasErrors && !formError && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+          >
+            <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-400" aria-hidden="true" />
+            <p className="text-sm text-amber-300">
+              {t('deposit.errors.inlineSummary', {
+                count: errorCount,
+                s: errorCount !== 1 ? 's' : '',
+              })}
+            </p>
+          </div>
+        )}
 
-      {fields.map((field) => {
-        const inputId = `${formId}-${field.key}`;
-        const errorId = `${formId}-${field.key}-error`;
-        const hintId = field.helpText ? `${formId}-${field.key}-hint` : undefined;
-        const message = errors[field.key]?.message as string | undefined;
-        const isInvalid = Boolean(message);
-        const isTouched = Boolean(touchedFields[field.key]);
+        {fields.map((field) => {
+          const inputId = `${formId}-${field.key}`;
+          const errorId = `${formId}-${field.key}-error`;
+          const hintId = field.helpText ? `${formId}-${field.key}-hint` : undefined;
+          const message = errors[field.key]?.message as string | undefined;
+          const isInvalid = Boolean(message);
+          const isTouched = Boolean(touchedFields[field.key]);
 
-        return (
-          <div key={field.key} className="space-y-1.5">
-            <label
-              htmlFor={inputId}
-              className="flex items-center gap-2 text-sm font-medium text-slate-300"
-            >
-              {field.label}
-              {field.required ? (
-                <span className="text-xs font-normal text-amber-400" aria-hidden="true">
-                  {t('deposit.required')}
-                </span>
-              ) : (
-                <span className="text-xs font-normal text-slate-400" aria-hidden="true">
-                  {t('deposit.optional')}
-                </span>
+          return (
+            <div key={field.key} className="space-y-1.5">
+              <label
+                htmlFor={inputId}
+                className="flex items-center gap-2 text-sm font-medium text-slate-300"
+              >
+                {field.label}
+                {field.required ? (
+                  <span className="text-xs font-normal text-amber-400" aria-hidden="true">
+                    {t('deposit.required')}
+                  </span>
+                ) : (
+                  <span className="text-xs font-normal text-slate-400" aria-hidden="true">
+                    {t('deposit.optional')}
+                  </span>
+                )}
+              </label>
+
+              {field.helpText && (
+                <p id={hintId} className="text-xs text-slate-400">
+                  {field.helpText}
+                </p>
               )}
-            </label>
 
-            {field.helpText && (
-              <p id={hintId} className="text-xs text-slate-400">
-                {field.helpText}
-              </p>
-            )}
-
-            <div className="relative">
-              <input
-                id={inputId}
-                type={getFieldType(field.key)}
-                placeholder={field.placeholder}
-                aria-required={field.required}
-                aria-invalid={isInvalid}
-                aria-describedby={[errorId, hintId].filter(Boolean).join(' ') || undefined}
-                {...register(field.key)}
-                className={`input-field w-full pr-9 text-sm transition-all ${
-                  isInvalid
-                    ? 'border-rose-500/60 focus:ring-rose-500/40'
-                    : isTouched
-                    ? 'border-emerald-500/40 focus:ring-emerald-500/30'
-                    : ''
-                }`}
-              />
-              {isTouched && !isInvalid && values[field.key] && (
-                <CheckCircle2
-                  size={15}
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400"
-                  aria-hidden="true"
+              <div className="relative">
+                <input
+                  id={inputId}
+                  type={getFieldType(field.key)}
+                  placeholder={field.placeholder}
+                  aria-required={field.required}
+                  aria-invalid={isInvalid}
+                  aria-describedby={[errorId, hintId].filter(Boolean).join(' ') || undefined}
+                  {...register(field.key)}
+                  className={`input-field w-full pr-9 text-sm transition-all ${
+                    isInvalid
+                      ? 'border-rose-500/60 focus:ring-rose-500/40'
+                      : isTouched
+                      ? 'border-emerald-500/40 focus:ring-emerald-500/30'
+                      : ''
+                  }`}
                 />
-              )}
+                {isTouched && !isInvalid && values[field.key] && (
+                  <CheckCircle2
+                    size={15}
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400"
+                    aria-hidden="true"
+                  />
+                )}
+                {isInvalid && (
+                  <AlertCircle
+                    size={15}
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-rose-400"
+                    aria-hidden="true"
+                  />
+                )}
+              </div>
+
               {isInvalid && (
-                <AlertCircle
-                  size={15}
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-rose-400"
-                  aria-hidden="true"
-                />
+                <p
+                  id={errorId}
+                  role="alert"
+                  className="flex items-center gap-1.5 text-xs text-rose-400"
+                >
+                  <AlertCircle size={11} aria-hidden="true" />
+                  {message}
+                </p>
               )}
             </div>
+          );
+        })}
 
-            {isInvalid && (
-              <p
-                id={errorId}
-                role="alert"
-                className="flex items-center gap-1.5 text-xs text-rose-400"
-              >
-                <AlertCircle size={11} aria-hidden="true" />
-                {message}
-              </p>
-            )}
-          </div>
-        );
-      })}
+        <button
+          type="submit"
+          className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+        >
+          {t('deposit.submit')}
+        </button>
+      </form>
 
-      <button
-        type="submit"
-        className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
-      >
-        {t('deposit.submit')}
-      </button>
-    </form>
+      <BiometricConfirmation
+        isOpen={pendingValues !== null}
+        amount={pendingValues ? String(getTransactionAmount(pendingValues) ?? '') : ''}
+        assetCode={assetCode}
+        authenticate={onAuthenticate}
+        onConfirm={confirmPending}
+        onCancel={() => setPendingValues(null)}
+      />
+    </>
   );
 };
 

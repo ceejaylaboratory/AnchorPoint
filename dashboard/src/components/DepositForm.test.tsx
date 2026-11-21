@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import type { ReactNode, Ref } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FieldRequirement } from '../types';
+import { saveBiometricSettings } from '../lib/biometricSettings';
 import { I18nProvider } from '../i18n/config';
 import {
   DEFAULT_ASSET_LIMITS,
@@ -12,6 +14,25 @@ import {
   validateField,
 } from './DepositForm';
 
+vi.mock('framer-motion', () => ({
+  motion: {
+    div: ({
+      children,
+      className,
+      ref,
+    }: {
+      children?: ReactNode;
+      className?: string;
+      ref?: Ref<HTMLDivElement>;
+    }) => (
+      <div ref={ref} className={className}>
+        {children}
+      </div>
+    ),
+  },
+  AnimatePresence: ({ children }: { children?: ReactNode }) => <>{children}</>,
+}));
+
 const FIELDS: FieldRequirement[] = [
   { key: 'walletAddress', label: 'Wallet Address', required: true, placeholder: 'G...' },
   { key: 'amount', label: 'Amount', required: true, placeholder: '500.00' },
@@ -20,6 +41,10 @@ const FIELDS: FieldRequirement[] = [
 const VALID_WALLET = `G${'A'.repeat(55)}`;
 const amountField = FIELDS[1];
 const walletField = FIELDS[0];
+
+afterEach(() => {
+  localStorage.clear();
+});
 
 describe('asset limits', () => {
   it('returns per-asset bounds where configured', () => {
@@ -246,5 +271,113 @@ describe('<DepositForm />', () => {
     await waitFor(() =>
       expect(screen.queryByText('Minimum USDC deposit is 10.')).toBeNull(),
     );
+  });
+});
+
+describe('<DepositForm /> high-value confirmation', () => {
+  const stubCapability = (available: boolean) => {
+    Object.defineProperty(window, 'PublicKeyCredential', {
+      configurable: true,
+      value: {
+        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn().mockResolvedValue(available),
+      },
+    });
+    Object.defineProperty(navigator, 'credentials', {
+      configurable: true,
+      value: { get: vi.fn() },
+    });
+  };
+
+  const fillForm = (amount: string) => {
+    fireEvent.change(screen.getByLabelText(/Wallet Address/), { target: { value: VALID_WALLET } });
+    fireEvent.change(screen.getByLabelText(/Amount/), { target: { value: amount } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Verification' }));
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    stubCapability(true);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'credentials');
+    Reflect.deleteProperty(window, 'PublicKeyCredential');
+    vi.unstubAllGlobals();
+  });
+
+  it('holds the deposit until biometric verification succeeds', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 100 });
+    const authenticate = vi.fn().mockResolvedValue({ userVerified: true });
+    const onSubmit = vi.fn();
+    render(
+      <I18nProvider>
+        <DepositForm fields={FIELDS} assetCode="USDC" onSubmit={onSubmit} onAuthenticate={authenticate} />
+      </I18nProvider>,
+    );
+
+    fillForm('250.75');
+    expect(await screen.findByTestId('biometric-amount')).toHaveTextContent('250.75 USDC');
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('biometric-verify-button'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith({ walletAddress: VALID_WALLET, amount: '250.75' });
+    expect(authenticate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not submit a high-value deposit when confirmation is cancelled', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 100 });
+    const onSubmit = vi.fn();
+    render(
+      <I18nProvider>
+        <DepositForm fields={FIELDS} assetCode="USDC" onSubmit={onSubmit} onAuthenticate={vi.fn()} />
+      </I18nProvider>,
+    );
+
+    fillForm('500');
+    fireEvent.click(await screen.findByTestId('biometric-cancel'));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('biometric-verify-button')).not.toBeInTheDocument();
+  });
+
+  it('does not prompt when the amount is at or below the threshold', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 1_000 });
+    const onSubmit = vi.fn();
+    render(
+      <I18nProvider>
+        <DepositForm fields={FIELDS} assetCode="USDC" onSubmit={onSubmit} />
+      </I18nProvider>,
+    );
+
+    fillForm('500');
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('biometric-verify-button')).not.toBeInTheDocument();
+  });
+
+  it('uses the password/PIN fallback on devices without WebAuthn', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 100 });
+    Reflect.deleteProperty(navigator, 'credentials');
+    Reflect.deleteProperty(window, 'PublicKeyCredential');
+    const onSubmit = vi.fn();
+    render(
+      <I18nProvider>
+        <DepositForm fields={FIELDS} assetCode="USDC" onSubmit={onSubmit} />
+      </I18nProvider>,
+    );
+
+    fillForm('500');
+    fireEvent.change(await screen.findByTestId('biometric-fallback-input'), {
+      target: { value: '1234' },
+    });
+    fireEvent.click(screen.getByTestId('biometric-fallback-confirm'));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });

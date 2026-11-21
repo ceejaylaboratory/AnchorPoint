@@ -62,6 +62,27 @@
     "accentColor": "Color de acento",
     "notConfigured": "No configurado"
   },
+  "biometric": {
+    "settingsTitle": "Seguridad de transacciones",
+    "settingsDescription": "Requiera una verificación biométrica local antes de enviar transferencias de alto valor.",
+    "toggle": "Exigir biometría para transacciones de alto valor",
+    "thresholdLabel": "Umbral de alto valor (USD)",
+    "thresholdHint": "Las transferencias superiores a este monto requieren confirmación cuando la opción está activada.",
+    "title": "Confirmar transferencia de alto valor",
+    "description": "Verifique que es realmente usted antes de continuar la transferencia.",
+    "amountLabel": "Monto de la transferencia",
+    "verifyButton": "Verificar con biometría",
+    "verifying": "Esperando la verificación biométrica…",
+    "fallbackButton": "Usar contraseña o PIN en su lugar",
+    "fallbackTitle": "Confirmar con contraseña o PIN",
+    "fallbackDescription": "La verificación biométrica no está disponible aquí. Use su método de confirmación habitual para continuar.",
+    "fallbackLabel": "Contraseña o PIN",
+    "fallbackRequired": "Ingrese su contraseña o PIN para confirmar la transferencia.",
+    "confirmButton": "Confirmar transferencia",
+    "cancelledNotice": "La verificación biométrica se canceló. No se envió ninguna transferencia.",
+    "failedNotice": "La verificación biométrica falló. No se envió ninguna transferencia.",
+    "unavailableNotice": "Este dispositivo no tiene un verificador biométrico. Use su contraseña o PIN en su lugar."
+  },
   "staking": {
     "title": "Posición de Staking en Tiempo Real",
     "subtitle": "Supervise su balance en staking, generación de recompensas y calendario de desbloqueo.",

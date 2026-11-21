@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   WithdrawalFlow,
   WithdrawRequestError,
@@ -8,6 +8,7 @@ import {
   toWithdrawalError,
 } from './WithdrawalFlow';
 import { SEP24Flow } from './SEP24Flow';
+import { saveBiometricSettings } from '../lib/biometricSettings';
 import { I18nProvider } from '../i18n/config';
 import type { UiConfig } from '../types';
 
@@ -69,6 +70,9 @@ const submitAmount = (amount = '100') => {
 };
 
 afterEach(() => {
+  localStorage.clear();
+  Reflect.deleteProperty(navigator, 'credentials');
+  Reflect.deleteProperty(window, 'PublicKeyCredential');
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -230,6 +234,120 @@ describe('requestWithdrawInteractive', () => {
     await expect(requestWithdrawInteractive('http://anchor.test', { asset_code: 'USDC' })).rejects.toMatchObject({
       status: undefined,
     });
+  });
+});
+
+describe('WithdrawalFlow high-value confirmation', () => {
+  const stubCapability = (available: boolean) => {
+    Object.defineProperty(window, 'PublicKeyCredential', {
+      configurable: true,
+      value: {
+        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn().mockResolvedValue(available),
+      },
+    });
+    // The real ceremony is replaced by the injected `onAuthenticate`; this
+    // only makes the capability check report a biometric-capable browser.
+    Object.defineProperty(navigator, 'credentials', {
+      configurable: true,
+      value: { get: vi.fn() },
+    });
+  };
+
+  const renderSecureFlow = (
+    onAuthenticate = vi.fn().mockResolvedValue({ userVerified: true }),
+    onRequestInteractive = vi.fn().mockResolvedValue(interactiveResponse),
+  ) => {
+    renderWithI18n(
+      <WithdrawalFlow
+        uiConfig={uiConfig}
+        account="GABC"
+        onRequestInteractive={onRequestInteractive}
+        onEstimateFee={noFee}
+        onAuthenticate={onAuthenticate}
+      />,
+    );
+    return { onAuthenticate, onRequestInteractive };
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    stubCapability(true);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  it('requests the interactive session only after biometric verification succeeds', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 1_000 });
+    const { onRequestInteractive } = renderSecureFlow();
+    continueFromAssetStep();
+    submitAmount('5000');
+
+    expect(await screen.findByTestId('biometric-amount')).toHaveTextContent('5000 USDC');
+    expect(onRequestInteractive).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('biometric-verify-button'));
+
+    await waitFor(() => expect(onRequestInteractive).toHaveBeenCalledTimes(1));
+    expect(onRequestInteractive).toHaveBeenCalledWith({
+      asset_code: 'USDC',
+      amount: '5000',
+      account: 'GABC',
+      dest: '12345678',
+    });
+  });
+
+  it('stops the withdrawal and reports cancellation', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 1_000 });
+    const { onRequestInteractive } = renderSecureFlow();
+    continueFromAssetStep();
+    submitAmount('5000');
+
+    fireEvent.click(await screen.findByTestId('biometric-cancel'));
+
+    expect(onRequestInteractive).not.toHaveBeenCalled();
+    expect(await screen.findByText('Confirmation Cancelled')).toBeInTheDocument();
+  });
+
+  it('stops the withdrawal when biometric verification rejects', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 1_000 });
+    const onAuthenticate = vi.fn().mockRejectedValue(new Error('no biometric sensor'));
+    const { onRequestInteractive } = renderSecureFlow(onAuthenticate);
+    continueFromAssetStep();
+    submitAmount('5000');
+
+    fireEvent.click(await screen.findByTestId('biometric-verify-button'));
+
+    expect(await screen.findByText(/Biometric verification failed/i)).toBeInTheDocument();
+    expect(onRequestInteractive).not.toHaveBeenCalled();
+  });
+
+  it('skips the prompt for amounts at or below the threshold', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 1_000 });
+    const { onRequestInteractive } = renderSecureFlow();
+    continueFromAssetStep();
+    submitAmount('100');
+
+    await waitFor(() => expect(onRequestInteractive).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('biometric-amount')).not.toBeInTheDocument();
+  });
+
+  it('falls back to password/PIN confirmation without WebAuthn', async () => {
+    saveBiometricSettings({ enabled: true, thresholdUsd: 1_000 });
+    Reflect.deleteProperty(navigator, 'credentials');
+    Reflect.deleteProperty(window, 'PublicKeyCredential');
+    const { onRequestInteractive } = renderSecureFlow();
+    continueFromAssetStep();
+    submitAmount('5000');
+
+    fireEvent.change(await screen.findByTestId('biometric-fallback-input'), {
+      target: { value: '1234' },
+    });
+    fireEvent.click(screen.getByTestId('biometric-fallback-confirm'));
+
+    await waitFor(() => expect(onRequestInteractive).toHaveBeenCalledTimes(1));
   });
 });
 
