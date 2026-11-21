@@ -145,15 +145,8 @@ const TabFallback = () => (
   </div>
 );
 
+// ThemeProvider owns the <html> class/data-theme; App only renders the shell.
 const App = () => {
-  const { resolvedTheme } = useTheme();
-
-  useEffect(() => {
-    const root = document.documentElement;
-    root.classList.remove('light', 'dark');
-    root.classList.add(resolvedTheme);
-  }, [resolvedTheme]);
-
   return (
     <I18nProvider>
       <AppShell />

@@ -12,7 +12,7 @@ import { useTranslation, type Language } from '../i18n/config';
 const THEME_OPTIONS: Record<ThemePreference, { label: string; hint: string; Icon: typeof Sun }> = {
   light: { label: 'Light', hint: 'High-contrast light palette', Icon: Sun },
   dark: { label: 'Dark', hint: 'Default dark palette', Icon: Moon },
-  system: { label: 'System', hint: 'Follow the operating system', Icon: Monitor },
+  system: { label: 'System Default', hint: 'Follow the operating system', Icon: Monitor },
 };
 
 /** Persistent light / dark / system selector backed by ThemeContext. */
