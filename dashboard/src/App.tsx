@@ -38,7 +38,7 @@ import {
   useAutoLockSetting,
   wipeSessionSecrets,
 } from './lib/sessionLock';
-import { WalletManager } from './lib/wallet';
+import { WalletManager, toWalletSigningError } from './lib/wallet';
 import { I18nProvider, useTranslation, type Language } from './i18n/config';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { ToastContainer, useToastQueue } from './components/NotificationCenter';
@@ -338,7 +338,8 @@ const AppShell = () => {
     setWalletError('');
 
     try {
-      const connectedWallet = await walletManager.connectWallet(walletId);
+      // Guarded so a closed wallet popup ends in a clear error, not an endless "Connecting…".
+      const connectedWallet = await walletManager.connectWalletGuarded(walletId);
       setWallet(connectedWallet);
       setSelectedWalletId(walletId);
       setWalletStatus('idle');
@@ -354,7 +355,7 @@ const AppShell = () => {
       localStorage.setItem('preferredWalletId', walletId);
     } catch (error) {
       setWalletStatus('error');
-      setWalletError(error instanceof Error ? error.message : 'Unable to connect wallet.');
+      setWalletError(toWalletSigningError(error).message || 'Unable to connect wallet.');
     }
   };
 
