@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import SettingsView, { BiometricSettingsSection, LanguageSelector } from './SettingsView';
+import SettingsView, { AutoLockSettingsSection, BiometricSettingsSection, LanguageSelector } from './SettingsView';
+import { AUTOLOCK_STORAGE_KEY } from '../lib/sessionLock';
 import { I18nProvider } from '../i18n/config';
 import { ThemeProvider } from '../contexts/ThemeContext';
 import { loadBiometricSettings } from '../lib/biometricSettings';
@@ -126,5 +127,33 @@ describe('BiometricSettingsSection', () => {
     fireEvent.blur(threshold);
 
     expect(loadBiometricSettings()).toEqual({ enabled: false, thresholdUsd: 2_500 });
+  });
+});
+
+describe('AutoLockSettingsSection', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('offers 5 / 15 / 30 minutes and Never, defaulting to 15 minutes', () => {
+    render(<AutoLockSettingsSection />);
+    const group = screen.getByRole('radiogroup', { name: /auto-lock after inactivity/i });
+    expect(group).toBeTruthy();
+    expect(screen.getByRole('radio', { name: '15 minutes' })).toHaveAttribute('aria-checked', 'true');
+    ['5 minutes', '30 minutes', 'Never'].forEach((name) =>
+      expect(screen.getByRole('radio', { name })).toHaveAttribute('aria-checked', 'false'),
+    );
+  });
+
+  it('persists the chosen duration and warns when set to Never', () => {
+    render(<AutoLockSettingsSection />);
+
+    fireEvent.click(screen.getByRole('radio', { name: '5 minutes' }));
+    expect(localStorage.getItem(AUTOLOCK_STORAGE_KEY)).toBe('5');
+    expect(screen.getByRole('radio', { name: '5 minutes' })).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Never' }));
+    expect(localStorage.getItem(AUTOLOCK_STORAGE_KEY)).toBe('never');
+    expect(screen.getByRole('note')).toHaveTextContent(/shared computers/i);
   });
 });

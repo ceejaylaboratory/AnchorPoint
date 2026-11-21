@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react';
-import { Fingerprint, Globe, Monitor, Moon, Sun } from 'lucide-react';
+import { Fingerprint, Globe, Lock, Monitor, Moon, Sun } from 'lucide-react';
 import type { UiConfig } from '../types';
 import { loadBiometricSettings, sanitizeThreshold, saveBiometricSettings } from '../lib/biometricSettings';
 import { RequirementList } from './RequirementList';
@@ -8,6 +8,7 @@ import { PauseControlsWidget } from './AdminWidgets';
 import { THEME_PREFERENCES, useTheme } from '../contexts/ThemeContext';
 import type { ThemePreference } from '../contexts/ThemeContext';
 import { useTranslation, type Language } from '../i18n/config';
+import { AUTOLOCK_OPTIONS, useAutoLockSetting } from '../lib/sessionLock';
 
 const THEME_OPTIONS: Record<ThemePreference, { label: string; hint: string; Icon: typeof Sun }> = {
   light: { label: 'Light', hint: 'High-contrast light palette', Icon: Sun },
@@ -123,6 +124,56 @@ export const LanguageSelector: React.FC = () => {
   );
 };
 
+/** Inactivity auto-lock duration (5 / 15 / 30 minutes or Never). */
+export const AutoLockSettingsSection: React.FC = () => {
+  const [setting, setSetting] = useAutoLockSetting();
+
+  return (
+    <div className="glass-card p-8" data-testid="autolock-settings">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-bold">Auto-lock</h3>
+          <p className="mt-1 text-sm text-slate-400">
+            Lock the session and disconnect your wallet after a period of inactivity. You get a
+            60-second warning first.
+          </p>
+        </div>
+        <Lock size={20} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+      </div>
+      <div
+        role="radiogroup"
+        aria-label="Auto-lock after inactivity"
+        className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"
+      >
+        {AUTOLOCK_OPTIONS.map(({ value, label }) => {
+          const selected = setting === value;
+          return (
+            <button
+              key={String(value)}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => setSetting(value)}
+              className={`action-button rounded-xl border px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
+                selected
+                  ? 'border-primary bg-primary/10 text-slate-100'
+                  : 'border-slate-600 text-slate-400 hover:border-slate-500'
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {setting === 'never' ? (
+        <p className="mt-3 text-xs text-amber-400" role="note">
+          Your session will stay unlocked until you sign out. Avoid this on shared computers.
+        </p>
+      ) : null}
+    </div>
+  );
+};
+
 /** Opt-in security setting shared by the deposit and withdrawal flows. */
 export const BiometricSettingsSection: React.FC = () => {
   const { t } = useTranslation();
@@ -207,6 +258,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ uiConfig, apiBaseUrl }) => 
         <ThemeSelector />
         <LanguageSelector />
         <BiometricSettingsSection />
+        <AutoLockSettingsSection />
         <div className="glass-card p-8">
           <h3 className="mb-4 text-xl font-bold">{t('settings.branding')}</h3>
           <div className="space-y-6">

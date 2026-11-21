@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useInactivityTimeout } from './useInactivityTimeout';
 
 describe('useInactivityTimeout', () => {
@@ -219,4 +219,140 @@ describe('useInactivityTimeout', () => {
   });
 });
 
-export {};
+describe('useInactivityTimeout warning phase', () => {
+  const TIMEOUT = 5 * 60 * 1000;
+  const WARNING = 60 * 1000;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('enters the warning phase 60 seconds before the timeout', () => {
+    const onTimeout = vi.fn();
+    const onWarning = vi.fn();
+    const { result } = renderHook(() =>
+      useInactivityTimeout(TIMEOUT, onTimeout, { warningMs: WARNING, onWarning }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(TIMEOUT - WARNING - 1);
+    });
+    expect(result.current.isWarning).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.isWarning).toBe(true);
+    expect(onWarning).toHaveBeenCalledTimes(1);
+    expect(result.current.remainingMs).toBe(WARNING);
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('counts down while warning, then times out and leaves the warning phase', () => {
+    const onTimeout = vi.fn();
+    const { result } = renderHook(() =>
+      useInactivityTimeout(TIMEOUT, onTimeout, { warningMs: WARNING }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(TIMEOUT - WARNING + 10_000);
+    });
+    expect(result.current.remainingMs).toBe(50_000);
+
+    act(() => {
+      vi.advanceTimersByTime(50_000);
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+    expect(result.current.isWarning).toBe(false);
+    expect(result.current.remainingMs).toBeNull();
+  });
+
+  it('ignores ambient activity during the warning so the modal cannot vanish', () => {
+    const onTimeout = vi.fn();
+    const { result } = renderHook(() =>
+      useInactivityTimeout(TIMEOUT, onTimeout, { warningMs: WARNING }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(TIMEOUT - WARNING);
+      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+    });
+    expect(result.current.isWarning).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(WARNING);
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('reset() ("Stay Logged In") restarts the full window', () => {
+    const onTimeout = vi.fn();
+    const { result } = renderHook(() =>
+      useInactivityTimeout(TIMEOUT, onTimeout, { warningMs: WARNING }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(TIMEOUT - 1000);
+    });
+    expect(result.current.isWarning).toBe(true);
+
+    act(() => result.current.reset());
+    expect(result.current.isWarning).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(TIMEOUT - 1);
+    });
+    expect(onTimeout).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing when disabled or set to Never', () => {
+    const onTimeout = vi.fn();
+    renderHook(() => useInactivityTimeout(TIMEOUT, onTimeout, { enabled: false }));
+    renderHook(() => useInactivityTimeout(null, onTimeout));
+    renderHook(() => useInactivityTimeout(Number.POSITIVE_INFINITY, onTimeout));
+
+    act(() => {
+      vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    });
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('re-arms when the configured duration changes', () => {
+    const onTimeout = vi.fn();
+    const { rerender } = renderHook(({ ms }) => useInactivityTimeout(ms, onTimeout), {
+      initialProps: { ms: 30 * 60 * 1000 },
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(4 * 60 * 1000);
+    });
+    rerender({ ms: 5 * 60 * 1000 });
+
+    act(() => {
+      vi.advanceTimersByTime(5 * 60 * 1000);
+    });
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('expires an overdue session as soon as a throttled background tab becomes visible', () => {
+    const onTimeout = vi.fn();
+    renderHook(() => useInactivityTimeout(TIMEOUT, onTimeout));
+
+    // Move the wall clock without running timers, as a throttled tab would.
+    vi.setSystemTime(Date.now() + TIMEOUT + 1);
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+});
