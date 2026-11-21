@@ -349,3 +349,6 @@ Master intuitive gameplay controls designed for both casual players and experien
 
 <!-- handsoff-issue-1659 -->
 - #1659: fix(contracts/staking): prevent zero-token staking deposits from creating empty state records
+
+<!-- handsoff-issue-1661 -->
+- #1661: perf(contracts): reduce storage footprint by packing user stake state into compact bitfields
