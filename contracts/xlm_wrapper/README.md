@@ -57,6 +57,58 @@ The XLM Wrapper Contract provides a 1:1 peg between native Stellar (XLM) and wra
 - `unpause(admin)`: Unpause the contract
 - `is_paused()`: Check pause status
 
+## SEP-41 Compliance
+
+The contract implements the mandatory SEP-41 (Stellar Token Standard) interface. The table below maps each required function to its implementation and authorization behavior.
+
+| SEP-41 Function | Signature | Auth Required | Notes |
+| --- | --- | --- | --- |
+| `allowance` | `allowance(owner, spender) -> i128` | none | Returns the remaining allowance; `0` when unset |
+| `approve` | `approve(owner, spender, amount, expiration_ledger)` | `owner.require_auth()` | Overwrites the existing allowance |
+| `balance` | `balance(owner) -> i128` | none | Returns `0` for unknown accounts |
+| `transfer` | `transfer(from, to, amount)` | `from.require_auth()` | Fails on insufficient balance |
+| `transfer_from` | `transfer_from(spender, from, to, amount)` | `spender.require_auth()` | Decrements allowance; fails if allowance is insufficient |
+| `burn` | `burn(from, amount)` | `from.require_auth()` | Decrements balance and total supply |
+| `burn_from` | `burn_from(spender, from, amount)` | `spender.require_auth()` | Decrements allowance, balance, and total supply |
+| `decimals` | `decimals() -> u32` | none | Always returns `7` (Stellar lumens precision) |
+| `name` | `name() -> String` | none | Set at initialization |
+| `symbol` | `symbol() -> String` | none | Set at initialization (`native` or `WXLM`) |
+
+### Metadata Guarantees
+
+- `decimals()` returns exactly `7`, matching the native XLM precision (1 XLM = 10^7 stroops).
+- `symbol()` returns the symbol supplied at initialization; deployments should use `native` or `WXLM`.
+- `name()` returns the human-readable name supplied at initialization.
+
+### Authorization Guarantees
+
+All state-mutating token operations enforce authorization via `require_auth` on the acting address:
+
+- `transfer` requires `from` authorization.
+- `approve` requires `owner` authorization.
+- `transfer_from` requires `spender` authorization and consumes allowance.
+- `burn` requires `from` authorization.
+- `burn_from` requires `spender` authorization and consumes allowance.
+
+Read-only methods (`balance`, `allowance`, `decimals`, `name`, `symbol`, `total_supply`) do not require authorization.
+
+### Compliance Test Suite
+
+The SEP-41 interface is verified by `contracts/xlm_wrapper/tests/sep41_compliance.rs`, which covers:
+
+- Metadata: `decimals() == 7`, `name()` and `symbol()` round-trip.
+- Balances: zero for unknown accounts, correct after deposit/transfer.
+- Transfers: success path, insufficient-balance failure, and auth enforcement.
+- Approvals: `approve`/`allowance` round-trip, `transfer_from` allowance consumption, and auth enforcement.
+- Burning: `burn` and `burn_from` reduce balance and total supply, with auth enforcement.
+
+Run the compliance suite:
+
+```bash
+cd contracts/xlm_wrapper
+cargo test --test sep41_compliance
+```
+
 ## Usage Example
 
 ### Deployment and Initialization
