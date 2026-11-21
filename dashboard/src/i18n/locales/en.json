@@ -62,6 +62,27 @@
     "accentColor": "Accent Color",
     "notConfigured": "Not configured"
   },
+  "biometric": {
+    "settingsTitle": "Transaction Security",
+    "settingsDescription": "Require a local biometric check before high-value transfers are submitted.",
+    "toggle": "Require Biometrics for High-Value Transactions",
+    "thresholdLabel": "High-value threshold (USD)",
+    "thresholdHint": "Transfers above this amount require confirmation while the toggle is on.",
+    "title": "Confirm High-Value Transfer",
+    "description": "Verify it is really you before this transfer continues.",
+    "amountLabel": "Transfer amount",
+    "verifyButton": "Verify with biometrics",
+    "verifying": "Waiting for biometric verification…",
+    "fallbackButton": "Use password or PIN instead",
+    "fallbackTitle": "Confirm with Password or PIN",
+    "fallbackDescription": "Biometric verification is not available here. Use your standard confirmation method to continue.",
+    "fallbackLabel": "Password or PIN",
+    "fallbackRequired": "Enter your password or PIN to confirm the transfer.",
+    "confirmButton": "Confirm transfer",
+    "cancelledNotice": "Biometric verification was cancelled. No transfer was submitted.",
+    "failedNotice": "Biometric verification failed. No transfer was submitted.",
+    "unavailableNotice": "This device has no biometric verifier. Use your password or PIN instead."
+  },
   "staking": {
     "title": "Live Staking Position",
     "subtitle": "Track your real-time staked balance, yield generation, and unlock schedules.",
