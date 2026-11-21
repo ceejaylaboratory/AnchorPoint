@@ -72,6 +72,20 @@ jobs:
       - name: Record staking snapshot gas benchmarks
         run: cargo test -p soroban-gas-benchmarks benchmark_ -- --nocapture
 
+      # #1654: run the comprehensive gas benchmarking suite across all
+      # contract entry points. The suite asserts upper thresholds so CI
+      # fails on a >10% gas regression, and emits a markdown summary.
+      - name: Gas benchmarks (all contract entry points)
+        run: cargo test -p soroban-gas-benchmarks -- --nocapture
+
+      - name: Upload gas benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-benchmark-report
+          path: contracts/benchmarks/gas-report.md
+          if-no-files-found: ignore
+
       - name: Run Security Audit
         run: ./scripts/security-audit.sh --warn-only
       - name: Test

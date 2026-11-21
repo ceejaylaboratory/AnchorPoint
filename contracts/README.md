@@ -30,3 +30,23 @@ authentication before the function body executes.
 
 When adding a new entry point, call `require_auth()` on the relevant address at the
 top of the function and add a test that asserts unauthorized callers are rejected.
+
+## Gas benchmarking
+
+The `benchmarks/` crate measures CPU instruction count and memory usage for every
+primary entry point (token deposit, swap execution, staking lockup, harvest
+compounding, and proposal voting) using the Soroban SDK budget inspection APIs.
+Upper-threshold assertions fail CI when gas consumption regresses by more than 10%.
+See `benchmarks/GAS_REPORT.md` for the current summary.
+
+### Recommended transaction resource budgets
+
+| Resource | Recommended limit |
+| --- | --- |
+| CPU instructions | 100,000,000 |
+| Memory bytes | 40,000,000 |
+| Read bytes | 200,000 |
+| Write bytes | 200,000 |
+
+These limits leave comfortable headroom above the measured per-operation
+consumption while staying within Soroban block limits.
