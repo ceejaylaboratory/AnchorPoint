@@ -352,3 +352,6 @@ Master intuitive gameplay controls designed for both casual players and experien
 
 <!-- handsoff-issue-1661 -->
 - #1661: perf(contracts): reduce storage footprint by packing user stake state into compact bitfields
+
+<!-- handsoff-issue-1662 -->
+- #1662: security(contracts): audit and prevent flash-loan price manipulation vulnerabilities in oracle feeds
