@@ -1,4 +1,91 @@
 /**
+ * Soroban contract-level error codes.
+ * These are the numeric codes returned by contract simulation XDR diagnostics.
+ * Map each to a semantic name and an appropriate HTTP status code.
+ */
+export enum SorobanContractErrorCode {
+  /** Generic catch-all — always a server-side bug. */
+  GenericError = 0,
+  /** Caller is not authorised to invoke this entry point. */
+  Unauthorized = 1,
+  /** A required argument or state value is missing. */
+  NotFound = 2,
+  /** A numeric argument or computed value is outside the allowed range. */
+  InvalidAmount = 3,
+  /** The account balance is too low for the requested operation. */
+  InsufficientBalance = 4,
+  /** The requested operation would cause arithmetic overflow. */
+  Overflow = 5,
+  /** A nonce or sequence value has been reused. */
+  AlreadyExists = 6,
+  /** The contract has been administratively paused. */
+  ContractPaused = 7,
+}
+
+/** RFC 7807 Problem Details response body. */
+export interface ProblemDetail {
+  /** URI type identifier – stable across versions. */
+  type: string;
+  /** Short summary matching the HTTP reason phrase. */
+  title: string;
+  /** HTTP status code. */
+  status: number;
+  /** Human-readable explanation for the end-user (no stack traces). */
+  detail: string;
+  /** Machine-readable contract error code name. */
+  contractErrorCode?: string;
+  /** Whether the client may safely retry the request. */
+  retryable: boolean;
+}
+
+/**
+ * Maps a SorobanContractErrorCode to an HTTP status code.
+ *
+ * | Contract error     | HTTP  | Rationale                                    |
+ * |--------------------|-------|----------------------------------------------|
+ * | Unauthorized (1)   | 403   | Caller lacks permission                      |
+ * | NotFound (2)       | 404   | Referenced resource / account does not exist |
+ * | InvalidAmount (3)  | 400   | Bad input from the caller                    |
+ * | InsufficientBalance(4) | 422 | Semantically invalid given current state    |
+ * | Overflow (5)       | 400   | Bad input – would overflow                   |
+ * | AlreadyExists (6)  | 409   | Conflict with existing state                 |
+ * | ContractPaused (7) | 503   | Service temporarily unavailable              |
+ * | GenericError (0)   | 500   | Internal – contract bug                      |
+ */
+const CONTRACT_ERROR_HTTP_STATUS: Record<SorobanContractErrorCode, number> = {
+  [SorobanContractErrorCode.GenericError]: 500,
+  [SorobanContractErrorCode.Unauthorized]: 403,
+  [SorobanContractErrorCode.NotFound]: 404,
+  [SorobanContractErrorCode.InvalidAmount]: 400,
+  [SorobanContractErrorCode.InsufficientBalance]: 422,
+  [SorobanContractErrorCode.Overflow]: 400,
+  [SorobanContractErrorCode.AlreadyExists]: 409,
+  [SorobanContractErrorCode.ContractPaused]: 503,
+};
+
+const CONTRACT_ERROR_TITLES: Record<SorobanContractErrorCode, string> = {
+  [SorobanContractErrorCode.GenericError]: 'Internal Contract Error',
+  [SorobanContractErrorCode.Unauthorized]: 'Forbidden',
+  [SorobanContractErrorCode.NotFound]: 'Not Found',
+  [SorobanContractErrorCode.InvalidAmount]: 'Bad Request',
+  [SorobanContractErrorCode.InsufficientBalance]: 'Unprocessable Entity',
+  [SorobanContractErrorCode.Overflow]: 'Bad Request',
+  [SorobanContractErrorCode.AlreadyExists]: 'Conflict',
+  [SorobanContractErrorCode.ContractPaused]: 'Service Unavailable',
+};
+
+const CONTRACT_ERROR_DETAILS: Record<SorobanContractErrorCode, string> = {
+  [SorobanContractErrorCode.GenericError]: 'An unspecified contract error occurred.',
+  [SorobanContractErrorCode.Unauthorized]: 'The caller is not authorised to perform this operation.',
+  [SorobanContractErrorCode.NotFound]: 'The requested resource or account was not found.',
+  [SorobanContractErrorCode.InvalidAmount]: 'The supplied amount is invalid or out of the allowed range.',
+  [SorobanContractErrorCode.InsufficientBalance]: 'The account balance is insufficient for this operation.',
+  [SorobanContractErrorCode.Overflow]: 'The operation would cause an arithmetic overflow.',
+  [SorobanContractErrorCode.AlreadyExists]: 'The resource already exists.',
+  [SorobanContractErrorCode.ContractPaused]: 'The contract is currently paused. Please try again later.',
+};
+
+/**
  * Soroban Error Categories
  * Groups similar errors together for better handling
  */
@@ -517,6 +604,113 @@ class SorobanErrorService {
       code: details.code,
       userMessage: details.userMessage,
       suggestedAction: details.suggestedAction,
+      retryable: details.retryable,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contract error code → HTTP status mapping (Issue #1603)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extract a numeric Soroban contract error code from a simulation failure.
+   *
+   * Simulation XDR diagnostics embed contract errors as `Error(Contract, #N)`.
+   * This method parses that pattern and returns the enum value, or `undefined`
+   * when no contract error code is present (i.e. it is an infrastructure error).
+   */
+  extractContractErrorCode(error: any): SorobanContractErrorCode | undefined {
+    const message = this.extractErrorMessage(error);
+
+    // Pattern: Error(Contract, #N) emitted by the Soroban host
+    const contractErrorPattern = /Error\(Contract,\s*#(\d+)\)/;
+    const match = contractErrorPattern.exec(message);
+    if (match) {
+      const code = parseInt(match[1], 10);
+      if (code in CONTRACT_ERROR_HTTP_STATUS) {
+        return code as SorobanContractErrorCode;
+      }
+    }
+
+    // Also handle plain numeric codes forwarded by some RPC wrappers
+    const numericMatch = /contract_error[:\s]+(\d+)/i.exec(message);
+    if (numericMatch) {
+      const code = parseInt(numericMatch[1], 10);
+      if (code in CONTRACT_ERROR_HTTP_STATUS) {
+        return code as SorobanContractErrorCode;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Map a Soroban simulation failure to an HTTP status code.
+   *
+   * - Contract logic errors (business rule violations) → 4xx
+   * - Infrastructure / unknown errors → 500
+   */
+  httpStatusForError(error: any): number {
+    const contractCode = this.extractContractErrorCode(error);
+    if (contractCode !== undefined) {
+      return CONTRACT_ERROR_HTTP_STATUS[contractCode];
+    }
+
+    // Infrastructure-level errors from the error service mapping
+    const details = this.parseError(error);
+    switch (details.category) {
+      case SorobanErrorCategory.TRANSACTION_BAD_AUTH:
+        return 403;
+      case SorobanErrorCategory.INSUFFICIENT_FEE:
+        return 400;
+      case SorobanErrorCategory.TRANSACTION_MALFORMED:
+        return 400;
+      case SorobanErrorCategory.RESOURCE_LIMIT:
+        return 400;
+      case SorobanErrorCategory.BUDGET_EXCEEDED:
+        // Retryable with higher fee — keep 400 to signal bad client parameters
+        return 400;
+      default:
+        // Unknown / internal errors must not leak details
+        return 500;
+    }
+  }
+
+  /**
+   * Build an RFC 7807 Problem Details response body for a simulation failure.
+   *
+   * Contract business-logic errors include the contract error code so the
+   * client can present a targeted message. Infrastructure errors omit internal
+   * details to avoid information leakage.
+   */
+  toProblemDetail(error: any): ProblemDetail {
+    const contractCode = this.extractContractErrorCode(error);
+    const httpStatus = this.httpStatusForError(error);
+
+    if (contractCode !== undefined) {
+      const codeName = SorobanContractErrorCode[contractCode];
+      return {
+        type: `https://anchor.stellar.org/problems/contract-error/${codeName.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()}`,
+        title: CONTRACT_ERROR_TITLES[contractCode],
+        status: httpStatus,
+        detail: CONTRACT_ERROR_DETAILS[contractCode],
+        contractErrorCode: codeName,
+        retryable: contractCode === SorobanContractErrorCode.ContractPaused,
+      };
+    }
+
+    // Infrastructure error — return a generic problem without internal details.
+    const details = this.parseError(error);
+    const isInternal = httpStatus === 500;
+    return {
+      type: isInternal
+        ? 'https://anchor.stellar.org/problems/internal-error'
+        : 'https://anchor.stellar.org/problems/simulation-error',
+      title: isInternal ? 'Internal Server Error' : 'Simulation Failed',
+      status: httpStatus,
+      detail: isInternal
+        ? 'An internal error occurred processing the contract simulation. Please try again later.'
+        : details.userMessage,
       retryable: details.retryable,
     };
   }
