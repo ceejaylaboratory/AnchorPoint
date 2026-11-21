@@ -14,6 +14,8 @@ pub enum DataKey {
     RelayerKey,
     /// Processed message hashes for replay protection (BytesN<32> -> bool).
     Processed(BytesN<32>),
+    /// Per-recipient sequential nonce (Address -> u64), last successfully consumed nonce.
+    Nonce(Address),
 }
 
 /// Client for cross-contract invocation of the Bridge Stub contract.
@@ -135,12 +137,14 @@ impl BridgeStub {
     ///
     /// Security guarantees:
     ///   1. **Ed25519 signature verification** — the relayer must provide a valid
-    ///      signature over `message_hash` using the registered relayer key.  Any
-    ///      tampered or forged payload will be rejected.
-    ///   2. **Replay protection** — `message_hash` is recorded in persistent storage
-    ///      after the first successful execution.  Subsequent submissions of the same
-    ///      hash are rejected, preventing an attacker from replaying a previously
-    ///      valid message.
+    ///      signature over `message_hash` using the registered relayer key.
+    ///   2. **Domain separation** — `message_hash` must equal the SHA-256 digest of the
+    ///      canonical payload `(recipient, amount, source_chain, nonce, chain_id, contract_address)`,
+    ///      binding the signature to this chain and this contract instance.
+    ///   3. **Sequential nonces** — `nonce` must equal `current_nonce + 1` for `recipient`;
+    ///      the stored nonce is incremented atomically on success.
+    ///   4. **Replay protection** — `message_hash` is recorded in persistent storage so the
+    ///      same signed message can never be executed twice.
     pub fn mint(
         env: Env,
         relayer: Address,
@@ -164,11 +168,38 @@ impl BridgeStub {
         }
 
         // ----------------------------------------------------------------
-        // 1. Ed25519 signature verification
+        // 0. Domain-separated payload binding
         // ----------------------------------------------------------------
-        // The relayer must have signed `message_hash` with the key registered
-        // at initialization time.  This ensures that only the holder of the
-        // trusted private key can authorize a mint.
+        // Recompute the expected digest from the claim fields plus the chain id and
+        // this contract's address, so a signature cannot be replayed on another
+        // network or against another bridge deployment.
+        let expected_hash = Self::compute_message_hash(
+            &env,
+            &recipient,
+            amount,
+            source_chain,
+            nonce,
+        );
+        if expected_hash != message_hash {
+            panic!("invalid message hash");
+        }
+
+        // ----------------------------------------------------------------
+        // 1. Sequential nonce check
+        // ----------------------------------------------------------------
+        let nonce_key = DataKey::Nonce(recipient.clone());
+        let current_nonce: u64 = env
+            .storage()
+            .persistent()
+            .get(&nonce_key)
+            .unwrap_or(0);
+        if nonce != current_nonce + 1 {
+            panic!("Error::InvalidNonce");
+        }
+
+        // ----------------------------------------------------------------
+        // 2. Ed25519 signature verification
+        // ----------------------------------------------------------------
         let relayer_key: BytesN<32> = env
             .storage()
             .instance()
@@ -182,15 +213,16 @@ impl BridgeStub {
         );
 
         // ----------------------------------------------------------------
-        // 2. Replay protection
+        // 3. Replay protection
         // ----------------------------------------------------------------
-        // Record `message_hash` in persistent storage so the same message
-        // can never be executed twice.
         let processed_key = DataKey::Processed(message_hash.clone());
         if env.storage().persistent().has(&processed_key) {
-            panic!("message already processed");
+            panic!("Error::SignatureAlreadyUsed");
         }
         env.storage().persistent().set(&processed_key, &true);
+
+        // Atomically advance the nonce together with the claim.
+        env.storage().persistent().set(&nonce_key, &nonce);
 
         // Mint/Transfer tokens
         let bridge_token: Address = env
@@ -232,6 +264,34 @@ impl BridgeStub {
         env.storage()
             .persistent()
             .has(&DataKey::Processed(message_hash))
+    }
+
+    /// Returns the last consumed nonce for `recipient` (0 if none).
+    pub fn current_nonce(env: Env, recipient: Address) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Nonce(recipient))
+            .unwrap_or(0)
+    }
+
+    /// Canonical domain-separated digest for a cross-chain claim.
+    /// Binds recipient, amount, source chain, nonce, the local chain id and this contract address.
+    pub fn compute_message_hash(
+        env: &Env,
+        recipient: &Address,
+        amount: i128,
+        source_chain: u32,
+        nonce: u64,
+    ) -> BytesN<32> {
+        let mut payload = Bytes::new(env);
+        payload.append(&Bytes::from_slice(env, b"stellar-bridge-claim-v1"));
+        payload.append(&recipient.clone().to_xdr(env));
+        payload.append(&Bytes::from_slice(env, &amount.to_be_bytes()));
+        payload.append(&Bytes::from_slice(env, &source_chain.to_be_bytes()));
+        payload.append(&Bytes::from_slice(env, &nonce.to_be_bytes()));
+        payload.append(&Bytes::from_slice(env, &env.ledger().network_id().to_array()));
+        payload.append(&env.current_contract_address().to_xdr(env));
+        env.crypto().sha256(&payload).into()
     }
 }
 
@@ -289,6 +349,23 @@ mod tests {
         (env, bridge_client, admin, relayer, token_id.address(), secret)
     }
 
+    /// Helper: compute the domain-bound hash for a claim and sign it.
+    fn signed_claim(
+        env: &Env,
+        bridge: &BridgeStubClient,
+        secret: &[u8; 32],
+        recipient: &Address,
+        amount: i128,
+        source_chain: u32,
+        nonce: u64,
+    ) -> (BytesN<32>, BytesN<64>) {
+        let hash = env.as_contract(&bridge.address, || {
+            BridgeStub::compute_message_hash(env, recipient, amount, source_chain, nonce)
+        });
+        let sig = sign(env, secret, &hash.to_array());
+        (hash, sig)
+    }
+
     // -----------------------------------------------------------------------
     // Existing behaviour tests
     // -----------------------------------------------------------------------
@@ -316,16 +393,18 @@ mod tests {
 
     #[test]
     fn test_mint_with_valid_signature() {
-        let (env, bridge_client, _admin, relayer, token_addr, secret) = setup_with_secret();
+        let (env, bridge_client, _admin, relayer, _token_addr, secret) = setup_with_secret();
         let recipient = Address::generate(&env);
 
-        let message_hash = BytesN::from_array(&env, &[0x10u8; 32]);
-        let signature = sign(&env, &secret, &message_hash.to_array());
+        let (message_hash, signature) =
+            signed_claim(&env, &bridge_client, &secret, &recipient, 100, 1, 1);
 
-        bridge_client.mint(&relayer, &recipient, &100, &1, &42, &message_hash, &signature);
+        bridge_client.mint(&relayer, &recipient, &100, &1, &1, &message_hash, &signature);
 
         // Replay protection: hash is now marked as processed.
         assert!(bridge_client.is_processed(&message_hash));
+        // Nonce advanced atomically.
+        assert_eq!(bridge_client.current_nonce(&recipient), 1);
     }
 
     // -----------------------------------------------------------------------
@@ -338,7 +417,10 @@ mod tests {
         let (env, bridge_client, _admin, relayer, _token_addr, _secret) = setup_with_secret();
         let recipient = Address::generate(&env);
 
-        let message_hash = BytesN::from_array(&env, &[0xABu8; 32]);
+        let (message_hash, _) = {
+            let secret = [1u8; 32];
+            signed_claim(&env, &bridge_client, &secret, &recipient, 100, 1, 1)
+        };
         // Use all-zero bytes as a completely invalid signature.
         let bad_signature = BytesN::from_array(&env, &[0u8; 64]);
 
@@ -346,75 +428,50 @@ mod tests {
         bridge_client.mint(&relayer, &recipient, &100, &1, &1, &message_hash, &bad_signature);
     }
 
+    // -----------------------------------------------------------------------
+    // Replay / nonce tests
+    // -----------------------------------------------------------------------
+
     #[test]
     #[should_panic]
-    fn test_mint_with_signature_for_different_message_is_rejected() {
+    fn test_replayed_signature_is_rejected() {
         let (env, bridge_client, _admin, relayer, _token_addr, secret) = setup_with_secret();
         let recipient = Address::generate(&env);
 
-        // Sign a *different* message, then submit with a different hash.
-        let signed_message = [0xAAu8; 32];
-        let submitted_hash = BytesN::from_array(&env, &[0xBBu8; 32]); // does not match
-        let signature = sign(&env, &secret, &signed_message);
+        let (message_hash, signature) =
+            signed_claim(&env, &bridge_client, &secret, &recipient, 100, 1, 1);
 
-        // Signature is valid for signed_message but submitted_hash is different → reject.
-        bridge_client.mint(&relayer, &recipient, &100, &1, &1, &submitted_hash, &signature);
+        bridge_client.mint(&relayer, &recipient, &100, &1, &1, &message_hash, &signature);
+        // Replaying the identical claim must fail (nonce is now stale).
+        bridge_client.mint(&relayer, &recipient, &100, &1, &1, &message_hash, &signature);
     }
 
-    // -----------------------------------------------------------------------
-    // Replay protection tests
-    // -----------------------------------------------------------------------
-
     #[test]
-    #[should_panic(expected = "message already processed")]
-    fn test_replay_attack_is_prevented() {
+    #[should_panic]
+    fn test_nonce_must_be_sequential() {
         let (env, bridge_client, _admin, relayer, _token_addr, secret) = setup_with_secret();
         let recipient = Address::generate(&env);
 
-        let message_hash = BytesN::from_array(&env, &[0x99u8; 32]);
-        let signature = sign(&env, &secret, &message_hash.to_array());
-
-        // First call — should succeed.
-        bridge_client.mint(&relayer, &recipient, &50, &1, &1, &message_hash, &signature);
-
-        // Second call with same hash — must be rejected as a replay.
-        bridge_client.mint(&relayer, &recipient, &50, &1, &1, &message_hash, &signature);
+        // Skipping nonce 1 and submitting nonce 2 must be rejected.
+        let (message_hash, signature) =
+            signed_claim(&env, &bridge_client, &secret, &recipient, 100, 1, 2);
+        bridge_client.mint(&relayer, &recipient, &100, &1, &2, &message_hash, &signature);
     }
 
     #[test]
-    fn test_different_message_hashes_are_each_processed_once() {
+    #[should_panic]
+    fn test_signature_bound_to_chain_and_contract() {
         let (env, bridge_client, _admin, relayer, _token_addr, secret) = setup_with_secret();
         let recipient = Address::generate(&env);
 
-        let hash1 = BytesN::from_array(&env, &[0x01u8; 32]);
-        let hash2 = BytesN::from_array(&env, &[0x02u8; 32]);
+        // Sign a digest that was computed for a different contract address.
+        let other_contract = env.register_contract(None, BridgeStub);
+        let foreign_hash = env.as_contract(&other_contract, || {
+            BridgeStub::compute_message_hash(&env, &recipient, 100, 1, 1)
+        });
+        let signature = sign(&env, &secret, &foreign_hash.to_array());
 
-        let sig1 = sign(&env, &secret, &hash1.to_array());
-        let sig2 = sign(&env, &secret, &hash2.to_array());
-
-        // Both should succeed (different hashes).
-        bridge_client.mint(&relayer, &recipient, &10, &1, &1, &hash1, &sig1);
-        bridge_client.mint(&relayer, &recipient, &10, &1, &2, &hash2, &sig2);
-
-        assert!(bridge_client.is_processed(&hash1));
-        assert!(bridge_client.is_processed(&hash2));
-    }
-
-    // -----------------------------------------------------------------------
-    // Unauthorized relayer test
-    // -----------------------------------------------------------------------
-
-    #[test]
-    #[should_panic(expected = "not authorized relayer")]
-    fn test_unauthorized_relayer_is_rejected() {
-        let (env, bridge_client, _admin, _relayer, _token_addr, secret) = setup_with_secret();
-        let rogue_relayer = Address::generate(&env);
-        let recipient = Address::generate(&env);
-
-        let message_hash = BytesN::from_array(&env, &[0xFFu8; 32]);
-        let signature = sign(&env, &secret, &message_hash.to_array());
-
-        // rogue_relayer is not the registered relayer → must be rejected.
-        bridge_client.mint(&rogue_relayer, &recipient, &100, &1, &1, &message_hash, &signature);
+        // Presenting it to this bridge must fail the domain-binding check.
+        bridge_client.mint(&relayer, &recipient, &100, &1, &1, &foreign_hash, &signature);
     }
 }

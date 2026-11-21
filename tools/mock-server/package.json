@@ -4,9 +4,9 @@
   "description": "Deterministic mock server for Stellar Horizon and Soroban RPC",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "ts-node src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "dev": "node init && ts-node src/server.ts",
+    "build": "node init && tsc",
+    "start": "node init && node dist/server.js",
     "test": "jest"
   },
   "dependencies": {

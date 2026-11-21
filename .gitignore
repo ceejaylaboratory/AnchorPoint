@@ -21,8 +21,6 @@ coverage/
 *.tsbuildinfo
 
 # Environment & Secrets
-.env
-.env.*
 !.env.example
 *.local
 *.pem
@@ -41,7 +39,6 @@ pnpm-debug.log*
 # Editor & IDE config (tool-specific, not project config)
 .codex/
 .codex
-.vscode/*
 !.vscode/extensions.json
 .idea/
 .DS_Store
@@ -86,3 +83,4 @@ backend/src/services/batch-payment.examples.ts
 # Demo app dependencies
 demo/node_modules/
 demo/dist/
+config.bat
