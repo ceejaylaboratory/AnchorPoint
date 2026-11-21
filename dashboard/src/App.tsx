@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutDashboard,
   ArrowUpRight,
@@ -30,7 +30,15 @@ import { NetworkSelector, NetworkBanner } from './components/NetworkSelector';
 import { NetworkFeeIndicator } from './components/NetworkFeeIndicator';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { SessionTimeoutModal } from './components/Auth/SessionTimeoutModal';
-import { WalletManager } from './lib/wallet';
+import { InactivityWarningModal, SessionLockedOverlay } from './components/Auth/SessionLock';
+import { useInactivityTimeout } from './hooks/useInactivityTimeout';
+import {
+  AUTOLOCK_WARNING_MS,
+  autoLockToMs,
+  useAutoLockSetting,
+  wipeSessionSecrets,
+} from './lib/sessionLock';
+import { WalletManager, toWalletSigningError } from './lib/wallet';
 import { I18nProvider, useTranslation, type Language } from './i18n/config';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { ToastContainer, useToastQueue } from './components/NotificationCenter';
@@ -145,15 +153,8 @@ const TabFallback = () => (
   </div>
 );
 
+// ThemeProvider owns the <html> class/data-theme; App only renders the shell.
 const App = () => {
-  const { resolvedTheme } = useTheme();
-
-  useEffect(() => {
-    const root = document.documentElement;
-    root.classList.remove('light', 'dark');
-    root.classList.add(resolvedTheme);
-  }, [resolvedTheme]);
-
   return (
     <I18nProvider>
       <AppShell />
@@ -175,6 +176,12 @@ const AppShell = () => {
   const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
   const walletManager = useMemo(() => WalletManager.getInstance(), []);
   const { t, language, changeLanguage } = useTranslation();
+  const [autoLock] = useAutoLockSetting();
+  const [sessionLocked, setSessionLocked] = useState(false);
+  // The view to restore once the user unlocks after an inactivity lock.
+  const lockedTabRef = useRef<string | null>(null);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
 
   const clearClientSessionState = useCallback(() => {
     const shouldClearKey = (key: string) => /token|session|wallet|transaction|balance/i.test(key);
@@ -211,6 +218,23 @@ const AppShell = () => {
     setActiveTab('dashboard');
     setWalletSessionResetCounter((previous) => previous + 1);
   }, [clearClientSessionState, walletManager, selectedWalletId]);
+
+  /**
+   * Inactivity auto-lock: wipe in-memory secrets first (so nothing survives
+   * even if the adapter disconnect stalls), then run the normal sign-out.
+   */
+  const handleInactivityLock = useCallback(() => {
+    lockedTabRef.current = activeTabRef.current;
+    wipeSessionSecrets();
+    setSessionLocked(true);
+    setWalletModalOpen(false);
+    void handleWalletDisconnect();
+  }, [handleWalletDisconnect]);
+
+  const inactivity = useInactivityTimeout(autoLockToMs(autoLock), handleInactivityLock, {
+    warningMs: AUTOLOCK_WARNING_MS,
+    enabled: wallet !== null && !sessionLocked,
+  });
 
   useEffect(() => {
     let ignore = false;
@@ -314,16 +338,24 @@ const AppShell = () => {
     setWalletError('');
 
     try {
-      const connectedWallet = await walletManager.connectWallet(walletId);
+      // Guarded so a closed wallet popup ends in a clear error, not an endless "Connecting…".
+      const connectedWallet = await walletManager.connectWalletGuarded(walletId);
       setWallet(connectedWallet);
       setSelectedWalletId(walletId);
       setWalletStatus('idle');
+
+      // Unlocking after an inactivity lock returns the user to where they were.
+      if (lockedTabRef.current) {
+        setActiveTab(lockedTabRef.current);
+        lockedTabRef.current = null;
+      }
+      setSessionLocked(false);
       
       // Save wallet preference to localStorage
       localStorage.setItem('preferredWalletId', walletId);
     } catch (error) {
       setWalletStatus('error');
-      setWalletError(error instanceof Error ? error.message : 'Unable to connect wallet.');
+      setWalletError(toWalletSigningError(error).message || 'Unable to connect wallet.');
     }
   };
 
@@ -397,6 +429,19 @@ const AppShell = () => {
       </WalletModal>
 
       <SessionTimeoutModal />
+
+      <InactivityWarningModal
+        isOpen={inactivity.isWarning && wallet !== null}
+        remainingMs={inactivity.remainingMs}
+        onStayLoggedIn={inactivity.reset}
+        onLockNow={handleInactivityLock}
+      />
+
+      <SessionLockedOverlay
+        isLocked={sessionLocked}
+        onUnlock={() => setWalletModalOpen(true)}
+        resumeLabel={lockedTabRef.current ? tabLabels[lockedTabRef.current] : undefined}
+      />
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex min-h-16 flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-background/80 px-2 py-3 backdrop-blur-md sm:px-6 lg:px-8">

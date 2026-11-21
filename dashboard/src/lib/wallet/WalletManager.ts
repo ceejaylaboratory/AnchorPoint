@@ -3,6 +3,12 @@ import { FreighterAdapter } from './FreighterAdapter';
 import { AlbedoAdapter } from './AlbedoAdapter';
 import { XBullAdapter } from './XBullAdapter';
 import { RabetAdapter } from './RabetAdapter';
+import { windowEventWatcher, withSigningGuard, type SigningGuardOptions } from './signingGuard';
+
+export interface GuardedSignOptions extends SigningGuardOptions {
+  /** Account that started signing; an account-change event for any other key aborts. */
+  expectedPublicKey?: string | null;
+}
 
 export interface WalletOption {
   id: string;
@@ -110,5 +116,33 @@ export class WalletManager {
     }
 
     return adapter.signTransaction(xdr, network);
+  }
+
+  /**
+   * Like `connectWallet`, but rejects with a `WalletSigningError` instead of
+   * hanging when the wallet never answers (popup closed, extension disabled).
+   */
+  async connectWalletGuarded(
+    id: string,
+    options: SigningGuardOptions = {},
+  ): Promise<{ publicKey: string; network: string }> {
+    return withSigningGuard(() => this.connectWallet(id), options);
+  }
+
+  /**
+   * Signs with a 90s timeout (by default), aborting early when the wallet
+   * disconnects or switches accounts mid-prompt. Failures are normalised to
+   * `WalletSigningError` so callers can show a reason and a retry action.
+   */
+  async signTransactionGuarded(
+    id: string,
+    xdr: string,
+    network: string,
+    { expectedPublicKey, watchers = [], ...options }: GuardedSignOptions = {},
+  ): Promise<string> {
+    return withSigningGuard(() => this.signTransaction(id, xdr, network), {
+      ...options,
+      watchers: [windowEventWatcher(expectedPublicKey), ...watchers],
+    });
   }
 }
