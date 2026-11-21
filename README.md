@@ -344,3 +344,8 @@ Master intuitive gameplay controls designed for both casual players and experien
  * Follow simple command-line instructions to set up and run the project locally.
  * Join the community forum to share strategies, speedruns, and custom mods.
  * Report issues or suggest features directly via our public GitHub tracker.
+
+## Handsoff notes
+
+<!-- handsoff-issue-1652 -->
+- #1652: feat(contracts/yield): implement flash-loan fee distribution to liquidity providers

@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, Address, Env, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -14,6 +14,14 @@ pub enum Phase {
     Cancelled,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProposalStatus {
+    Queued,
+    Executed,
+    Canceled,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum GovernanceError {
@@ -24,6 +32,8 @@ pub enum GovernanceError {
     InsufficientSignatures = 5,
     UnauthorizedSigner = 6,
     DuplicateSigner = 7,
+    ProposalAlreadyCanceled = 8,
+    ProposalAlreadyExecuted = 9,
 }
 
 #[contracttype]
@@ -33,6 +43,7 @@ pub struct Proposal {
     pub votes_yes: u64,
     pub votes_no: u64,
     pub votes_abstain: u64,
+    pub status: ProposalStatus,
 }
 
 #[contracttype]
@@ -99,6 +110,14 @@ impl GovernanceContract {
 
     pub fn create_proposal(env: Env, creator: Address, title: String) -> u32 {
         let prop_id: u32 = 0;
+        let proposal = Proposal {
+            title: title.clone(),
+            votes_yes: 0,
+            votes_no: 0,
+            votes_abstain: 0,
+            status: ProposalStatus::Queued,
+        };
+        env.storage().persistent().set(&DataKey::Proposal(prop_id), &proposal);
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("proposed")),
             (creator, prop_id, title),
@@ -106,16 +125,52 @@ impl GovernanceContract {
         prop_id
     }
 
-    pub fn vote(env: Env, caller: Address, prop_id: u32, support: bool, weight: u64) {
+    pub fn vote(env: Env, caller: Address, prop_id: u32, support: bool, weight: u64) -> Result<(), GovernanceError> {
+        let mut proposal: Proposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposal(prop_id))
+            .ok_or(GovernanceError::InvalidPhase)?;
+
+        // Reject any voting on canceled or already-executed proposals.
+        match proposal.status {
+            ProposalStatus::Canceled => return Err(GovernanceError::ProposalAlreadyCanceled),
+            ProposalStatus::Executed => return Err(GovernanceError::ProposalAlreadyExecuted),
+            ProposalStatus::Queued => {}
+        }
+
+        if support {
+            proposal.votes_yes = proposal.votes_yes.saturating_add(weight);
+        } else {
+            proposal.votes_no = proposal.votes_no.saturating_add(weight);
+        }
+        env.storage().persistent().set(&DataKey::Proposal(prop_id), &proposal);
+
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("voted")),
             (caller, prop_id, support, weight),
         );
+        Ok(())
     }
 
     /// Execute proposal with multi-sig threshold authorization checks.
     /// Collects signers and verifies valid weight/quorum threshold satisfies requirements.
     pub fn execute_proposal(env: Env, prop_id: u32, signers: Vec<Address>) -> Result<(), GovernanceError> {
+        // Atomically read the freshest proposal state from persistent storage and
+        // reject anything that is not still Queued. This prevents a canceled
+        // proposal from being executed even if cancellation raced with execution.
+        let mut proposal: Proposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposal(prop_id))
+            .ok_or(GovernanceError::InvalidPhase)?;
+
+        match proposal.status {
+            ProposalStatus::Canceled => return Err(GovernanceError::ProposalAlreadyCanceled),
+            ProposalStatus::Executed => return Err(GovernanceError::ProposalAlreadyExecuted),
+            ProposalStatus::Queued => {}
+        }
+
         let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap_or(0);
         let council: Vec<Address> = env.storage().instance().get(&DataKey::CouncilSigners).unwrap_or(Vec::new(&env));
 
@@ -158,6 +213,11 @@ impl GovernanceContract {
             }
         }
 
+        // Mark as executed atomically before emitting the event so any
+        // subsequent execution attempt is rejected.
+        proposal.status = ProposalStatus::Executed;
+        env.storage().persistent().set(&DataKey::Proposal(prop_id), &proposal);
+
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("executed")),
             (prop_id,),
@@ -169,11 +229,38 @@ impl GovernanceContract {
         Self::execute_proposal(env, prop_id, Vec::new(&env))
     }
 
-    pub fn cancel(env: Env, admin: Address, prop_id: u32) {
+    pub fn cancel(env: Env, admin: Address, prop_id: u32) -> Result<(), GovernanceError> {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
+        if admin != stored_admin {
+            return Err(GovernanceError::InvalidPhase);
+        }
+
+        let mut proposal: Proposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposal(prop_id))
+            .ok_or(GovernanceError::InvalidPhase)?;
+
+        // Already canceled: idempotent no-op success.
+        if proposal.status == ProposalStatus::Canceled {
+            return Ok(());
+        }
+        // Cannot cancel an already-executed proposal.
+        if proposal.status == ProposalStatus::Executed {
+            return Err(GovernanceError::ProposalAlreadyExecuted);
+        }
+
+        // Immediately persist the Canceled status so any concurrent execution
+        // attempt observes the fresh state and is rejected.
+        proposal.status = ProposalStatus::Canceled;
+        env.storage().persistent().set(&DataKey::Proposal(prop_id), &proposal);
+
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("cancelled")),
             (admin, prop_id),
         );
+        Ok(())
     }
 }
 
