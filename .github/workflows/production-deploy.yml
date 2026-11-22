@@ -35,11 +35,35 @@ jobs:
     runs-on: ubuntu-latest
     needs: smoke-script-selftest
     if: ${{ github.event.inputs.target_host != '' || vars.TARGET_HOST != '' }}
+    env:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      HELM_RELEASE: ${{ vars.HELM_RELEASE || 'anchor-point' }}
+      HELM_NAMESPACE: ${{ vars.HELM_NAMESPACE || 'anchorpoint-prod' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Run synthetic smoke tests
+        timeout-minutes: 1
         env:
           TARGET_HOST: ${{ github.event.inputs.target_host || vars.TARGET_HOST }}
           SMOKE_TEST_ACCOUNT: ${{ secrets.SMOKE_TEST_ACCOUNT }}
+          SMOKE_TEST_CONNECT_TIMEOUT: "3"
+          SMOKE_TEST_MAX_TIME: "5"
+          SMOKE_TEST_MAX_DURATION: "30"
         run: bash scripts/smoke-test.sh
+
+      # A failed post-deployment smoke test halts the pipeline (this job fails)
+      # and rolls the Helm release back to its previous revision.
+      - name: Set up Helm for rollback
+        if: ${{ failure() && env.KUBE_CONFIG != '' }}
+        uses: azure/setup-helm@v4
+
+      - name: Roll back to previous release
+        if: ${{ failure() && env.KUBE_CONFIG != '' }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBE_CONFIG" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          helm history "$HELM_RELEASE" -n "$HELM_NAMESPACE" --max 5
+          helm rollback "$HELM_RELEASE" 0 -n "$HELM_NAMESPACE" --wait --timeout 5m
+          echo "::error::Post-deployment smoke tests failed; rolled back $HELM_RELEASE in $HELM_NAMESPACE"

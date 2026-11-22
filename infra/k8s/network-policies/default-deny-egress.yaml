@@ -1,0 +1,44 @@
+# =============================================================================
+# Default-deny egress for data stores - Issue #1690
+# =============================================================================
+# PostgreSQL and Redis must never initiate outbound connections. If an
+# injection vulnerability is exploited, this blocks reverse shells and data
+# exfiltration to the public internet.
+#
+# Selects the Postgres and Redis pods rendered by the anchor-point Helm chart
+# (app.kubernetes.io/component: postgres | redis). Apply to every namespace
+# that runs them:
+#   kubectl apply -f infra/k8s/network-policies/ -n <namespace>
+#
+# The only egress allowed is cluster DNS, so name resolution keeps working.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  labels:
+    app: anchorpoint
+    component: network-policy
+spec:
+  # Postgres and Redis pods only
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["postgres", "redis"]
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS (kube-dns / CoreDNS) only
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
