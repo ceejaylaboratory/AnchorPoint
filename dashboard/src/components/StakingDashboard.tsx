@@ -15,7 +15,7 @@ import {
   Unlock,
   X,
 } from 'lucide-react';
-import {
+import StakingCalculator, {
   calculateEstimatedApy,
   calculateProjectedRewards,
   LOCK_DURATION_OPTIONS,
@@ -23,7 +23,7 @@ import {
 } from './StakingCalculator';
 import { useTranslation } from '../i18n/config';
 
-export type LockTier = '30_days' | '90_days' | '365_days';
+export type LockTier = '30_days' | '90_days' | '180_days' | '365_days';
 
 export interface StakingPosition {
   stakedAmount: number;
@@ -80,7 +80,7 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
   const [position, setPosition] = useState<StakingPosition | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [_fetchError, setFetchError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Modals state
@@ -88,6 +88,7 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
   const [isUnstakeModalOpen, setIsUnstakeModalOpen] = useState(false);
   const [isConfirmStakeOpen, setIsConfirmStakeOpen] = useState(false);
   const [isConfirmUnstakeOpen, setIsConfirmUnstakeOpen] = useState(false);
+  const [isCalculatorModalOpen, setIsCalculatorModalOpen] = useState(false);
 
   // Form states
   const [stakeAmountInput, setStakeAmountInput] = useState<string>('500');
@@ -220,7 +221,13 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
       const newDuration = stakeDurationInput;
       const newApy = calculateEstimatedApy(newDuration);
       const newTier: LockTier =
-        newDuration === 365 ? '365_days' : newDuration === 90 ? '90_days' : '30_days';
+        newDuration === 365
+          ? '365_days'
+          : newDuration === 180
+            ? '180_days'
+            : newDuration === 90
+              ? '90_days'
+              : '30_days';
 
       const updated: StakingPosition = {
         ...position,
@@ -325,6 +332,7 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
   const tierLabel = useMemo(() => {
     if (!position) return t('staking.tier90');
     if (position.lockDurationDays === 365) return t('staking.tier365');
+    if (position.lockDurationDays === 180) return '180 Days (Titanium)';
     if (position.lockDurationDays === 30) return t('staking.tier30');
     return t('staking.tier90');
   }, [position, t]);
@@ -539,6 +547,16 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
 
         <button
           type="button"
+          data-testid="open-calculator-modal-button"
+          onClick={() => setIsCalculatorModalOpen(true)}
+          className="action-button flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 font-semibold text-slate-200 hover:border-slate-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text transition-all min-h-[44px]"
+        >
+          <Calculator size={18} aria-hidden="true" />
+          <span>APR Calculator</span>
+        </button>
+
+        <button
+          type="button"
           data-testid="toggle-estimator-button"
           onClick={() => setShowEstimator((prev) => !prev)}
           className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors"
@@ -643,7 +661,7 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
               <label className="block text-xs font-medium text-slate-300">
                 {t('staking.lockPeriodLabel')}
               </label>
-              <div role="radiogroup" className="grid grid-cols-3 gap-2">
+              <div role="radiogroup" className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {LOCK_DURATION_OPTIONS.map((days) => {
                   const apy = calculateEstimatedApy(days);
                   const selected = stakeDurationInput === days;
@@ -991,6 +1009,21 @@ export const StakingDashboard: React.FC<StakingDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Calculator simulation modal */}
+      <StakingCalculator
+        isOpen={isCalculatorModalOpen}
+        onClose={() => setIsCalculatorModalOpen(false)}
+        apiBaseUrl={apiBaseUrl}
+        initialAmount={parsedStakeAmount || 500}
+        initialDuration={stakeDurationInput}
+        onStakeNow={(amount, duration) => {
+          setStakeAmountInput(String(amount));
+          setStakeDurationInput(duration);
+          setIsCalculatorModalOpen(false);
+          setIsStakeModalOpen(true);
+        }}
+      />
     </section>
   );
 };
