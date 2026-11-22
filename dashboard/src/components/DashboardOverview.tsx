@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { Search, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { LogoMark } from './LogoMark';
-import { MetricsChart } from './MetricsChart';
-import { DashboardOverviewSkeleton } from './Skeletons';
+import { DashboardOverviewSkeleton, ChartSkeleton } from './Skeletons';
 import { StakingCalculator } from './StakingCalculator';
 import { StakingDashboard } from './StakingDashboard';
 import { TransactionStatusBadge, type TransactionStatus } from './TransactionStatusBadge';
+import { MetricsChart } from './LazyCharts';
 import type { UiConfig } from '../types';
 
 export type StatusFilter = 'All' | 'Pending' | 'Completed' | 'Failed';
@@ -221,7 +221,9 @@ export const DashboardOverview = ({ uiConfig, isLoading = false }: DashboardOver
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.5fr_1fr]">
         <div className="glass-card p-6">
-          <MetricsChart />
+          <Suspense fallback={<ChartSkeleton label="Loading daily volume chart" />}>
+            <MetricsChart />
+          </Suspense>
         </div>
         <div className="space-y-6">
           <div className="glass-card p-6">
