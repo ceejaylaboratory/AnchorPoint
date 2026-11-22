@@ -23,6 +23,7 @@ import { Sidebar } from './components/Sidebar';
 import { Breadcrumbs } from './components/Breadcrumbs';
 import { NotificationBell } from './components/NotificationBell';
 import { StatusBanner } from './components/StatusBanner';
+import { OfflineBanner } from './components/OfflineBanner';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { WalletModal } from './components/WalletModal';
@@ -491,6 +492,8 @@ const AppShell = () => {
         </header>
 
         <NetworkBanner />
+
+        <OfflineBanner />
 
         <section
           className="mx-auto w-full max-w-7xl px-3 py-5 sm:px-6 sm:py-8 lg:px-8"
