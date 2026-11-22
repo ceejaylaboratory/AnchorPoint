@@ -34,16 +34,18 @@ impl RateLimiter {
     /// Checks if the cooldown has elapsed for the given action and updates the timestamp if successful.
     pub fn check_and_update(env: &Env, action: ActionType) -> Result<(), RateLimitError> {
         let current_time = env.ledger().timestamp();
-        let last_called = Self::get_last_called(env, action.clone());
-        let cooldown = Self::get_cooldown(env, action.clone());
+        let last_called = Self::get_last_called(env, action);
+        let cooldown = Self::get_cooldown(env, action);
 
         if let Some(last) = last_called {
             // Security: Integer overflow on timestamp arithmetic
             // We use checked_add to ensure that a malicious or corrupted timestamp does not wrap around.
-            let next_allowed_time = last.checked_add(cooldown).ok_or(RateLimitError::TimestampOverflow)?;
-            
+            let next_allowed_time = last
+                .checked_add(cooldown)
+                .ok_or(RateLimitError::TimestampOverflow)?;
+
             // Security: Timestamp manipulation
-            // Validators provide timestamps via consensus. A drift of ±N seconds is acceptable 
+            // Validators provide timestamps via consensus. A drift of ±N seconds is acceptable
             // because rate-limiting is designed to prevent rapid succession spam, not to act as a precision clock.
             if current_time < next_allowed_time {
                 return Err(RateLimitError::CooldownNotElapsed);
@@ -51,26 +53,38 @@ impl RateLimiter {
         }
 
         // Update the timestamp to the current ledger time.
-        env.storage().instance().set(&crate::storage_keys::DataKey::ActionCooldown(action), &current_time);
-        
+        env.storage().instance().set(
+            &crate::storage_keys::DataKey::ActionCooldown(action),
+            &current_time,
+        );
+
         Ok(())
     }
 
     /// Retrieves the last called timestamp for a given action.
     pub fn get_last_called(env: &Env, action: ActionType) -> Option<u64> {
-        env.storage().instance().get(&crate::storage_keys::DataKey::ActionCooldown(action))
+        env.storage()
+            .instance()
+            .get(&crate::storage_keys::DataKey::ActionCooldown(action))
     }
 
     /// Sets a new cooldown duration for a specific action.
-    pub fn set_cooldown(env: &Env, action: ActionType, cooldown: u64) -> Result<(), RateLimitError> {
+    pub fn set_cooldown(
+        env: &Env,
+        action: ActionType,
+        cooldown: u64,
+    ) -> Result<(), RateLimitError> {
         // Security: Cooldown misconfiguration
-        // We guard against a cooldown of zero (or any value below MIN_COOLDOWN) being set, 
+        // We guard against a cooldown of zero (or any value below MIN_COOLDOWN) being set,
         // ensuring rate limiting cannot be effectively disabled.
         if cooldown < Self::MIN_COOLDOWN {
             return Err(RateLimitError::InvalidCooldown);
         }
-        
-        env.storage().instance().set(&crate::storage_keys::DataKey::ActionCooldownDuration(action), &cooldown);
+
+        env.storage().instance().set(
+            &crate::storage_keys::DataKey::ActionCooldownDuration(action),
+            &cooldown,
+        );
         Ok(())
     }
 
@@ -78,13 +92,15 @@ impl RateLimiter {
     pub fn get_cooldown(env: &Env, action: ActionType) -> u64 {
         env.storage()
             .instance()
-            .get(&crate::storage_keys::DataKey::ActionCooldownDuration(action.clone()))
-            .unwrap_or_else(|| match action {
-                ActionType::AddAsset => 3600,      // 1 hour
-                ActionType::UpdateOracle => 60,    // 1 minute
-                ActionType::SetFee => 1800,        // 30 minutes
-                ActionType::RemoveAsset => 86400,  // 24 hours
-                ActionType::UpdateAdmin => 86400,  // 24 hours
+            .get(&crate::storage_keys::DataKey::ActionCooldownDuration(
+                action,
+            ))
+            .unwrap_or(match action {
+                ActionType::AddAsset => 3600,     // 1 hour
+                ActionType::UpdateOracle => 60,   // 1 minute
+                ActionType::SetFee => 1800,       // 30 minutes
+                ActionType::RemoveAsset => 86400, // 24 hours
+                ActionType::UpdateAdmin => 86400, // 24 hours
             })
     }
 }
