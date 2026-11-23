@@ -143,6 +143,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   dbMetricsScheduler.stop();
   transactionReconcileScheduler.stop();
   multisigReconcileScheduler.stop();
+  stellarService.stopFailoverMonitor();
 
   // Stop accepting new HTTP traffic; let in-flight requests finish.
   if (server) {
@@ -678,6 +679,7 @@ if (process.env.NODE_ENV !== 'test') {
           transactionReconcileScheduler.start();
           multisigReconcileScheduler.start();
           cleanupWorker.start();
+          stellarService.startFailoverMonitor();
         });
       });
   })().catch((error) => {

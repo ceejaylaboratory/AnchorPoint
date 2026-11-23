@@ -6,6 +6,15 @@ import configService from './config.service';
 import logger from '../utils/logger';
 import prisma from '../lib/prisma';
 import { traceAsync, SpanKind } from '../utils/tracing';
+import { metricsService } from './metrics.service';
+
+type FailoverProvider = 'horizon' | 'soroban-rpc';
+
+interface NodeHealthState {
+  url: string;
+  consecutiveFailures: number;
+  degraded: boolean;
+}
 
 export interface AccountSigners {
   signers: Array<{
@@ -26,6 +35,11 @@ export class StellarService {
   private server: Horizon.Server;
   private networkPassphrase: string;
   private rpcUrls: string[];
+  private horizonUrls: string[];
+  private nodeHealth = new Map<string, NodeHealthState>();
+  private activeHorizonIndex = 0;
+  private activeRpcIndex = 0;
+  private failoverProbeTimer: NodeJS.Timeout | null = null;
 
   // Whitelisted operations for submission
   private readonly ALLOWED_OPERATIONS = [
@@ -45,6 +59,8 @@ export class StellarService {
     this.server = new Horizon.Server(config.STELLAR_HORIZON_URL);
     this.networkPassphrase = this.getPassphrase();
     this.rpcUrls = this.getRpcUrls();
+    this.horizonUrls = this.getHorizonUrls();
+    this.resetNodeHealth();
   }
 
   private getRpcUrls(): string[] {
@@ -56,7 +72,24 @@ export class StellarService {
     return [networkConfig.sorobanRpcUrl];
   }
 
+  private getHorizonUrls(): string[] {
+    const primary = config.STELLAR_HORIZON_URL || NETWORKS[this.currentNetwork].horizonUrl;
+    const fallbacks = (config.STELLAR_HORIZON_FALLBACK_URLS || '')
+      .split(',')
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0 && url !== primary);
+    return [primary, ...fallbacks];
+  }
+
   private static readonly RETRYABLE_HORIZON_STATUS_CODES = [429, 502, 503, 504];
+  private static readonly TIMEOUT_ERROR_CODES = [
+    'ETIMEDOUT',
+    'ESOCKETTIMEDOUT',
+    'ECONNABORTED',
+    'ECONNRESET',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+  ];
 
   /**
    * Wraps a Horizon request with retries (exponential backoff + jitter) for
@@ -82,6 +115,214 @@ export class StellarService {
       }
     }
     throw lastError;
+  }
+
+  private nodeKey(provider: FailoverProvider, index: number): string {
+    return `${provider}:${index}`;
+  }
+
+  private urlsFor(provider: FailoverProvider): string[] {
+    return provider === 'horizon' ? this.horizonUrls : this.rpcUrls;
+  }
+
+  private activeIndexFor(provider: FailoverProvider): number {
+    return provider === 'horizon' ? this.activeHorizonIndex : this.activeRpcIndex;
+  }
+
+  private resetNodeHealth(): void {
+    this.nodeHealth.clear();
+    this.activeHorizonIndex = 0;
+    this.activeRpcIndex = 0;
+    (['horizon', 'soroban-rpc'] as FailoverProvider[]).forEach((provider) => {
+      this.urlsFor(provider).forEach((url, index) => {
+        this.nodeHealth.set(this.nodeKey(provider, index), {
+          url,
+          consecutiveFailures: 0,
+          degraded: false,
+        });
+        metricsService.setRpcNodeHealth(provider, index, true);
+      });
+    });
+  }
+
+  private orderedNodeIndices(provider: FailoverProvider): number[] {
+    const urls = this.urlsFor(provider);
+    const active = this.activeIndexFor(provider);
+    return Array.from({ length: urls.length }, (_, offset) => (active + offset) % urls.length);
+  }
+
+  private failureReason(error: any): string {
+    const status = error?.response?.status;
+    if (typeof status === 'number') {
+      return `http_${status}`;
+    }
+    if (typeof error?.code === 'string' && StellarService.TIMEOUT_ERROR_CODES.includes(error.code)) {
+      return `network_${error.code.toLowerCase()}`;
+    }
+    return 'network_timeout';
+  }
+
+  private isFailoverError(error: any): boolean {
+    const status = error?.response?.status;
+    if (typeof status === 'number') {
+      return StellarService.RETRYABLE_HORIZON_STATUS_CODES.includes(status) || status >= 500;
+    }
+    if (typeof error?.code === 'string' && StellarService.TIMEOUT_ERROR_CODES.includes(error.code)) {
+      return true;
+    }
+    const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+    return message.includes('timeout') || message.includes('timed out');
+  }
+
+  private recordNodeFailure(provider: FailoverProvider, index: number, reason: string): void {
+    const health = this.nodeHealth.get(this.nodeKey(provider, index));
+    if (!health) {
+      return;
+    }
+    health.consecutiveFailures += 1;
+    if (health.degraded || health.consecutiveFailures < config.STELLAR_FAILOVER_FAILURE_THRESHOLD) {
+      return;
+    }
+
+    health.degraded = true;
+    metricsService.setRpcNodeHealth(provider, index, false);
+
+    const urls = this.urlsFor(provider);
+    const nextIndex = this.orderedNodeIndices(provider).find((candidate) => {
+      if (candidate === index) {
+        return false;
+      }
+      return !this.nodeHealth.get(this.nodeKey(provider, candidate))?.degraded;
+    });
+    if (nextIndex === undefined) {
+      logger.warn(`${provider} endpoint at index ${index} degraded but no healthy standby is available`, {
+        reason,
+      });
+      return;
+    }
+
+    if (provider === 'horizon') {
+      this.activeHorizonIndex = nextIndex;
+    } else {
+      this.activeRpcIndex = nextIndex;
+    }
+    metricsService.incrementRpcNodeFailover(provider, index, nextIndex, reason);
+    logger.warn(`${provider} endpoint degraded; routing traffic to standby`, {
+      from_index: index,
+      to_index: nextIndex,
+      from_url: urls[index],
+      to_url: urls[nextIndex],
+      reason,
+    });
+  }
+
+  private recordNodeSuccess(provider: FailoverProvider, index: number): void {
+    const health = this.nodeHealth.get(this.nodeKey(provider, index));
+    if (health) {
+      health.consecutiveFailures = 0;
+    }
+  }
+
+  private recoverNode(provider: FailoverProvider, index: number): void {
+    const health = this.nodeHealth.get(this.nodeKey(provider, index));
+    if (!health || !health.degraded) {
+      return;
+    }
+    health.degraded = false;
+    health.consecutiveFailures = 0;
+    metricsService.setRpcNodeHealth(provider, index, true);
+    metricsService.incrementRpcNodeRecovery(provider, index);
+    if (index === 0) {
+      if (provider === 'horizon') {
+        this.activeHorizonIndex = 0;
+      } else {
+        this.activeRpcIndex = 0;
+      }
+    }
+    logger.info(`${provider} primary endpoint recovered; restoring primary routing`, { index });
+  }
+
+  /**
+   * Runs a Horizon request against the active endpoint and fails over to a
+   * configured standby when the active endpoint is degraded.
+   */
+  private async withHorizonFailover<T>(
+    fn: (server: Horizon.Server) => Promise<T>,
+    maxRetries?: number
+  ): Promise<T> {
+    const urls = this.horizonUrls;
+    const retries = maxRetries ?? (urls.length > 1 ? 0 : 3);
+    let lastError: unknown;
+
+    for (const index of this.orderedNodeIndices('horizon')) {
+      const server = new Horizon.Server(urls[index]);
+      try {
+        const result = await this.retryHorizonRequest(() => fn(server), retries);
+        this.recordNodeSuccess('horizon', index);
+        return result;
+      } catch (error: any) {
+        if (!this.isFailoverError(error)) {
+          throw error;
+        }
+        lastError = error;
+        this.recordNodeFailure('horizon', index, this.failureReason(error));
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Probes degraded endpoints and restores primary routing once healthy.
+   */
+  public async probeDegradedNodes(): Promise<number> {
+    let recovered = 0;
+    for (const provider of ['horizon', 'soroban-rpc'] as FailoverProvider[]) {
+      const urls = this.urlsFor(provider);
+      for (let index = 0; index < urls.length; index++) {
+        if (!this.nodeHealth.get(this.nodeKey(provider, index))?.degraded) {
+          continue;
+        }
+        try {
+          if (provider === 'horizon') {
+            await new Horizon.Server(urls[index]).fetchBaseFee();
+          } else {
+            const server = new rpc.Server(urls[index]);
+            await this.traceRpcCall('getLatestLedger', [], () => server.getLatestLedger());
+          }
+          this.recoverNode(provider, index);
+          recovered += 1;
+        } catch (error) {
+          logger.debug(`${provider} recovery probe failed for endpoint at index ${index}`, { error });
+        }
+      }
+    }
+    return recovered;
+  }
+
+  public startFailoverMonitor(): void {
+    if (this.failoverProbeTimer) {
+      return;
+    }
+    if (this.horizonUrls.length <= 1 && this.rpcUrls.length <= 1) {
+      return;
+    }
+    const intervalMs = config.STELLAR_FAILOVER_PROBE_INTERVAL_MS;
+    this.failoverProbeTimer = setInterval(() => {
+      void this.probeDegradedNodes().catch((error) => {
+        logger.warn('Failover recovery probe failed', { error });
+      });
+    }, intervalMs);
+    this.failoverProbeTimer.unref();
+    logger.info('Stellar failover recovery monitor started', { interval_ms: intervalMs });
+  }
+
+  public stopFailoverMonitor(): void {
+    if (!this.failoverProbeTimer) {
+      return;
+    }
+    clearInterval(this.failoverProbeTimer);
+    this.failoverProbeTimer = null;
+    logger.info('Stellar failover recovery monitor stopped');
   }
 
   /**
@@ -114,9 +355,8 @@ export class StellarService {
   }
 
   private async executeRpcWithFailoverUntraced<T>(method: string, ...args: any[]): Promise<T> {
-    const errors: Error[] = [];
-    for (let i = 0; i < this.rpcUrls.length; i++) {
-      const index = i;
+    let lastError: unknown;
+    for (const index of this.orderedNodeIndices('soroban-rpc')) {
       const rpcServer = new rpc.Server(this.rpcUrls[index]);
       try {
         const rpcMethod = (rpcServer as any)[method];
@@ -124,21 +364,17 @@ export class StellarService {
           throw new Error(`RPC method '${method}' not found on rpc.Server`);
         }
         const result = await rpcMethod.apply(rpcServer, args);
-        if (i > 0) {
-          logger.warn(`RPC failover: request succeeded on fallback server at index ${index}`);
-        }
+        this.recordNodeSuccess('soroban-rpc', index);
         return result;
       } catch (error: any) {
-        errors.push(error);
-        const statusCode = error?.response?.status;
-        if (statusCode && statusCode >= 500) {
-          logger.warn(`RPC server at index ${index} returned ${statusCode}, failing over to next server`);
-          continue;
+        if (!this.isFailoverError(error)) {
+          throw error;
         }
-        throw error;
+        lastError = error;
+        this.recordNodeFailure('soroban-rpc', index, this.failureReason(error));
       }
     }
-    throw errors[errors.length - 1] || new Error('All RPC servers failed');
+    throw lastError || new Error('All RPC servers failed');
   }
 
   public static getInstance(): StellarService {
@@ -156,6 +392,8 @@ export class StellarService {
     this.server = this.getHorizonServer();
     this.networkPassphrase = this.getPassphrase();
     this.rpcUrls = this.getRpcUrls();
+    this.horizonUrls = this.getHorizonUrls();
+    this.resetNodeHealth();
   }
 
   public getNetwork(): NetworkType {
@@ -176,39 +414,32 @@ export class StellarService {
     if (this.rpcUrls.length <= 1) {
       return this.getSorobanRpc(network);
     }
-    const primaryUrl = this.rpcUrls[0];
-    const fallbackUrls = this.rpcUrls.slice(1);
-    const allUrls = [primaryUrl, ...fallbackUrls];
-    const primaryServer = new rpc.Server(primaryUrl);
-    const traceRpcCall = this.traceRpcCall.bind(this);
+    const primaryServer = new rpc.Server(this.rpcUrls[0]);
     return new Proxy(primaryServer, {
-      get(target: rpc.Server, prop: string, receiver: any) {
+      get: (target: rpc.Server, prop: string, receiver: any) => {
         const value = Reflect.get(target, prop, receiver);
         if (typeof value === 'function' && prop !== 'constructor') {
-          return async (...args: any[]) => traceRpcCall(prop, args, async () => {
-            const errors: Error[] = [];
-            for (let i = 0; i < allUrls.length; i++) {
-              const server = new rpc.Server(allUrls[i]);
+          return (...args: any[]) => this.traceRpcCall(prop, args, async () => {
+            let lastError: unknown;
+            for (const index of this.orderedNodeIndices('soroban-rpc')) {
+              const server = new rpc.Server(this.rpcUrls[index]);
               try {
                 const method = Reflect.get(server, prop, receiver);
-                if (typeof method === 'function') {
-                  const result = await method.apply(server, args);
-                  if (i > 0) {
-                    logger.warn(`RPC failover: request succeeded on fallback server at index ${i}`);
-                  }
-                  return result;
+                if (typeof method !== 'function') {
+                  throw new Error(`RPC method '${prop}' not found on rpc.Server`);
                 }
+                const result = await method.apply(server, args);
+                this.recordNodeSuccess('soroban-rpc', index);
+                return result;
               } catch (error: any) {
-                errors.push(error);
-                const statusCode = error?.response?.status;
-                if (statusCode && statusCode >= 500) {
-                  logger.warn(`RPC server at index ${i} returned ${statusCode}, failing over to next server`);
-                  continue;
+                if (!this.isFailoverError(error)) {
+                  throw error;
                 }
-                throw error;
+                lastError = error;
+                this.recordNodeFailure('soroban-rpc', index, this.failureReason(error));
               }
             }
-            throw errors[errors.length - 1] || new Error('All RPC servers failed');
+            throw lastError || new Error('All RPC servers failed');
           });
         }
         return value;
@@ -224,8 +455,7 @@ export class StellarService {
    * Fetch account signers and thresholds from Horizon
    */
   public async getAccountSigners(accountId: string): Promise<AccountSigners> {
-    const server = this.getHorizonServer();
-    const account = await this.retryHorizonRequest(() => server.loadAccount(accountId));
+    const account = await this.withHorizonFailover((server) => server.loadAccount(accountId));
 
     return {
       signers: account.signers.map((signer: any) => ({
@@ -246,8 +476,7 @@ export class StellarService {
    * Useful as a pre-flight check before submitting payout transactions.
    */
   public async hasTrustline(accountPublicKey: string, assetCode: string, assetIssuer: string): Promise<boolean> {
-    const server = this.getHorizonServer();
-    const account = await this.retryHorizonRequest(() => server.loadAccount(accountPublicKey));
+    const account = await this.withHorizonFailover((server) => server.loadAccount(accountPublicKey));
 
     return account.balances.some((balance: any) =>
       balance.asset_code === assetCode && balance.asset_issuer === assetIssuer
@@ -284,10 +513,9 @@ export class StellarService {
     const { senderSecret, recipientPublicKey, assetCode, assetIssuer, amount, transactionId } = options;
 
     const senderKeypair = Keypair.fromSecret(senderSecret);
-    const server = this.getHorizonServer();
     const networkPassphrase = this.getPassphrase();
 
-    const senderAccount = await this.retryHorizonRequest(() =>
+    const senderAccount = await this.withHorizonFailover((server) =>
       server.loadAccount(senderKeypair.publicKey()),
     );
 
@@ -337,7 +565,7 @@ export class StellarService {
 
     tx.sign(senderKeypair);
 
-    const response = await this.retryHorizonRequest(() => server.submitTransaction(tx));
+    const response = await this.withHorizonFailover((activeServer) => activeServer.submitTransaction(tx));
 
     logger.info(`Payment submitted: ${response.hash}`, {
       recipient: recipientPublicKey,
@@ -546,7 +774,6 @@ export class StellarService {
   public async submitTransaction(xdr: string): Promise<any> {
     try {
       const passphrase = this.getPassphrase();
-      const server = this.getHorizonServer();
       const tx = TransactionBuilder.fromXDR(xdr, passphrase);
 
       // Ensure it's not a fee-bump transaction itself
@@ -575,7 +802,7 @@ export class StellarService {
         );
       }
 
-      const response = await this.retryHorizonRequest(() => server.submitTransaction(finalTx));
+      const response = await this.withHorizonFailover((server) => server.submitTransaction(finalTx));
       logger.info(`Transaction submitted successfully: ${response.hash}`);
       return response;
     } catch (error: any) {
