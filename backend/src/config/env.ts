@@ -142,6 +142,12 @@ const envSchema = z.object({
   SIGNING_KEY: z.string().optional(),
   ENABLE_KEY_ROTATION_WORKER: z.enum(['true', 'false']).default('false'),
   KEY_ROTATION_WORKER_CRON: z.string().default('0 0 1 * *'),
+  // How long tokens signed by the previous JWT key remain valid (#1580).
+  JWT_ROTATION_GRACE_PERIOD_SECONDS: z
+    .string()
+    .default('86400')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(604800)),
   KYC_PROVIDER: z.enum(['mock', 'persona', 'shufti']).default('mock'),
   KYC_WEBHOOK_SECRET: z.string().optional(),
   PERSONA_API_KEY: z.string().optional(),
