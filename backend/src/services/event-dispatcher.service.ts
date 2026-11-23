@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { randomUUID } from 'crypto';
 import logger from '../utils/logger';
+import { metricsService } from './metrics.service';
 
 /** Interval at which each SSE connection receives a keep-alive comment. */
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -16,6 +17,7 @@ interface SseClient {
   res: Response;
   filters: EventFilter;
   heartbeat: NodeJS.Timeout;
+  cleanup: () => void;
 }
 
 /**
@@ -37,23 +39,38 @@ export class EventDispatcherService {
    */
   public subscribe(res: Response, filters: EventFilter = {}): () => void {
     const id = randomUUID();
+    let cleaned = false;
+
     const heartbeat = setInterval(() => {
       try {
         res.write(': ping\n\n');
       } catch {
-        this.clients.delete(id);
+        this.dropClient(id);
       }
     }, DEFAULT_HEARTBEAT_INTERVAL_MS);
 
-    this.clients.set(id, { id, res, filters, heartbeat });
+    const client: SseClient = { id, res, filters, heartbeat, cleanup: () => undefined };
+
+    const unsubscribe = () => {
+      if (cleaned) return;
+      cleaned = true;
+      clearInterval(heartbeat);
+      this.clients.delete(id);
+      res.removeListener?.('close', unsubscribe);
+      res.removeListener?.('error', unsubscribe);
+      metricsService.decrementSseConnections();
+      logger.debug(`SSE client unsubscribed (${this.clients.size} total)`, { id });
+    };
+
+    client.cleanup = unsubscribe;
+    this.clients.set(id, client);
+    metricsService.incrementSseConnections();
     logger.debug(`SSE client subscribed (${this.clients.size} total)`, { id });
 
-    return () => {
-      clearInterval(heartbeat);
-      if (this.clients.delete(id)) {
-        logger.debug(`SSE client unsubscribed (${this.clients.size} total)`, { id });
-      }
-    };
+    res.once?.('close', unsubscribe);
+    res.once?.('error', unsubscribe);
+
+    return unsubscribe;
   }
 
   /**
@@ -74,9 +91,7 @@ export class EventDispatcherService {
         client.res.write(payload);
         delivered++;
       } catch {
-        // The client socket is no longer writable; drop it so it stops
-        // receiving frames.
-        this.clients.delete(id);
+        this.dropClient(id);
       }
     }
 
@@ -91,7 +106,7 @@ export class EventDispatcherService {
       try {
         client.res.write(': ping\n\n');
       } catch {
-        this.clients.delete(client.id);
+        this.dropClient(client.id);
       }
     }
   }
@@ -101,6 +116,10 @@ export class EventDispatcherService {
    */
   public getSubscriberCount(): number {
     return this.clients.size;
+  }
+
+  private dropClient(id: string): void {
+    this.clients.get(id)?.cleanup();
   }
 
   private matches(filters: EventFilter, event: unknown): boolean {

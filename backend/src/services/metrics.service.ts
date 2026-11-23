@@ -7,6 +7,7 @@ export class MetricsService {
   private httpRequestsTotal: Counter<string>;
   private activeConnections: Gauge<string>;
   private activeWebSockets: Gauge<string>;
+  private activeSseConnections: Gauge<string>;
   private errorCounter: Counter<string>;
   private dbQueryDuration: Histogram<string>;
   private apiVersionGauge: Gauge<string>;
@@ -72,6 +73,13 @@ export class MetricsService {
     this.activeWebSockets = new promClient.Gauge({
       name: 'websocket_active_connections',
       help: 'Number of active WebSocket connections',
+      registers: [this.registry],
+    });
+
+    // Gauge for active Server-Sent Events (SSE) streams
+    this.activeSseConnections = new promClient.Gauge({
+      name: 'sse_active_connections',
+      help: 'Number of active Server-Sent Events connections',
       registers: [this.registry],
     });
 
@@ -310,6 +318,15 @@ export class MetricsService {
 
   decrementWebSocketConnections(): void {
     this.activeWebSockets.dec();
+  }
+
+  /** Track an SSE stream opening (+1) or closing (-1). */
+  incrementSseConnections(): void {
+    this.activeSseConnections.inc();
+  }
+
+  decrementSseConnections(): void {
+    this.activeSseConnections.dec();
   }
 
   /**
