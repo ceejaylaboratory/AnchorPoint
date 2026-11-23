@@ -45,7 +45,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024 },
+  limits: { 
+    fileSize: config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024,
+    files: 2, // Maximum 2 files per request to prevent DoS
+  },
 });
 
 /** Runs `upload.any()`, translating Multer's own errors (e.g. oversized files) into a 400 response. */
@@ -55,6 +58,11 @@ function handleUpload(req: Request, res: Response, next: NextFunction) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({
           error: `File exceeds maximum allowed size of ${config.SEP12_MAX_FILE_SIZE_MB} MB`,
+        });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          error: 'Maximum 2 files allowed per request',
         });
       }
       return res.status(400).json({ error: err.message });

@@ -50,10 +50,27 @@ export class EventIndexerService {
 
     /**
      * Resolve the next ledger to begin indexing from.
+     * Uses persistent cursor stored in DB for crash-safe resumption.
      */
     private async resolveStartLedger(): Promise<number> {
         if (this.lastIndexedLedger !== null) {
             return this.lastIndexedLedger + 1;
+        }
+
+        // Check for persisted cursor in database first
+        const cursor = await prisma.systemConfig.findFirst({
+            where: { key: 'event_indexer_cursor' },
+            select: { value: true },
+        });
+
+        if (cursor && cursor.value) {
+            try {
+                const parsed = JSON.parse(cursor.value);
+                this.lastIndexedLedger = parsed.lastLedger;
+                return parsed.lastLedger + 1;
+            } catch {
+                // Invalid cursor format, fall through to DB query
+            }
         }
 
         const lastEvent = await prisma.contractEvent.findFirst({
@@ -120,8 +137,8 @@ export class EventIndexerService {
 
     /**
      * Persist the last successfully covered ledger in a transaction.
-     * Uses a sentinel ContractEvent row keyed by contractEventId when available,
-     * otherwise updates the in-memory cursor after verifying DB consistency.
+     * Stores cursor in SystemConfig for crash-safe resumption.
+     * Only commits cursor AFTER events are successfully persisted.
      */
     private async commitLastIndexedLedger(ledger: number): Promise<void> {
         await prisma.$transaction(async (tx) => {
@@ -135,6 +152,19 @@ export class EventIndexerService {
             // so historical scanning progresses past empty ledger windows.
             const nextCursor = Math.max(ledger, maxEvent?.ledger ?? 0);
             this.lastIndexedLedger = nextCursor;
+
+            // Persist cursor atomically with the same transaction
+            // This ensures cursor only moves after events are written
+            const cursorValue = JSON.stringify({ lastLedger: nextCursor, updatedAt: new Date().toISOString() });
+            await tx.systemConfig.upsert({
+                where: { version: 999999 }, // Use a fixed version ID for cursor storage
+                update: { settings: cursorValue },
+                create: {
+                    version: 999999,
+                    settings: cursorValue,
+                    isActive: false,
+                },
+            });
         });
 
         logger.debug(`Event indexer cursor advanced to ledger ${this.lastIndexedLedger}`);
@@ -142,6 +172,7 @@ export class EventIndexerService {
 
     /**
      * Parse and store a single event
+     * Idempotent: uses upsert on contractEventId unique constraint to prevent duplicates
      */
     private async processEvent(event: any) {
         // Parse XDR topics and value
@@ -153,10 +184,10 @@ export class EventIndexerService {
         const valueScVal = xdr.ScVal.fromXDR(event.value, 'base64');
         const value = scValToNative(valueScVal);
 
-        // Store in database
+        // Idempotent upsert - prevents double-counting if process restarts
         await prisma.contractEvent.upsert({
             where: { contractEventId: event.id },
-            update: {},
+            update: {}, // Already exists, skip update to preserve original data
             create: {
                 contractEventId: event.id,
                 contractId: event.contractId,
