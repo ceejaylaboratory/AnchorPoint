@@ -30,6 +30,7 @@ import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
 import { sanitizeRequestMiddleware } from './api/middleware/sanitize.middleware';
+import { sanitizationMiddleware } from './api/middleware/sanitization.middleware';
 import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
 import { stellarService } from './services/stellar.service';
@@ -262,6 +263,7 @@ app.use(
   }),
 );
 app.use(express.urlencoded({ extended: true }));
+app.use(sanitizationMiddleware());
 app.use(sanitizeRequestMiddleware);
 
 /**
