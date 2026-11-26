@@ -1,0 +1,67 @@
+# =============================================================================
+# Kubernetes Worker HorizontalPodAutoscaler - Issue #1667
+# =============================================================================
+# Scales the anchorpoint-worker Deployment (deployment.yaml) horizontally
+# during high transaction volume (market volatility, batch settlement runs).
+# Requires metrics-server in the cluster.
+# =============================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: anchorpoint-worker
+  labels:
+    app: anchorpoint
+    component: worker
+    environment: testnet
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: anchorpoint-worker
+  # Never fewer than 3 replicas, never more than 15
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+    # Scale out when average CPU across pods exceeds 70% of requests
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Scale out when average memory across pods exceeds 80% of requests
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    # 5 minute stabilization windows in both directions to avoid thrashing
+    scaleUp:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60   # Add at most 2 pods per minute
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60   # Remove at most 1 pod per minute
+
+# =============================================================================
+# Manual QA Steps:
+# =============================================================================
+# 1. Validate:
+#    kubeval infra/k8s/workers/hpa.yaml
+# 2. Apply:
+#    kubectl apply -f infra/k8s/workers/hpa.yaml -n anchorpoint-testnet
+# 3. Inspect targets and current replicas:
+#    kubectl get hpa anchorpoint-worker -n anchorpoint-testnet
+#    kubectl describe hpa anchorpoint-worker -n anchorpoint-testnet
+# 4. Simulate load and watch scale-up:
+#    kubectl exec -n anchorpoint-testnet deploy/anchorpoint-worker -- sh -c 'yes > /dev/null & sleep 600'
+#    kubectl get hpa anchorpoint-worker -n anchorpoint-testnet -w
+# =============================================================================

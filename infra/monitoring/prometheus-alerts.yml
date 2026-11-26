@@ -57,6 +57,81 @@ groups:
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
 
   # ---------------------------------------------------------------------------
+  # API error rate and latency alerts
+  # These rules catch customer-impacting degradation before a full outage.
+  # ---------------------------------------------------------------------------
+  - name: anchorpoint-api-errors
+    interval: 30s
+    rules:
+      # Fires when more than 1% of HTTP responses are 5xx over a 5 minute window.
+      - alert: HighApiErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+              /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.01
+          and sum(rate(http_requests_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: API 5xx error rate exceeds 1% of total traffic
+          description: >-
+            The ratio of HTTP 5xx responses to total requests has exceeded 1%
+            for more than 5 minutes. Current error ratio is
+            {{ printf "%.2f" (mul 100 (div (sum(rate(http_requests_total{status_code=~\"5..\"}[5m]))) (sum(rate(http_requests_total[5m]))))) }}%.
+            Investigate recent deploys, dependency failures, and upstream errors.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+  # ---------------------------------------------------------------------------
+  # Database and queue latency alerts
+  # ---------------------------------------------------------------------------
+  - name: anchorpoint-database
+    interval: 30s
+    rules:
+      # Fires when P95 database query latency exceeds 250ms over 10 minutes.
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(db_query_duration_seconds_bucket[10m])) by (le)
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          service: anchorpoint-database
+          team: platform
+        annotations:
+          summary: P95 database query latency exceeds 250ms
+          description: >-
+            The 95th percentile database query latency has exceeded 250ms for
+            more than 10 minutes. Check for missing indexes, lock contention,
+            long-running transactions, and connection pool saturation.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Fires when BullMQ contract execution queue delay exceeds 60 seconds.
+      - alert: HighQueueLatency
+        expr: |
+          max(
+            bullmq_queue_waiting_duration_seconds{queue="contract-execution"}
+          ) > 60
+        for: 5m
+        labels:
+          severity: warning
+          service: anchorpoint-worker
+          team: platform
+        annotations:
+          summary: BullMQ contract execution queue delay exceeds 60 seconds
+          description: >-
+            Jobs in the contract-execution queue have been waiting longer than
+            60 seconds. Check worker health, concurrency settings, and downstream
+            dependency latency.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+  # ---------------------------------------------------------------------------
   # TLS certificate lifecycle alerts
   # cert-manager exposes per-certificate expiry timestamps. These rules fire
   # before Let's Encrypt certificates lapse so the on-call can investigate a
@@ -88,6 +163,28 @@ groups:
             why renewal has not occurred.
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/k8s/cert-manager/CERTIFICATE_LIFECYCLE.md
 
+      # Renewal deadline: certificate will expire within 15 days. cert-manager
+      # renews 15 days before expiry, so this indicates renewal has failed.
+      - alert: AnchorPointCertificateRenewalOverdue
+        expr: |
+          (certmanager_certificate_expiration_timestamp_seconds - time())
+            / 86400 < 15
+          and certmanager_certificate_expiration_timestamp_seconds > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: cert-manager
+          team: platform
+        annotations:
+          summary: TLS certificate {{ $labels.name }} renewal is overdue
+          description: >-
+            The certificate "{{ $labels.name }}" in namespace
+            "{{ $labels.namespace }}" expires in
+            {{ printf "%.0f" ((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400) }}
+            days. Automated renewal should have completed by now; check the
+            cert-manager Certificate and Order resources for ACME failures.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/k8s/cert-manager/CERTIFICATE_LIFECYCLE.md
+
       # Critical: certificate will expire within 7 days and is at imminent risk
       # of causing a service outage if renewal continues to fail.
       - alert: AnchorPointCertificateExpiringCritical
@@ -109,6 +206,7 @@ groups:
             days. Immediate action is required to avoid a TLS outage.
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/k8s/cert-manager/CERTIFICATE_LIFECYCLE.md
 
+  # ---------------------------------------------------------------------------
   # ---------------------------------------------------------------------------
   # Public endpoint synthetic probes
   # Blackbox probes against /.well-known/stellar.toml, /health and /api/info
@@ -149,4 +247,129 @@ groups:
             The certificate served on {{ $labels.instance }} expires in
             {{ $value | printf "%.0f" }} days. Check that certificate renewal is
             working.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+  # ---------------------------------------------------------------------------
+  # SEP transaction completion latency alerts (#1600)
+  # These rules fire when end-to-end SEP transaction durations exceed SLA
+  # thresholds, which typically indicates bank partner delays, Horizon
+  # congestion, or stuck worker queues.
+  # ---------------------------------------------------------------------------
+  - name: anchorpoint-sep-transaction-latency
+    interval: 60s
+    rules:
+      # Fires when P95 SEP transaction completion latency exceeds 5 minutes
+      # over a 15-minute evaluation window. Applies across all SEP types and
+      # assets; use label matchers in a silencing rule to scope to a specific
+      # SEP type or asset if needed.
+      - alert: SepTransactionHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(sep_transaction_duration_seconds_bucket[15m])
+            ) by (le, sep_type, asset)
+          ) > 300
+        for: 15m
+        labels:
+          severity: warning
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: >-
+            SEP transaction P95 latency exceeds 5 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 95th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 5 minutes over the last 15 minutes.
+            Current P95 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            Investigate bank partner delays, Horizon RPC congestion, and
+            stuck worker queues in BullMQ.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Fires when P99 latency breaches 15 minutes — a more severe threshold
+      # indicating a large fraction of transactions are stuck.
+      - alert: SepTransactionHighP99Latency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(
+              rate(sep_transaction_duration_seconds_bucket[15m])
+            ) by (le, sep_type, asset)
+          ) > 900
+        for: 15m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: >-
+            SEP transaction P99 latency exceeds 15 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 99th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 15 minutes over the last 15 minutes.
+            Current P99 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            This likely indicates a systemic failure. Page the on-call
+            engineer and check Horizon, the bank partner API, and BullMQ
+            worker health.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+        labels:
+          severity: warning
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+<<<<<<< HEAD
+          summary: TLS certificate for {{ $labels.instance }} expires in less than 14 days
+          description: >-
+            The certificate served on {{ $labels.instance }} expires in
+            {{ $value | printf "%.0f" }} days. Check that certificate renewal is
+            working.
+=======
+          summary: >-
+            SEP transaction P95 latency exceeds 5 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 95th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 5 minutes over the last 15 minutes.
+            Current P95 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            Investigate bank partner delays, Horizon RPC congestion, and
+            stuck worker queues in BullMQ.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Fires when P99 latency breaches 15 minutes — a more severe threshold
+      # indicating a large fraction of transactions are stuck.
+      - alert: SepTransactionHighP99Latency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(
+              rate(sep_transaction_duration_seconds_bucket[15m])
+            ) by (le, sep_type, asset)
+          ) > 900
+        for: 15m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: >-
+            SEP transaction P99 latency exceeds 15 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 99th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 15 minutes over the last 15 minutes.
+            Current P99 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            This likely indicates a systemic failure. Page the on-call
+            engineer and check Horizon, the bank partner API, and BullMQ
+            worker health.
+>>>>>>> origin/main
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md

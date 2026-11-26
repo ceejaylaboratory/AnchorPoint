@@ -1,22 +1,27 @@
-//! DESIGN APPROACH: Option A — Per-action cooldown map
-//! Rationale: By using an ActionType enum within our DataKey, we isolate the storage slots for different actions, preventing collision and ensuring independence.
+use soroban_sdk::{contracttype, Address};
 
-use soroban_sdk::contracttype;
-use crate::rate_limit::ActionType;
-
+/// Storage keys for the AnchorPoint contract.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
+    /// Admin address.
     Admin,
-    Config,
-    
-    /// Tracks the last execution timestamp for rate-limited admin actions.
-    /// Security: Cooldown bypass via action aliasing
-    /// The `ActionType` inner value ensures namespace isolation. Soroban deterministically 
-    /// serializes this enum via XDR, making it mathematically impossible for two different 
-    /// actions to share the same storage key.
-    ActionCooldown(ActionType),
-    
-    /// Tracks the configured cooldown duration for a specific action.
-    ActionCooldownDuration(ActionType),
+    /// A claimable balance entry keyed by its unique id.
+    ClaimableBalance(u64),
+    /// Monotonic counter used to allocate claimable balance ids.
+    BalanceCounter,
+}
+
+/// A claimable balance held in escrow until claimed or clawed back.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimableBalance {
+    /// The address authorised to claim the funds.
+    pub claimant: Address,
+    /// The address that created the balance and may claw it back after expiry.
+    pub creator: Address,
+    /// The amount held in escrow.
+    pub amount: i128,
+    /// Ledger sequence after which the creator may reclaim the funds.
+    pub expiration_ledger: u32,
 }

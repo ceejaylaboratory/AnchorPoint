@@ -30,6 +30,38 @@ const envSchema = z.object({
   // SSL mode for PostgreSQL connections. Defaults to 'disable' for safe local
   // development. Set to 'require' (or stricter) for production deployments.
   DB_SSL_MODE: z.enum(['require', 'disable', 'allow', 'prefer', 'verify-ca', 'verify-full']).default('disable'),
+  // #1588: TCP keepalive and health-check settings used to detect dropped
+  // database sockets and re-establish the Prisma pool automatically.
+  DB_CONNECT_TIMEOUT_SECONDS: z
+    .string()
+    .default('10')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(60)),
+  DB_KEEPALIVE_IDLE_SECONDS: z
+    .string()
+    .default('15')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(600)),
+  DB_KEEPALIVE_INTERVAL_SECONDS: z
+    .string()
+    .default('5')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(120)),
+  DB_KEEPALIVE_COUNT: z
+    .string()
+    .default('3')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(20)),
+  DB_HEALTHCHECK_INTERVAL_MS: z
+    .string()
+    .default('15000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1000).max(300000)),
+  DB_RECONNECT_FAILURE_THRESHOLD: z
+    .string()
+    .default('2')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(10)),
   JWT_SECRET: z.string().min(8, 'JWT_SECRET must be at least 8 characters').default('stellar-anchor-secret'),
   SEP24_INTERACTIVE_URL_JWT_SECRET: z
     .string()
@@ -99,6 +131,22 @@ const envSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   STELLAR_RPC_URLS: z.string().optional(),
+  // Comma-separated standby Horizon endpoints used when the primary returns
+  // gateway errors (502/503/504) or repeated network timeouts (#1587).
+  STELLAR_HORIZON_FALLBACK_URLS: z.string().optional(),
+  // Consecutive failures before an endpoint is marked degraded and traffic is
+  // routed to the next configured endpoint (#1587).
+  STELLAR_FAILOVER_FAILURE_THRESHOLD: z
+    .string()
+    .default('2')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(10)),
+  // How often a degraded primary endpoint is probed for recovery (#1587).
+  STELLAR_FAILOVER_PROBE_INTERVAL_MS: z
+    .string()
+    .default('30000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1000).max(600000)),
   // Docker/container DNS resolution tuning. Defaults to IPv4-first lookups to
   // avoid IPv6 timeout penalties when resolving sibling containers.
   DNS_RESULT_ORDER: z.enum(['ipv4first', 'verbatim', 'ipv6first']).default('ipv4first'),
@@ -142,6 +190,12 @@ const envSchema = z.object({
   SIGNING_KEY: z.string().optional(),
   ENABLE_KEY_ROTATION_WORKER: z.enum(['true', 'false']).default('false'),
   KEY_ROTATION_WORKER_CRON: z.string().default('0 0 1 * *'),
+  // How long tokens signed by the previous JWT key remain valid (#1580).
+  JWT_ROTATION_GRACE_PERIOD_SECONDS: z
+    .string()
+    .default('86400')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(604800)),
   KYC_PROVIDER: z.enum(['mock', 'persona', 'shufti']).default('mock'),
   KYC_WEBHOOK_SECRET: z.string().optional(),
   PERSONA_API_KEY: z.string().optional(),
@@ -217,6 +271,16 @@ const envSchema = z.object({
     .default('900')
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(60).max(86400)),
+  // Redis Sentinel configuration used by the failover monitor.
+  // Comma-separated list of Sentinel endpoints, e.g. "sentinel-1:26379,sentinel-2:26379".
+  REDIS_SENTINELS: z.string().optional(),
+  // Name of the monitored master as registered with Sentinel.
+  REDIS_SENTINEL_MASTER_NAME: z.string().min(1).default('mymaster'),
+  // Toggle Sentinel failover monitoring on/off.
+  REDIS_SENTINEL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((val: string) => val === 'true'),
 }).superRefine((data, ctx) => {
   if (data.KEY_MANAGEMENT_BACKEND === 'aws-kms' && !data.KMS_KEY_ID && !data.AWS_KMS_KEY_ARN) {
     ctx.addIssue({

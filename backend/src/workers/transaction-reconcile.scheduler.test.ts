@@ -2,6 +2,8 @@ import { TransactionReconcileScheduler } from './transaction-reconcile.scheduler
 import { metricsService } from '../services/metrics.service';
 import { stellarService } from '../services/stellar.service';
 import prisma from '../lib/prisma';
+import cron from 'node-cron';
+import { pingHeartbeat } from '../lib/heartbeat';
 
 jest.mock('../lib/prisma', () => ({
   __esModule: true,
@@ -12,6 +14,14 @@ jest.mock('../lib/prisma', () => ({
 
 jest.mock('../services/stellar.service', () => ({
   stellarService: { getHorizonServer: jest.fn() },
+}));
+
+jest.mock('node-cron', () => ({
+  schedule: jest.fn().mockReturnValue({ stop: jest.fn() }),
+}));
+
+jest.mock('../lib/heartbeat', () => ({
+  pingHeartbeat: jest.fn().mockResolvedValue(undefined),
 }));
 
 describe('TransactionReconcileScheduler', () => {
@@ -75,5 +85,40 @@ describe('TransactionReconcileScheduler', () => {
     const where = (prisma.transaction.findMany as jest.Mock).mock.calls[0][0].where;
     expect(where.status).toBe('pending_stellar');
     expect(Date.now() - where.updatedAt.lt.getTime()).toBeGreaterThanOrEqual(5 * 60 * 1000);
+  });
+
+  describe('heartbeat (#1693)', () => {
+    const runScheduledTask = async (): Promise<void> => {
+      const scheduler = new TransactionReconcileScheduler();
+      scheduler.start();
+      const task = (cron.schedule as jest.Mock).mock.calls[0][1] as () => Promise<void>;
+      await task();
+      scheduler.stop();
+    };
+
+    afterEach(() => {
+      delete process.env.HEARTBEAT_TRANSACTION_RECONCILE_URL;
+    });
+
+    it('pings the heartbeat monitor after a successful run', async () => {
+      process.env.HEARTBEAT_TRANSACTION_RECONCILE_URL = 'https://hc-ping.com/reconcile';
+      call.mockResolvedValue({ successful: true });
+
+      await runScheduledTask();
+
+      expect(pingHeartbeat).toHaveBeenCalledWith(
+        'transaction-reconcile',
+        'https://hc-ping.com/reconcile',
+      );
+    });
+
+    it('does not ping when the run fails', async () => {
+      process.env.HEARTBEAT_TRANSACTION_RECONCILE_URL = 'https://hc-ping.com/reconcile';
+      (prisma.transaction.findMany as jest.Mock).mockRejectedValue(new Error('db down'));
+
+      await runScheduledTask();
+
+      expect(pingHeartbeat).not.toHaveBeenCalled();
+    });
   });
 });

@@ -26,10 +26,11 @@ import multisigRouter from './api/routes/multisig.route';
 import sep31Router from './api/routes/sep31.route';
 
 import authRouter from './api/routes/auth.route';
-import { errorHandler } from './api/middleware/error.middleware';
+import { errorHandler } from './api/middleware/error-handler.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
 import { sanitizeRequestMiddleware } from './api/middleware/sanitize.middleware';
+import { sanitizationMiddleware } from './api/middleware/sanitization.middleware';
 import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
 import { stellarService } from './services/stellar.service';
@@ -45,10 +46,11 @@ import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup, verifyDecryptionCapabilityOnStartup, getKeyManagementService } from './lib/key-management.service';
 import queueDashboardRouter, { dashboardQueues } from './api/routes/queue-dashboard.route';
 import prisma from './lib/prisma';
-import { redis } from './lib/redis';
+import { redis, startRedisMonitor, stopRedisMonitor } from './lib/redis';
 import { validateStorageConfigOnStartup } from './services/storage-provider.service';
 import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { dbMetricsScheduler } from './workers/db-metrics.scheduler';
+import { databaseHealthService } from './services/database-health.service';
 import { transactionReconcileScheduler } from './workers/transaction-reconcile.scheduler';
 import { multisigReconcileScheduler } from './workers/multisig-reconcile.scheduler';
 import { initSocket } from './lib/socket';
@@ -141,8 +143,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
   dataRetentionScheduler.stop();
   cleanupWorker.stop();
   dbMetricsScheduler.stop();
+  databaseHealthService.stop();
   transactionReconcileScheduler.stop();
   multisigReconcileScheduler.stop();
+  stellarService.stopFailoverMonitor();
 
   // Stop accepting new HTTP traffic; let in-flight requests finish.
   if (server) {
@@ -167,6 +171,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
       (queue): [string, () => Promise<unknown>] => [`${queue.name} queue`, () => queue.close()]
     ),
     ['Prisma client', () => prisma.$disconnect()],
+    ['Redis failover monitor', () => stopRedisMonitor()],
     ['Redis connection', () => redis.quit()],
     ['OpenTelemetry tracing', () => shutdownTracing()],
   ];
@@ -261,6 +266,7 @@ app.use(
   }),
 );
 app.use(express.urlencoded({ extended: true }));
+app.use(sanitizationMiddleware());
 app.use(sanitizeRequestMiddleware);
 
 /**
@@ -539,7 +545,18 @@ app.get('/health/ready', async (_req: Request, res: Response) => {
     ready = false;
   }
 
-  const payload = { status: ready ? 'UP' : 'DOWN', timestamp: new Date().toISOString(), dependencies };
+  const dbPoolHealth = databaseHealthService.getState();
+  dependencies.databasePool = dbPoolHealth.healthy ? 'UP' : 'DOWN';
+  if (!dbPoolHealth.healthy) {
+    ready = false;
+  }
+
+  const payload = {
+    status: ready ? 'UP' : 'DOWN',
+    timestamp: new Date().toISOString(),
+    dependencies,
+    databasePool: dbPoolHealth,
+  };
   return res.status(ready ? 200 : 503).json(payload);
 });
 
@@ -662,15 +679,23 @@ if (process.env.NODE_ENV !== 'test') {
         server = httpServer.listen(PORT, () => {
           logger.info(`Backend service listening at http://localhost:${PORT}`);
           logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+          if (process.env.NODE_ENV !== 'test') {
+            startRedisMonitor();
+            logger.info('Redis failover monitor enabled');
+          } else {
+            logger.info('Redis failover monitor skipped (test environment)');
+          }
           void notifyServerStarted();
           feeReportScheduler.start();
           uploadExpiryScheduler.start();
           kycExpiryScheduler.start();
           dataRetentionScheduler.start();
           dbMetricsScheduler.start();
+          databaseHealthService.start();
           transactionReconcileScheduler.start();
           multisigReconcileScheduler.start();
           cleanupWorker.start();
+          stellarService.startFailoverMonitor();
         });
       });
   })().catch((error) => {

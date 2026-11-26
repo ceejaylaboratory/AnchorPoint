@@ -5,6 +5,7 @@ import { TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
 import { RedisService } from './redis.service';
 import { redis } from '../lib/redis';
 import { revokeToken as blacklistToken, isTokenRevoked } from './jwt-blacklist.service';
+import { getPreviousJwtSecret } from '../lib/jwt-key-state';
 import logger from '../utils/logger';
 
 import { traceAsync, traceSync, SpanKind } from '../utils/tracing';
@@ -168,7 +169,19 @@ export const verifyToken = async (
         throw new Error('Token has been revoked');
       }
 
-      const decoded = jwt.verify(token, configService.getConfig().JWT_SECRET) as any;
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, configService.getConfig().JWT_SECRET);
+      } catch (primaryError) {
+        // #1580: fall back to the previous signing key only while its grace
+        // window is active. Revocation was already checked above.
+        const previousSecret = await getPreviousJwtSecret();
+        if (!previousSecret) {
+          throw primaryError;
+        }
+        decoded = jwt.verify(token, previousSecret);
+        span.setAttribute('auth.previous_signing_key_used', true);
+      }
       if (!decoded?.sub) throw new Error('Invalid token payload');
       span.setAttribute('auth.subject', decoded.sub);
 

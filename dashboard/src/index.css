@@ -54,6 +54,31 @@
   }
 
   /*
+   * Smooth palette swap. ThemeProvider adds `theme-transition` to <html> only
+   * for the few hundred milliseconds around a user-initiated theme change, so
+   * the first paint never animates and hover/focus transitions elsewhere are
+   * left alone the rest of the time.
+   */
+  html.theme-transition,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition-property: background-color, border-color, color, fill, stroke, outline-color, box-shadow !important;
+    transition-duration: 250ms !important;
+    transition-timing-function: ease-in-out !important;
+    transition-delay: 0ms !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html.theme-transition,
+    html.theme-transition *,
+    html.theme-transition *::before,
+    html.theme-transition *::after {
+      transition: none !important;
+    }
+  }
+
+  /*
    * Visible focus indicators for keyboard navigation (WCAG 2.1 AA).
    * Uses --accent color (violet) for high contrast visibility.
    */

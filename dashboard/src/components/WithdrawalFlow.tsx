@@ -9,6 +9,9 @@ import { AssetDropdown } from './AssetDropdown';
 import type { AssetOption } from './AssetDropdown';
 import type { DepositError } from './DepositErrorAlert';
 import type { FeeEstimate } from '../lib/fees';
+import type { BiometricVerificationResult } from '../lib/webauthn';
+import { getTransactionAmount, requiresBiometricConfirmation } from '../lib/biometricSettings';
+import { BiometricConfirmation } from './BiometricConfirmation';
 import type { UiConfig } from '../types';
 
 export const WITHDRAWAL_STEP_LABELS = ['Select Asset', 'Amount', 'Anchor Webview', 'Confirmation'] as const;
@@ -124,6 +127,8 @@ interface WithdrawalFlowProps {
   onRequestInteractive?: (body: WithdrawInteractiveRequest) => Promise<WithdrawInteractiveResponse>;
   /** Override for fee estimation on the amount step. */
   onEstimateFee?: (params: { assetCode: string; amount: string }) => Promise<FeeEstimate>;
+  /** Override for the WebAuthn ceremony (used in tests / alternate authenticators). */
+  onAuthenticate?: () => Promise<BiometricVerificationResult>;
 }
 
 type FormValues = Record<string, string>;
@@ -140,10 +145,12 @@ export const WithdrawalFlow = ({
   account,
   onRequestInteractive,
   onEstimateFee,
+  onAuthenticate,
 }: WithdrawalFlowProps) => {
   const [step, setStep] = useState(1);
   const [selectedAsset, setSelectedAsset] = useState(WITHDRAWAL_ASSET_OPTIONS[0].code);
   const [formValues, setFormValues] = useState<FormValues | null>(null);
+  const [pendingWithdrawal, setPendingWithdrawal] = useState<FormValues | null>(null);
   const [interactive, setInteractive] = useState<WithdrawInteractiveResponse | null>(null);
   const [error, setError] = useState<DepositError | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -156,9 +163,22 @@ export const WithdrawalFlow = ({
     setError(null);
   };
 
-  const startInteractive = async (values: FormValues) => {
+  const startInteractive = (values: FormValues) => {
     setFormValues(values);
     setError(null);
+
+    // Gate the SEP-24 session (and therefore any signing) on a fresh local
+    // confirmation for high-value withdrawals. Settings are read at submit
+    // time so a toggle change in SettingsView is picked up immediately.
+    if (requiresBiometricConfirmation(getTransactionAmount(values))) {
+      setPendingWithdrawal(values);
+      return;
+    }
+    void submitInteractive(values);
+  };
+
+  const submitInteractive = async (values: FormValues) => {
+    setPendingWithdrawal(null);
     setSubmitting(true);
     const body: WithdrawInteractiveRequest = {
       asset_code: selectedAsset,
@@ -179,6 +199,17 @@ export const WithdrawalFlow = ({
     }
   };
 
+  const cancelConfirmation = () => {
+    setPendingWithdrawal(null);
+    setError({
+      type: 'validation',
+      title: 'Confirmation Cancelled',
+      message: 'Biometric confirmation was cancelled. No withdrawal was submitted.',
+      details: 'Submit the withdrawal again to restart the confirmation.',
+      retryable: true,
+    });
+  };
+
   const handleWebviewDismiss = () => {
     setError({
       type: 'kyc',
@@ -191,6 +222,7 @@ export const WithdrawalFlow = ({
 
   const reset = () => {
     setFormValues(null);
+    setPendingWithdrawal(null);
     setInteractive(null);
     goToStep(1);
   };
@@ -373,6 +405,17 @@ export const WithdrawalFlow = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      <BiometricConfirmation
+        isOpen={pendingWithdrawal !== null}
+        amount={pendingWithdrawal ? String(getTransactionAmount(pendingWithdrawal) ?? '') : ''}
+        assetCode={selectedAsset}
+        authenticate={onAuthenticate}
+        onConfirm={() => {
+          if (pendingWithdrawal) void submitInteractive(pendingWithdrawal);
+        }}
+        onCancel={cancelConfirmation}
+      />
     </div>
   );
 };

@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, Lock, Unlock } from 'lucide-react';
+import { CopyableText } from './CopyableText';
+import { TableShortcutHints } from './TableShortcutHints';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
 
 export type VestingSchedule = {
   id: string;
@@ -321,6 +324,26 @@ export const VestingTimeline = ({ schedules, claimHistory = [], onClaim: onClaim
 };
 
 const ClaimHistoryList = ({ events, tokenSymbol }: { events: VestingClaimEvent[]; tokenSymbol: string }) => {
+  const listRef = useRef<HTMLUListElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= events.length) setSelectedRowIndex(0);
+  }, [events.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = listRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-testid="copyable-text-btn"]')?.click();
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: listRef,
+    rowCount: events.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+  });
+
   if (events.length === 0) {
     return (
       <p className="rounded-lg border border-slate-800/60 px-4 py-2 text-xs text-slate-500" data-testid="vesting-claim-history-empty">
@@ -329,17 +352,37 @@ const ClaimHistoryList = ({ events, tokenSymbol }: { events: VestingClaimEvent[]
     );
   }
   return (
-    <ul className="space-y-1 rounded-lg border border-slate-800/60 p-3" data-testid="vesting-claim-history" aria-label="Claim history">
-      {events.map((event) => (
-        <li key={event.id} className="flex items-center justify-between gap-2 text-xs text-slate-300">
-          <span className="font-mono">{formatAmount(event.amount, tokenSymbol)}</span>
-          <span className="text-slate-500">{formatDate(event.claimedAt)}</span>
-          {event.txHash ? (
-            <span className="truncate font-mono text-slate-500" title={event.txHash}>{event.txHash}</span>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-1">
+      <div className="flex justify-end">
+        <TableShortcutHints copyLabel="transaction hash" />
+      </div>
+      <ul
+        ref={listRef}
+        data-keyboard-table
+        className="space-y-1 rounded-lg border border-slate-800/60 p-3"
+        data-testid="vesting-claim-history"
+        aria-label="Claim history"
+      >
+        {events.map((event, rowIndex) => (
+          <li
+            key={event.id}
+            data-keyboard-row
+            tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+            aria-selected={selectedRowIndex === rowIndex}
+            onFocus={() => setSelectedRowIndex(rowIndex)}
+            className={`flex items-center justify-between gap-2 text-xs text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+              selectedRowIndex === rowIndex ? 'rounded bg-slate-800/40 px-1' : ''
+            }`}
+          >
+            <span className="font-mono">{formatAmount(event.amount, tokenSymbol)}</span>
+            <span className="text-slate-500">{formatDate(event.claimedAt)}</span>
+            {event.txHash ? (
+              <CopyableText value={event.txHash} label="Transaction hash" />
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 };
 

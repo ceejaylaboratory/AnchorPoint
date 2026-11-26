@@ -1,9 +1,19 @@
 #![no_std]
+use ethnum::U256;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env,
+    Vec,
 };
 
+#[allow(deprecated, clippy::all)]
 pub mod snapshot;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    CalculationOverflow = 1,
+}
 
 #[contracttype]
 pub enum DataKey {
@@ -91,8 +101,7 @@ impl StakingContract {
         env.storage()
             .instance()
             .set(&soroban_sdk::symbol_short!("sec_reg"), &registry);
-        env.events()
-            .publish((symbol_short!("sec_reg"),), registry);
+        env.events().publish((symbol_short!("sec_reg"),), registry);
     }
 
     pub fn initialize(
@@ -140,8 +149,10 @@ impl StakingContract {
         env.storage()
             .instance()
             .set(&DataKey::Tiers, &default_tiers);
-        env.events()
-            .publish((symbol_short!("stk_init"),), (admin, token, base_rate, penalty_bps));
+        env.events().publish(
+            (symbol_short!("stk_init"),),
+            (admin, token, base_rate, penalty_bps),
+        );
     }
 
     pub fn set_tiers(env: Env, tiers: Vec<LockTier>) {
@@ -149,8 +160,7 @@ impl StakingContract {
         admin.require_auth();
         assert!(!tiers.is_empty(), "need at least one tier");
         env.storage().instance().set(&DataKey::Tiers, &tiers);
-        env.events()
-            .publish((symbol_short!("tiers"), admin), tiers);
+        env.events().publish((symbol_short!("tiers"), admin), tiers);
     }
 
     pub fn get_tiers(env: Env) -> Vec<LockTier> {
@@ -213,12 +223,18 @@ impl StakingContract {
             .get(&DataKey::BaseRate)
             .unwrap_or(0);
         let emission_bps = Self::current_emission_multiplier_bps(env);
-        base_rate
-            .checked_mul(SECONDS_PER_YEAR as i128)
-            .expect("apr overflow")
-            .checked_mul(emission_bps)
-            .expect("apr overflow")
-            / (REWARD_PRECISION * BPS)
+        let num = U256::from(base_rate.max(0) as u128)
+            .checked_mul(U256::from(SECONDS_PER_YEAR))
+            .and_then(|v| v.checked_mul(U256::from(emission_bps.max(0) as u128)));
+        let denom = U256::from(
+            (REWARD_PRECISION as u128)
+                .checked_mul(BPS as u128)
+                .unwrap_or(100_000_000_000),
+        );
+        match num.and_then(|n| n.checked_div(denom)) {
+            Some(res) if res <= U256::from(i128::MAX as u128) => res.as_i128(),
+            _ => panic!("apr overflow"),
+        }
     }
 
     pub fn set_penalty_recipient(env: Env, recipient: Address) {
@@ -239,7 +255,7 @@ impl StakingContract {
             .publish((symbol_short!("pen_pool"), admin), penalty_pool);
     }
 
-    pub fn stake(env: Env, user: Address, amount: i128, tier_index: u32) {
+    pub fn stake(env: Env, user: Address, amount: i128, tier_index: u32) -> Result<(), Error> {
         if let Some(registry) = env
             .storage()
             .instance()
@@ -271,11 +287,15 @@ impl StakingContract {
         let current_ledger = env.ledger().sequence();
 
         // Accrue on the pre-deposit pool size, then grow the pool.
+        let new_rewards = Self::accrued_rewards(&env, &info, current_time)?;
         info.accumulated_rewards = info
             .accumulated_rewards
-            .checked_add(Self::accrued_rewards(&env, &info, current_time))
-            .expect("rewards overflow");
-        info.amount = info.amount.checked_add(amount).expect("stake overflow");
+            .checked_add(new_rewards)
+            .ok_or(Error::CalculationOverflow)?;
+        info.amount = info
+            .amount
+            .checked_add(amount)
+            .ok_or(Error::CalculationOverflow)?;
         info.last_updated = current_time;
         // Always extend lock from now; take the furthest end date and keep the
         // multiplier in sync with it.
@@ -291,7 +311,7 @@ impl StakingContract {
 
         let total_staked = Self::total_staked(env.clone())
             .checked_add(amount)
-            .expect("total staked overflow");
+            .ok_or(Error::CalculationOverflow)?;
         env.storage()
             .instance()
             .set(&DataKey::TotalStaked, &total_staked);
@@ -311,9 +331,10 @@ impl StakingContract {
             (symbol_short!("staking"), symbol_short!("stake")),
             (user, amount, info.lock_end, info.rate_multiplier),
         );
+        Ok(())
     }
 
-    pub fn withdraw(env: Env, user: Address) {
+    pub fn withdraw(env: Env, user: Address) -> Result<(), Error> {
         if let Some(registry) = env
             .storage()
             .instance()
@@ -334,10 +355,11 @@ impl StakingContract {
         assert!(info.amount > 0, "nothing to withdraw");
 
         let current_time = env.ledger().timestamp();
+        let new_rewards = Self::accrued_rewards(&env, &info, current_time)?;
         let rewards = info
             .accumulated_rewards
-            .checked_add(Self::accrued_rewards(&env, &info, current_time))
-            .expect("rewards overflow");
+            .checked_add(new_rewards)
+            .ok_or(Error::CalculationOverflow)?;
         let mut amount_to_return = info.amount;
         let mut penalty = 0_i128;
 
@@ -345,23 +367,24 @@ impl StakingContract {
             let penalty_bps: i128 = env.storage().instance().get(&DataKey::PenaltyBps).unwrap();
             penalty = amount_to_return
                 .checked_mul(penalty_bps)
-                .expect("penalty overflow")
-                / 10_000;
+                .ok_or(Error::CalculationOverflow)?
+                .checked_div(10_000)
+                .ok_or(Error::CalculationOverflow)?;
             amount_to_return = amount_to_return
                 .checked_sub(penalty)
-                .expect("penalty underflow");
+                .ok_or(Error::CalculationOverflow)?;
         }
 
         let total_to_send = amount_to_return
             .checked_add(rewards)
-            .expect("total overflow");
+            .ok_or(Error::CalculationOverflow)?;
 
         env.storage()
             .persistent()
             .remove(&DataKey::Stake(user.clone()));
         let total_staked = Self::total_staked(env.clone())
             .checked_sub(info.amount)
-            .expect("total staked underflow");
+            .ok_or(Error::CalculationOverflow)?;
         env.storage()
             .instance()
             .set(&DataKey::TotalStaked, &total_staked);
@@ -386,9 +409,10 @@ impl StakingContract {
             (symbol_short!("staking"), symbol_short!("withdraw")),
             (user, amount_to_return, rewards),
         );
+        Ok(())
     }
 
-    pub fn claim_rewards(env: Env, user: Address) {
+    pub fn claim_rewards(env: Env, user: Address) -> Result<(), Error> {
         if let Some(registry) = env
             .storage()
             .instance()
@@ -407,10 +431,11 @@ impl StakingContract {
         user.require_auth();
         let mut info = Self::get_stake_info(env.clone(), user.clone());
         let current_time = env.ledger().timestamp();
+        let new_rewards = Self::accrued_rewards(&env, &info, current_time)?;
         let rewards = info
             .accumulated_rewards
-            .checked_add(Self::accrued_rewards(&env, &info, current_time))
-            .expect("rewards overflow");
+            .checked_add(new_rewards)
+            .ok_or(Error::CalculationOverflow)?;
         assert!(rewards > 0, "no rewards to claim");
 
         info.accumulated_rewards = 0;
@@ -429,6 +454,7 @@ impl StakingContract {
             (symbol_short!("staking"), symbol_short!("claim")),
             (user, rewards),
         );
+        Ok(())
     }
 
     pub fn emergency_withdraw(env: Env, user: Address) -> i128 {
@@ -442,9 +468,14 @@ impl StakingContract {
             .get(&DataKey::PenaltyPool)
             .expect("penalty pool not set");
 
-        // Calculate 10% penalty on principal
-        let penalty = (info.amount * 1000) / 10000; // 10% = 1000 bps
-        let amount_to_user = info.amount - penalty;
+        // Calculate 10% penalty on principal with checked math
+        let penalty = info
+            .amount
+            .checked_mul(1000)
+            .expect("penalty overflow")
+            .checked_div(10000)
+            .expect("penalty overflow");
+        let amount_to_user = info.amount.checked_sub(penalty).expect("penalty underflow");
 
         // Forfeit all accrued rewards (do not pay them out)
         // Rewards are simply lost
@@ -498,17 +529,18 @@ impl StakingContract {
         env.ledger().sequence().saturating_sub(info.stake_ledger) >= info.lock_ledgers
     }
 
-    pub fn pending_rewards(env: Env, user: Address) -> i128 {
+    pub fn pending_rewards(env: Env, user: Address) -> Result<i128, Error> {
         let info = Self::get_stake_info(env.clone(), user.clone());
         let current_time = env.ledger().timestamp();
+        let new_rewards = Self::accrued_rewards(&env, &info, current_time)?;
         info.accumulated_rewards
-            .checked_add(Self::accrued_rewards(&env, &info, current_time))
-            .expect("rewards overflow")
+            .checked_add(new_rewards)
+            .ok_or(Error::CalculationOverflow)
     }
 
     /// Rewards accrued by `info` since its last update, with the dynamic
     /// emission multiplier folded in.
-    fn accrued_rewards(env: &Env, info: &StakeInfo, current_time: u64) -> i128 {
+    fn accrued_rewards(env: &Env, info: &StakeInfo, current_time: u64) -> Result<i128, Error> {
         let base_rate: i128 = env
             .storage()
             .instance()
@@ -516,12 +548,8 @@ impl StakingContract {
             .unwrap_or(0);
         let params = Self::emission_params(env.clone());
         let total_staked = Self::total_staked(env.clone());
-        Self::calc_new_rewards(
-            base_rate,
-            Self::emission_multiplier_bps(&params, total_staked),
-            info,
-            current_time,
-        )
+        let emission_bps = Self::emission_multiplier_bps(&params, total_staked);
+        Self::calc_new_rewards(base_rate, emission_bps, info, current_time)
     }
 
     /// Pure inverse scaling curve, in bps (10_000 = 1x).
@@ -534,39 +562,101 @@ impl StakingContract {
         if params.target_capacity <= 0 {
             return BPS;
         }
-        let utilisation_bps = total_staked
-            .max(0)
-            .checked_mul(BPS)
-            .expect("utilisation overflow")
-            / params.target_capacity;
-        let raw_bps = (2 * BPS) - utilisation_bps;
+        let total_staked_u256 = U256::from(total_staked.max(0) as u128);
+        let bps_u256 = U256::from(BPS as u128);
+        let target_u256 = U256::from(params.target_capacity.max(1) as u128);
+
+        let utilisation_bps = total_staked_u256
+            .checked_mul(bps_u256)
+            .and_then(|v| v.checked_div(target_u256))
+            .map(|u| {
+                if u > U256::from(i128::MAX as u128) {
+                    i128::MAX
+                } else {
+                    u.as_i128()
+                }
+            })
+            .unwrap_or(i128::MAX);
+
+        let raw_bps = (2 * BPS).saturating_sub(utilisation_bps);
         let floor = params.min_multiplier_bps.max(0);
         let ceiling = params.max_multiplier_bps.max(floor);
         raw_bps.max(floor).min(ceiling)
     }
 
-    fn calc_new_rewards(
+    pub fn calc_new_rewards(
         base_rate: i128,
         emission_bps: i128,
         info: &StakeInfo,
         current_time: u64,
-    ) -> i128 {
+    ) -> Result<i128, Error> {
         if info.amount == 0 || info.last_updated == 0 || current_time <= info.last_updated {
-            return 0;
+            return Ok(0);
         }
-        let seconds = (current_time - info.last_updated) as i128;
-        // rate_multiplier: 100 = 1x, 150 = 1.5x, 200 = 2x
-        // emission_bps: 10_000 = 1x, dynamic and inversely tied to pool usage
-        info.amount
-            .checked_mul(base_rate)
-            .expect("reward overflow")
-            .checked_mul(seconds)
-            .expect("reward overflow")
-            .checked_mul(info.rate_multiplier)
-            .expect("reward overflow")
-            .checked_mul(emission_bps)
-            .expect("reward overflow")
-            / (REWARD_PRECISION * 100 * BPS)
+        if info.amount < 0 || base_rate < 0 || info.rate_multiplier < 0 || emission_bps < 0 {
+            return Err(Error::CalculationOverflow);
+        }
+
+        let seconds = current_time
+            .checked_sub(info.last_updated)
+            .ok_or(Error::CalculationOverflow)?;
+
+        let amount_u256 = U256::from(info.amount as u128);
+        let rate_u256 = U256::from(base_rate as u128);
+        let seconds_u256 = U256::from(seconds);
+        let mult_u256 = U256::from(info.rate_multiplier as u128);
+        let emission_u256 = U256::from(emission_bps as u128);
+
+        let numerator = amount_u256
+            .checked_mul(rate_u256)
+            .ok_or(Error::CalculationOverflow)?
+            .checked_mul(seconds_u256)
+            .ok_or(Error::CalculationOverflow)?
+            .checked_mul(mult_u256)
+            .ok_or(Error::CalculationOverflow)?
+            .checked_mul(emission_u256)
+            .ok_or(Error::CalculationOverflow)?;
+
+        let denominator = U256::from(
+            (REWARD_PRECISION as u128)
+                .checked_mul(100)
+                .ok_or(Error::CalculationOverflow)?
+                .checked_mul(BPS as u128)
+                .ok_or(Error::CalculationOverflow)?,
+        );
+
+        let quotient = numerator
+            .checked_div(denominator)
+            .ok_or(Error::CalculationOverflow)?;
+
+        if quotient > U256::from(i128::MAX as u128) {
+            return Err(Error::CalculationOverflow);
+        }
+
+        Ok(quotient.as_i128())
+    }
+
+    /// Pure standalone reward calculation using 256-bit fixed-point arithmetic.
+    pub fn calculate_rewards(
+        amount: i128,
+        rate: i128,
+        elapsed_seconds: u64,
+        rate_multiplier: i128,
+        emission_bps: i128,
+    ) -> Result<i128, Error> {
+        let info = StakeInfo {
+            amount,
+            last_updated: 1,
+            accumulated_rewards: 0,
+            lock_end: 0,
+            rate_multiplier,
+            stake_ledger: 0,
+            lock_ledgers: 0,
+        };
+        let current_time = 1u64
+            .checked_add(elapsed_seconds)
+            .ok_or(Error::CalculationOverflow)?;
+        Self::calc_new_rewards(rate, emission_bps, &info, current_time)
     }
 }
 
@@ -642,6 +732,10 @@ mod tests {
             &env,
             LockTier {
                 lock_seconds: 3600,
+                rate_multiplier: 100,
+            },
+            LockTier {
+                lock_seconds: 7200,
                 rate_multiplier: 100,
             },
         ];
@@ -1016,6 +1110,8 @@ mod tests {
         let (env, client, _admin, token_id) = setup();
         let a = Address::generate(&env);
         let b = Address::generate(&env);
+        let penalty_recipient = Address::generate(&env);
+        client.set_penalty_recipient(&penalty_recipient);
         mint(&env, &token_id, &a, 10_000);
         mint(&env, &token_id, &b, 10_000);
 
@@ -1087,8 +1183,8 @@ mod tests {
         client.stake(&user, &1000, &0);
         env.ledger().set_timestamp(env.ledger().timestamp() + 1000);
 
-        // rewards = (1000 * 1000 * 1000) / 10_000_000 = 100
-        assert_eq!(client.pending_rewards(&user), 100);
+        // rewards = (1000 * 1000 * 1000 * 100 * 20_000) / 10^13 = 200 (2x emission multiplier on thin pool)
+        assert_eq!(client.pending_rewards(&user), 200);
     }
 
     #[test]
@@ -1102,10 +1198,10 @@ mod tests {
         env.ledger().set_timestamp(env.ledger().timestamp() + 10000);
         client.stake(&user, &500, &0);
 
-        // Rewards accrued by the first stake over 10000s must be banked into
-        // accumulated_rewards: (1000 * 1000 * 10000) / 10_000_000 = 1000
+        // Rewards accrued by the first stake over 10000s:
+        // (1000 * 1000 * 10000 * 100 * 20_000) / 10^13 = 2000
         let info = client.get_stake_info(&user);
-        assert_eq!(info.accumulated_rewards, 1000);
+        assert_eq!(info.accumulated_rewards, 2000);
     }
 
     #[test]
@@ -1155,12 +1251,12 @@ mod tests {
         env.ledger().set_timestamp(lock_end);
         env.ledger()
             .set_sequence_number(env.ledger().sequence() + 3600 / 5);
-        stellar_asset_client.mint(&client.address, &400);
+        stellar_asset_client.mint(&client.address, &800);
 
         client.withdraw(&user);
 
-        // Full principal + rewards (1000 * 1000 * 3600 / 10_000_000 = 360)
-        assert_eq!(token_client.balance(&user), 9000 + 1000 + 360);
+        // Full principal + rewards (1000 * 1000 * 3600 * 100 * 20_000 / 10^13 = 720)
+        assert_eq!(token_client.balance(&user), 9000 + 1000 + 720);
     }
 
     #[test]
@@ -1248,5 +1344,92 @@ mod tests {
 
         client.set_penalty_pool(&penalty_pool);
         client.emergency_withdraw(&user);
+    }
+
+    // ── Issue #1636: Safe fixed-point reward calculation unit tests ─────────
+
+    #[test]
+    fn test_standard_reward_calculation_regression() {
+        let (env, client, _admin, token_id) = setup();
+        let user = Address::generate(&env);
+        mint(&env, &token_id, &user, 100_000);
+        fund_rewards(&env, &client, &token_id, 100_000);
+
+        client.stake(&user, &10_000, &0);
+        let elapsed = 1000u64;
+        env.ledger().set_timestamp(START_TIME + elapsed);
+
+        // Pending rewards computed with U256 matches exact formula
+        let multiplier = client.current_emission_multiplier_bps();
+        let expected = expected_rewards(10_000, elapsed as i128, multiplier);
+        assert_eq!(client.pending_rewards(&user), expected);
+        assert_eq!(client.pending_rewards(&user), 1_999);
+    }
+
+    #[test]
+    fn test_ten_year_lockup_overflow_immunity() {
+        let (_env, client, _admin, _token_id) = setup();
+
+        // 10 years in seconds: 10 * 365 * 24 * 3600 = 315_360_000
+        let ten_years = 315_360_000u64;
+        let large_amount: i128 = 1_000_000_000_000_000_000; // 10^18 stroops
+        let rate_multiplier: i128 = 200; // 2x multiplier
+        let emission_bps: i128 = 20_000; // 2x dynamic emission
+
+        // With a high rate of 10_000_000 (1 token/sec):
+        // Naive i128: 10^18 * 10^7 * 3.1536*10^8 * 200 * 20_000 = 1.26144 * 10^40 > i128::MAX (1.7 * 10^38)
+        // which previously caused a panic on intermediate overflow.
+        // With U256 intermediate math, this calculates accurately without panicking.
+        let high_rate: i128 = 10_000_000;
+        let res = client.calculate_rewards(
+            &large_amount,
+            &high_rate,
+            &ten_years,
+            &rate_multiplier,
+            &emission_bps,
+        );
+
+        // Expected = 1.26144 * 10^40 / 10^13 = 1.26144 * 10^27
+        let expected: i128 = 1_261_440_000_000_000_000_000_000_000;
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn test_boundary_breach_calculation_overflow() {
+        let (_env, client, _admin, _token_id) = setup();
+
+        // When inputs are so large that the final reward quotient exceeds i128::MAX
+        // or intermediate calculation exceeds U256 limit, Error::CalculationOverflow is returned
+        // gracefully without panicking.
+        let ten_years = 315_360_000u64;
+        let res = client.try_calculate_rewards(&i128::MAX, &i128::MAX, &ten_years, &200, &20_000);
+        assert_eq!(res, Err(Ok(Error::CalculationOverflow)));
+    }
+
+    #[test]
+    fn test_small_principal_short_duration_no_premature_truncation() {
+        let (_env, client, _admin, _token_id) = setup();
+
+        // 1 stroop principal over short durations.
+        // Operation reordering / 256-bit fixed-point ensures multiplications occur
+        // before division, so small rewards do not prematurely round down to zero
+        // during intermediate steps.
+        let amount = 1_i128;
+        let rate = 10_000_000_i128; // 1 reward token per second (at 7 decimals)
+        let elapsed_seconds = 10_000u64; // 10,000s
+        let rate_multiplier = 100_i128; // 1x
+        let emission_bps = 10_000_i128; // 1x
+
+        // numerator = 1 * 10_000_000 * 10_000 * 100 * 10_000 = 10^17
+        // denominator = 10_000_000 * 100 * 10_000 = 10^13
+        // reward = 10^17 / 10^13 = 10,000 stroops
+        let res = client.calculate_rewards(
+            &amount,
+            &rate,
+            &elapsed_seconds,
+            &rate_multiplier,
+            &emission_bps,
+        );
+        assert_eq!(res, 10_000);
     }
 }

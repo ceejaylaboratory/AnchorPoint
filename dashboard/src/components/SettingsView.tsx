@@ -1,17 +1,19 @@
-import React from 'react';
-import { Globe, Monitor, Moon, Sun } from 'lucide-react';
+import React, { useId, useState } from 'react';
+import { Fingerprint, Globe, Lock, Monitor, Moon, Sun } from 'lucide-react';
 import type { UiConfig } from '../types';
+import { loadBiometricSettings, sanitizeThreshold, saveBiometricSettings } from '../lib/biometricSettings';
 import { RequirementList } from './RequirementList';
 import AdminControls from './AdminControls';
 import { PauseControlsWidget } from './AdminWidgets';
 import { THEME_PREFERENCES, useTheme } from '../contexts/ThemeContext';
 import type { ThemePreference } from '../contexts/ThemeContext';
 import { useTranslation, type Language } from '../i18n/config';
+import { AUTOLOCK_OPTIONS, useAutoLockSetting } from '../lib/sessionLock';
 
 const THEME_OPTIONS: Record<ThemePreference, { label: string; hint: string; Icon: typeof Sun }> = {
   light: { label: 'Light', hint: 'High-contrast light palette', Icon: Sun },
   dark: { label: 'Dark', hint: 'Default dark palette', Icon: Moon },
-  system: { label: 'System', hint: 'Follow the operating system', Icon: Monitor },
+  system: { label: 'System Default', hint: 'Follow the operating system', Icon: Monitor },
 };
 
 /** Persistent light / dark / system selector backed by ThemeContext. */
@@ -122,7 +124,127 @@ export const LanguageSelector: React.FC = () => {
   );
 };
 
-interface SettingsViewProps {
+/** Inactivity auto-lock duration (5 / 15 / 30 minutes or Never). */
+export const AutoLockSettingsSection: React.FC = () => {
+  const [setting, setSetting] = useAutoLockSetting();
+
+  return (
+    <div className="glass-card p-8" data-testid="autolock-settings">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-bold">Auto-lock</h3>
+          <p className="mt-1 text-sm text-slate-400">
+            Lock the session and disconnect your wallet after a period of inactivity. You get a
+            60-second warning first.
+          </p>
+        </div>
+        <Lock size={20} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+      </div>
+      <div
+        role="radiogroup"
+        aria-label="Auto-lock after inactivity"
+        className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"
+      >
+        {AUTOLOCK_OPTIONS.map(({ value, label }) => {
+          const selected = setting === value;
+          return (
+            <button
+              key={String(value)}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => setSetting(value)}
+              className={`action-button rounded-xl border px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
+                selected
+                  ? 'border-primary bg-primary/10 text-slate-100'
+                  : 'border-slate-600 text-slate-400 hover:border-slate-500'
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {setting === 'never' ? (
+        <p className="mt-3 text-xs text-amber-400" role="note">
+          Your session will stay unlocked until you sign out. Avoid this on shared computers.
+        </p>
+      ) : null}
+    </div>
+  );
+};
+
+/** Opt-in security setting shared by the deposit and withdrawal flows. */
+export const BiometricSettingsSection: React.FC = () => {
+  const { t } = useTranslation();
+  const [settings, setSettings] = useState(loadBiometricSettings);
+  const [thresholdDraft, setThresholdDraft] = useState(() => String(settings.thresholdUsd));
+  const thresholdId = useId();
+
+  const update = (next: { enabled: boolean; thresholdUsd: number }) => {
+    setSettings(next);
+    saveBiometricSettings(next);
+  };
+
+  const commitThreshold = () => {
+    const thresholdUsd = sanitizeThreshold(thresholdDraft);
+    setThresholdDraft(String(thresholdUsd));
+    update({ ...settings, thresholdUsd });
+  };
+
+  return (
+    <div className="glass-card p-8" data-testid="biometric-settings">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-bold">{t('biometric.settingsTitle')}</h3>
+          <p className="mt-1 text-sm text-slate-400">{t('biometric.settingsDescription')}</p>
+        </div>
+        <Fingerprint size={20} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+      </div>
+
+      <div className="mt-5 flex items-center justify-between gap-4">
+        <span className="text-sm font-medium text-slate-300">{t('biometric.toggle')}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-label={t('biometric.toggle')}
+          aria-checked={settings.enabled}
+          onClick={() => update({ ...settings, enabled: !settings.enabled })}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
+            settings.enabled ? 'bg-primary' : 'bg-slate-700'
+          }`}
+        >
+          <span
+            aria-hidden="true"
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-primary-foreground transition-transform ${
+              settings.enabled ? 'translate-x-5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-1.5">
+        <label htmlFor={thresholdId} className="block text-sm font-medium text-slate-300">
+          {t('biometric.thresholdLabel')}
+        </label>
+        <input
+          id={thresholdId}
+          type="number"
+          min={1}
+          step="0.01"
+          inputMode="decimal"
+          value={thresholdDraft}
+          onChange={(event) => setThresholdDraft(event.target.value)}
+          onBlur={commitThreshold}
+          className="input-field w-full text-sm"
+        />
+        <p className="text-xs text-slate-400">{t('biometric.thresholdHint')}</p>
+      </div>
+    </div>
+  );
+};
+
+export interface SettingsViewProps {
   uiConfig: UiConfig;
   apiBaseUrl: string;
 }
@@ -135,6 +257,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({ uiConfig, apiBaseUrl }) => 
       <div className="space-y-6">
         <ThemeSelector />
         <LanguageSelector />
+        <BiometricSettingsSection />
+        <AutoLockSettingsSection />
         <div className="glass-card p-8">
           <h3 className="mb-4 text-xl font-bold">{t('settings.branding')}</h3>
           <div className="space-y-6">

@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, Bell, Check, Clock, Filter, Info, RefreshCw, Settings, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { CopyableText } from './CopyableText';
+import { TableShortcutHints } from './TableShortcutHints';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
 
 export interface Notification {
   id: string;
@@ -433,6 +436,26 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
       ? notifications
       : notifications.filter((n) => n.status === filter);
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= filteredNotifications.length) setSelectedRowIndex(0);
+  }, [filteredNotifications.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = listRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('[data-testid="copyable-text-btn"]')?.click();
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: listRef,
+    rowCount: filteredNotifications.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+  });
+
   const stats = {
     total: notifications.length,
     sent: notifications.filter((n) => n.status === 'SENT').length,
@@ -565,44 +588,55 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             </p>
           </div>
         ) : (
-          <div data-testid="notification-list" className="divide-y divide-slate-600">
-            {filteredNotifications.map((notification, index) => (
-              <motion.div
-                key={notification.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-                className="p-6 transition-colors hover:bg-slate-800/30"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="mt-1">{getStatusIcon(notification.status)}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-4">
-                      <p className="text-sm text-slate-200">{notification.message}</p>
-                      {getStatusBadge(notification.status)}
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                      <span className="flex items-center gap-1">
-                        <span className="font-medium">Type:</span>
-                        <span className="capitalize">{notification.type.toLowerCase()}</span>
-                      </span>
-                      {notification.transactionId && (
-                        <>
-                          <span>•</span>
-                          <span className="flex items-center gap-1">
-                            <span className="font-medium">Transaction:</span>
-                            <span className="font-mono">{notification.transactionId.slice(0, 8)}...</span>
-                          </span>
-                        </>
-                      )}
-                      <span>•</span>
-                      <span>{formatTimestamp(notification.createdAt)}</span>
+          <>
+            <div className="flex justify-end px-4 pt-3">
+              <TableShortcutHints copyLabel="transaction ID" />
+            </div>
+            <div ref={listRef} data-keyboard-table data-testid="notification-list" className="divide-y divide-slate-600">
+              {filteredNotifications.map((notification, index) => (
+                <motion.div
+                  key={notification.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  data-keyboard-row
+                  tabIndex={selectedRowIndex === index ? 0 : -1}
+                  aria-selected={selectedRowIndex === index}
+                  onFocus={() => setSelectedRowIndex(index)}
+                  className={`p-6 transition-colors hover:bg-slate-800/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50 ${
+                    selectedRowIndex === index ? 'bg-slate-800/20' : ''
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="mt-1">{getStatusIcon(notification.status)}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-4">
+                        <p className="text-sm text-slate-200">{notification.message}</p>
+                        {getStatusBadge(notification.status)}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                        <span className="flex items-center gap-1">
+                          <span className="font-medium">Type:</span>
+                          <span className="capitalize">{notification.type.toLowerCase()}</span>
+                        </span>
+                        {notification.transactionId && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <span className="font-medium">Transaction:</span>
+                              <CopyableText value={notification.transactionId} label="Transaction ID" />
+                            </span>
+                          </>
+                        )}
+                        <span>•</span>
+                        <span>{formatTimestamp(notification.createdAt)}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+                </motion.div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>

@@ -21,7 +21,16 @@ jobs:
         with:
           components: clippy
 
+      # Caches ~/.cargo/registry, ~/.cargo/git and both workspaces' target/
+      # dirs. The key hashes every Cargo.toml/Cargo.lock and the toolchain, so
+      # dependency updates invalidate it; unused build artifacts are pruned
+      # before the cache is saved. See contracts/README.md.
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            contracts -> target
+          cache-on-failure: true
 
       - name: Clippy
         run: cargo clippy -p anchorpoint-utils -p anchorpoint-security-registry -p event-hub --all-targets --all-features -- -D warnings
@@ -87,7 +96,16 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Caches ~/.cargo/registry, ~/.cargo/git and both workspaces' target/
+      # dirs. The key hashes every Cargo.toml/Cargo.lock and the toolchain, so
+      # dependency updates invalidate it; unused build artifacts are pruned
+      # before the cache is saved. See contracts/README.md.
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            contracts -> target
+          cache-on-failure: true
 
       - uses: taiki-e/install-action@v2
         with:
@@ -99,6 +117,72 @@ jobs:
       - name: Mutation test token and staking contracts
         run: cargo mutants --config mutants.toml -p sep41-token -p staking -j 2
 
-      - name: Mutation test liquid staking contract
+  contracts-mutation-testing:
+    name: Contracts mutation testing (cargo-mutants)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    defaults:
+      run:
         working-directory: contracts
-        run: cargo mutants --config mutants.toml -p liquid_staking --in-place
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: contracts
+
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: cargo-mutants
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config gcc
+
+      # Mutates the crates listed in contracts/mutants.toml (anchorpoint,
+      # staking, swap, governance, liquid_staking). Exit code 2 (missed
+      # mutants) and 3 (timeouts) are left to the kill-rate gate below; any
+      # other non-zero exit is a build or usage failure.
+      - name: Mutation test contracts workspace
+        run: |
+          set +e
+          cargo mutants --config mutants.toml --workspace --in-place
+          status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$status" -ne 3 ]; then
+            echo "::error::cargo-mutants failed with exit code $status"
+            exit "$status"
+          fi
+
+      # Killed = caught + timed out; unviable mutants (do not compile) are not
+      # counted.
+      - name: Enforce mutation kill rate (>= 85%)
+        run: |
+          caught=$(jq '.caught' mutants.out/outcomes.json)
+          missed=$(jq '.missed' mutants.out/outcomes.json)
+          timeout=$(jq '.timeout' mutants.out/outcomes.json)
+          viable=$((caught + missed + timeout))
+          if [ "$viable" -eq 0 ]; then
+            echo "::error::cargo-mutants produced no viable mutants"
+            exit 1
+          fi
+          rate=$(( (caught + timeout) * 100 / viable ))
+          echo "Mutation kill rate: ${rate}% (caught=$caught timeout=$timeout missed=$missed)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$rate" -lt 85 ]; then
+            echo "::error::Mutation kill rate ${rate}% is below 85%. Missed mutants are listed in mutants.out/missed.txt."
+            exit 1
+          fi
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-mutants-report
+          path: contracts/mutants.out/
+          if-no-files-found: warn
+          retention-days: 30

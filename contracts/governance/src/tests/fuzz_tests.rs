@@ -3,9 +3,9 @@
 
 #![cfg(test)]
 
+use crate::ProposalMath;
 use proptest::prelude::*;
 use std::format;
-use crate::ProposalMath;
 
 proptest! {
     #[test]
@@ -16,7 +16,7 @@ proptest! {
         // We test the underlying math functions directly for arithmetic overflows.
         // The implementation MUST use checked_add, otherwise this test will panic and fail.
         let result = ProposalMath::calculate_total_weight(weight_1, weight_2);
-        
+
         if weight_1.checked_add(weight_2).is_none() {
             prop_assert!(result.is_err(), "Silent overflow detected! Expected an error.");
         } else {
@@ -31,14 +31,14 @@ proptest! {
         quorum_basis_points in 0u32..=20000u32 // 0% to 200%
     ) {
         let required = ProposalMath::calculate_quorum(total_supply, quorum_basis_points);
-        
+
         if quorum_basis_points == 0 {
             prop_assert_eq!(required.unwrap(), 0);
         } else if quorum_basis_points > 10000 {
             prop_assert!(required.is_err(), "Quorum > 100% should be rejected.");
         } else {
             prop_assert!(required.is_ok());
-            // Verifies the underlying `(total * bps) / 10000` math doesn't overflow internally 
+            // Verifies the underlying `(total * bps) / 10000` math doesn't overflow internally
             // when total_supply is near u64::MAX. Requires u128 casting internally.
         }
     }
