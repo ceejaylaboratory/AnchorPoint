@@ -10,6 +10,7 @@ use ethnum::U256;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SwapError {
     SlippageExceeded = 1,
+    InvariantViolation = 2,
 }
 
 /// Fetch the decimal precision of a token contract dynamically.
@@ -272,6 +273,64 @@ impl MultiAssetSwap {
         let denominator = 1u128 << 96;
         (numerator.checked_div(denominator).unwrap_or(0)) as i128
     }
+
+    /// Virtual reserves of the active liquidity at `sqrt_price_x96`:
+    /// reserve_a = L * 2^96 / sqrtP, reserve_b = L * sqrtP / 2^96.
+    fn virtual_reserves(liquidity: i128, sqrt_price_x96: u128) -> (U256, U256) {
+        if liquidity <= 0 || sqrt_price_x96 == 0 {
+            return (U256::from(0_u8), U256::from(0_u8));
+        }
+        let q96 = U256::from(1_u128 << 96);
+        let liquidity = U256::from(liquidity as u128);
+        let sqrt_price = U256::from(sqrt_price_x96);
+        let reserve_a = liquidity.checked_mul(q96).expect("invariant overflow") / sqrt_price;
+        let reserve_b = liquidity.checked_mul(sqrt_price).expect("invariant overflow") / q96;
+        (reserve_a, reserve_b)
+    }
+
+    /// Constant product k = reserve_a * reserve_b.
+    fn pool_k(reserve_a: U256, reserve_b: U256) -> U256 {
+        reserve_a.checked_mul(reserve_b).expect("invariant overflow")
+    }
+
+    /// k of the active liquidity at `sqrt_price_x96`.
+    fn liquidity_k(liquidity: i128, sqrt_price_x96: u128) -> U256 {
+        let (reserve_a, reserve_b) = Self::virtual_reserves(liquidity, sqrt_price_x96);
+        Self::pool_k(reserve_a, reserve_b)
+    }
+
+    /// k before and after a swap. The fee stays in the pool, so the gross
+    /// input (fee included) is added to the input-side reserve. An output that
+    /// exceeds the output-side reserve yields new_k = 0.
+    fn swap_k(
+        liquidity: i128,
+        sqrt_price_x96: u128,
+        zero_for_one: bool,
+        gross_amount_in: i128,
+        amount_out: i128,
+    ) -> (U256, U256) {
+        let (reserve_a, reserve_b) = Self::virtual_reserves(liquidity, sqrt_price_x96);
+        let old_k = Self::pool_k(reserve_a, reserve_b);
+        let amount_in = U256::from(gross_amount_in.max(0) as u128);
+        let amount_out = U256::from(amount_out.max(0) as u128);
+        let (new_a, new_b) = if zero_for_one {
+            (reserve_a.checked_add(amount_in), reserve_b.checked_sub(amount_out))
+        } else {
+            (reserve_a.checked_sub(amount_out), reserve_b.checked_add(amount_in))
+        };
+        let new_k = match (new_a, new_b) {
+            (Some(a), Some(b)) => Self::pool_k(a, b),
+            _ => U256::from(0_u8),
+        };
+        (old_k, new_k)
+    }
+
+    /// Post-condition for every pool mutation: k must not decrease.
+    fn assert_invariant(env: &Env, old_k: U256, new_k: U256) {
+        if new_k < old_k {
+            panic_with_error!(env, SwapError::InvariantViolation);
+        }
+    }
 }
 
 #[contractimpl]
@@ -454,10 +513,19 @@ impl MultiAssetSwap {
         
         // Update pool liquidity if current price is within range
         let current_tick: i32 = env.storage().instance().get(&DataKey::CurrentTick).expect("not initialized");
+        let liquidity_before: i128 = env.storage().instance().get(&DataKey::CurrentLiquidity).unwrap_or(0);
         if tick_lower <= current_tick && current_tick < tick_upper {
             let current_liquidity: i128 = env.storage().instance().get(&DataKey::CurrentLiquidity).unwrap_or(0);
             env.storage().instance().set(&DataKey::CurrentLiquidity, &(current_liquidity + liquidity));
         }
+        
+        // Invariant: adding liquidity must not decrease k at the current price.
+        let liquidity_after: i128 = env.storage().instance().get(&DataKey::CurrentLiquidity).unwrap_or(0);
+        Self::assert_invariant(
+            &env,
+            Self::liquidity_k(liquidity_before, current_sqrt_price_x96),
+            Self::liquidity_k(liquidity_after, current_sqrt_price_x96),
+        );
         
         // Topic: event name only; recipient + tick range + amounts in data.
         env.events().publish((symbol_short!("mint"),), (recipient, tick_lower, tick_upper, liquidity, amount0, amount1));
@@ -614,6 +682,7 @@ impl MultiAssetSwap {
         if current_liquidity == 0 {
             panic!("insufficient liquidity");
         }
+        let sqrt_price_before = current_sqrt_price_x96;
         let (next_sqrt_price, amount_out, amount_in_used) = SwapMath::compute_swap_step_values(
             current_sqrt_price_x96,
             sqrt_price_limit_x96,
@@ -630,6 +699,18 @@ impl MultiAssetSwap {
             })
             .expect("swap input overflow")
             / (FEE_DENOMINATOR - fee_bps) as i128;
+
+        // Invariant: k over the active liquidity's virtual reserves must not
+        // decrease after the trade, with the collected fee counted as input.
+        let (old_k, new_k) = Self::swap_k(
+            current_liquidity,
+            sqrt_price_before,
+            zero_for_one,
+            gross_amount_used,
+            amount_out,
+        );
+        Self::assert_invariant(&env, old_k, new_k);
+
         let unused_input = amount_in - gross_amount_used;
         if unused_input > 0 {
             token::Client::new(&env, &token_in).transfer(
@@ -818,10 +899,22 @@ impl MultiAssetSwap {
         Self::update_tick(&env, tick_upper, -amount, false);
         
         // Update pool liquidity if current price is within range
-        if tick_lower <= current_tick && current_tick < tick_upper {
+        let liquidity_before: i128 = env.storage().instance().get(&DataKey::CurrentLiquidity).unwrap_or(0);
+        let in_range = tick_lower <= current_tick && current_tick < tick_upper;
+        if in_range {
             let current_liquidity: i128 = env.storage().instance().get(&DataKey::CurrentLiquidity).unwrap_or(0);
             env.storage().instance().set(&DataKey::CurrentLiquidity, &(current_liquidity - amount));
         }
+        
+        // Invariant: removing liquidity may only lower k by the burned
+        // liquidity's share; the remaining pool must keep at least that k.
+        let expected_liquidity = if in_range { liquidity_before - amount } else { liquidity_before };
+        let liquidity_after: i128 = env.storage().instance().get(&DataKey::CurrentLiquidity).unwrap_or(0);
+        Self::assert_invariant(
+            &env,
+            Self::liquidity_k(expected_liquidity, current_sqrt_price_x96),
+            Self::liquidity_k(liquidity_after, current_sqrt_price_x96),
+        );
         
         // Topic: event name only; owner + tick range + amounts in data.
         env.events().publish((symbol_short!("burn"),), (owner, tick_lower, tick_upper, amount, amount0, amount1));
@@ -1396,6 +1489,66 @@ mod tests {
 
         // Try to set alice as her own referrer - should panic
         client.set_referrer(&alice, &alice);
+    }
+
+    #[test]
+    fn test_invariant_holds_for_dust_swap() {
+        // Price = 1, so both virtual reserves equal L.
+        let sqrt_price = MultiAssetSwap::tick_to_sqrt_price_x96(0);
+        let liquidity = 33_000_000_i128;
+
+        // 1 unit in plus 1 unit of fee, 1 unit out: k grows.
+        let (old_k, new_k) = MultiAssetSwap::swap_k(liquidity, sqrt_price, true, 2, 1);
+        assert!(new_k >= old_k);
+        let (old_k, new_k) = MultiAssetSwap::swap_k(liquidity, sqrt_price, false, 2, 1);
+        assert!(new_k >= old_k);
+    }
+
+    #[test]
+    fn test_invariant_detects_minimal_rounding_loss() {
+        let sqrt_price = MultiAssetSwap::tick_to_sqrt_price_x96(0);
+        let liquidity = 33_000_000_i128;
+
+        // 1 in, 1 out with no fee: (L + 1)(L - 1) = L^2 - 1 < L^2.
+        let (old_k, new_k) = MultiAssetSwap::swap_k(liquidity, sqrt_price, true, 1, 1);
+        assert!(new_k < old_k);
+        let (old_k, new_k) = MultiAssetSwap::swap_k(liquidity, sqrt_price, false, 1, 1);
+        assert!(new_k < old_k);
+    }
+
+    #[test]
+    fn test_invariant_detects_drain_beyond_reserve() {
+        let sqrt_price = MultiAssetSwap::tick_to_sqrt_price_x96(0);
+        let liquidity = 1_000_i128;
+
+        // Output larger than the output-side reserve empties the pool: new_k = 0.
+        let (old_k, new_k) = MultiAssetSwap::swap_k(liquidity, sqrt_price, true, 1, 1_001);
+        assert!(new_k < old_k);
+        assert_eq!(new_k, U256::from(0_u8));
+    }
+
+    #[test]
+    fn test_invariant_at_max_reserves() {
+        let sqrt_price = MultiAssetSwap::tick_to_sqrt_price_x96(0);
+        let liquidity = i128::MAX;
+
+        let (old_k, new_k) = MultiAssetSwap::swap_k(liquidity, sqrt_price, true, 1_000_000, 999_000);
+        assert!(new_k >= old_k);
+        let (old_k, new_k) = MultiAssetSwap::swap_k(liquidity, sqrt_price, true, 1_000_000, 1_000_001);
+        assert!(new_k < old_k);
+    }
+
+    #[test]
+    fn test_invariant_holds_across_trade_sizes() {
+        for swap_amount in [1_000_i128, 100_000_i128, 5_000_000_i128] {
+            let (env, contract_id, _admin, alice, token_a, _token_b) = setup();
+            let client = MultiAssetSwapClient::new(&env, &contract_id);
+            client.mint(&alice, &-60, &60, &100_000_i128, &100_000_i128);
+
+            let sqrt_price_limit = MultiAssetSwap::tick_to_sqrt_price_x96(-60);
+            let amount_out = client.swap(&alice, &token_a, &swap_amount, &sqrt_price_limit, &0);
+            assert!(amount_out > 0);
+        }
     }
 
     #[test]
