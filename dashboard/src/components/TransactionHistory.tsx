@@ -103,6 +103,11 @@ const useIsMobileViewport = (): boolean => {
   return isMobile;
 };
 
+/** Number of transactions fetched per infinite-scroll page load. */
+export const INFINITE_SCROLL_PAGE_SIZE = 100;
+/** Scroll distance from the bottom (in px) that triggers the next page load. */
+export const INFINITE_SCROLL_THRESHOLD_PX = 200;
+
 interface TransactionHistoryProps {
   initialData?: Transaction[];
   totalInitialCount?: number;
@@ -127,7 +132,10 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   useTransactionSocket();
 
   const [dataCount, setDataCount] = useState<number>(totalInitialCount);
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
+
+  // Full backing dataset — the entire corpus is generated once and held in
+  // memory. Infinite scroll exposes it page-by-page via `visibleCount`.
+  const [allTransactions, setAllTransactions] = useState<Transaction[]>(() => {
     if (initialData) return initialData;
     if (storeTransactions.length === totalInitialCount && storeTransactions.length > 0) {
       return storeTransactions;
@@ -135,20 +143,41 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     return generateTransactions(totalInitialCount);
   });
 
+  // How many items from `allTransactions` are currently exposed to the
+  // virtualizer. Increases in INFINITE_SCROLL_PAGE_SIZE steps as the user
+  // scrolls near the bottom.
+  const [visibleCount, setVisibleCount] = useState<number>(() =>
+    Math.min(INFINITE_SCROLL_PAGE_SIZE, totalInitialCount)
+  );
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  // Convenience alias used by the rest of the component (filtered list is
+  // derived from `transactions` below).
+  const transactions = allTransactions;
+  // Setter kept for compatibility with real-time update paths.
+  const setTransactions = (txs: Transaction[]) => {
+    setAllTransactions(txs);
+    // Reset visible window when the entire dataset changes so the user
+    // always sees the most recent items without a stale cursor.
+    setVisibleCount(Math.min(INFINITE_SCROLL_PAGE_SIZE, txs.length));
+  };
+
   useEffect(() => {
     if (initialData) {
-      setTransactions(initialData);
+      setAllTransactions(initialData);
+      setVisibleCount(Math.min(INFINITE_SCROLL_PAGE_SIZE, initialData.length));
       setStoreTransactions(initialData);
     } else if (storeTransactions.length === 0 || storeTransactions.length !== totalInitialCount) {
       const initial = generateTransactions(totalInitialCount);
-      setTransactions(initial);
+      setAllTransactions(initial);
+      setVisibleCount(Math.min(INFINITE_SCROLL_PAGE_SIZE, initial.length));
       setStoreTransactions(initial);
     }
   }, [initialData, totalInitialCount, setStoreTransactions]);
 
   useEffect(() => {
     if (storeTransactions.length > 0) {
-      setTransactions(storeTransactions);
+      setAllTransactions(storeTransactions);
     }
   }, [storeTransactions]);
 
@@ -254,8 +283,10 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     });
   };
 
-  // Filtered dataset
-  const filteredTransactions = useMemo(() => {
+  // Apply all active filters to the full backing dataset first so the total
+  // matched count is accurate, then expose only `visibleCount` items to the
+  // virtualizer to implement infinite scrolling.
+  const allFilteredTransactions = useMemo(() => {
     const min = minAmount !== '' ? parseFloat(minAmount) : NaN;
     const max = maxAmount !== '' ? parseFloat(maxAmount) : NaN;
     return transactions.filter(tx => {
@@ -280,6 +311,50 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
       return true;
     });
   }, [transactions, selectedType, selectedStatus, statusMulti, assetFilter, dateFrom, dateTo, minAmount, maxAmount, searchQuery]);
+
+  // Reset visible window whenever the filter set changes so the user always
+  // starts scrolling from the top of the matched results.
+  useEffect(() => {
+    setVisibleCount(Math.min(INFINITE_SCROLL_PAGE_SIZE, allFilteredTransactions.length));
+  }, [selectedType, selectedStatus, statusMulti, assetFilter, dateFrom, dateTo, minAmount, maxAmount, searchQuery, allFilteredTransactions.length]);
+
+  // Slice exposed to the virtualizer — grows as the user scrolls down.
+  const filteredTransactions = useMemo(
+    () => allFilteredTransactions.slice(0, visibleCount),
+    [allFilteredTransactions, visibleCount]
+  );
+
+  const hasMore = visibleCount < allFilteredTransactions.length;
+
+  // Infinite scroll: when the user scrolls within INFINITE_SCROLL_THRESHOLD_PX
+  // of the bottom, load the next page.
+  const handleScroll = useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      if (isLoadingMore || !hasMore) return;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceFromBottom <= INFINITE_SCROLL_THRESHOLD_PX) {
+        setIsLoadingMore(true);
+        // Use a micro-task so the loading indicator renders before we expand
+        // the list, keeping the UI responsive.
+        setTimeout(() => {
+          setVisibleCount(prev =>
+            Math.min(prev + INFINITE_SCROLL_PAGE_SIZE, allFilteredTransactions.length)
+          );
+          setIsLoadingMore(false);
+        }, 0);
+      }
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  // parentRef.current changes after the DOM mounts; also re-run when hasMore /
+  // isLoadingMore change so the guard conditions stay accurate.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parentRef, hasMore, isLoadingMore, allFilteredTransactions.length]);
+  void handleScroll; // suppress unused-variable lint warning
 
   // Virtualizer hook
   const rowVirtualizer = useVirtualizer({
@@ -376,7 +451,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
               </span>
             </div>
             <p className="text-sm text-slate-400 mt-1">
-              Rendering {filteredTransactions.length.toLocaleString()} records smoothly via @tanstack/react-virtual DOM windowing.
+              Rendering {filteredTransactions.length.toLocaleString()} of {allFilteredTransactions.length.toLocaleString()} records smoothly via @tanstack/react-virtual DOM windowing.
             </p>
           </div>
 
@@ -458,7 +533,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
             </div>
 
             <span className="text-xs text-slate-500 font-mono ml-auto">
-              DOM Active: <strong className="text-emerald-400">{itemsToRender.length}</strong> / {filteredTransactions.length}
+              DOM Active: <strong className="text-emerald-400">{itemsToRender.length}</strong> / {filteredTransactions.length} of {allFilteredTransactions.length}
             </span>
             <button
               type="button"
@@ -783,6 +858,34 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
             </div>
           )}
         </div>
+        {/* Infinite scroll status bar — renders below the virtual body */}
+        {hasMore ? (
+          <div
+            data-testid="infinite-scroll-loader"
+            className="flex items-center justify-center gap-2 py-3 text-xs text-slate-400 border-t border-slate-800/60"
+          >
+            {isLoadingMore ? (
+              <>
+                <RefreshCw size={12} className="animate-spin" />
+                Loading more transactions…
+              </>
+            ) : (
+              <span>
+                Showing {filteredTransactions.length.toLocaleString()} of{' '}
+                {allFilteredTransactions.length.toLocaleString()} — scroll down to load more
+              </span>
+            )}
+          </div>
+        ) : (
+          allFilteredTransactions.length > INFINITE_SCROLL_PAGE_SIZE && (
+            <div
+              data-testid="infinite-scroll-end"
+              className="py-3 text-center text-xs text-slate-500 border-t border-slate-800/60"
+            >
+              All {allFilteredTransactions.length.toLocaleString()} transactions loaded
+            </div>
+          )
+        )}
       </div>
     </div>
   );
