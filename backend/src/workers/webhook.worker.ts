@@ -1,5 +1,9 @@
 import { Worker, Job } from 'bullmq';
-import { defaultQueueOptions, QUEUE_NAMES } from '../config/queue';
+import {
+  defaultQueueOptions,
+  QUEUE_NAMES,
+  routeFailedWebhookToDlq,
+} from '../config/queue';
 import logger from '../utils/logger';
 import { setupWorkerGracefulShutdown } from './graceful-shutdown';
 import {
@@ -12,6 +16,17 @@ import {
   defaultWebhookService,
 } from '../services/webhook.service';
 import configService from '../services/config.service';
+
+export class WebhookDeliveryError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+    public readonly body?: string
+  ) {
+    super(message);
+    this.name = 'WebhookDeliveryError';
+  }
+}
 
 export interface WebhookAttemptRecord {
   jobId: string;
@@ -77,7 +92,17 @@ export class WebhookWorker {
       });
 
       if (!response.ok) {
-        throw new Error(`Webhook endpoint returned HTTP ${response.status}`);
+        let responseBody: string | undefined;
+        try {
+          responseBody = await response.text();
+        } catch {
+          responseBody = undefined;
+        }
+        throw new WebhookDeliveryError(
+          `Webhook endpoint returned HTTP ${response.status}`,
+          response.status,
+          responseBody
+        );
       }
 
       const latencyMs = Date.now() - startTime;
@@ -172,6 +197,17 @@ export class WebhookWorker {
         logger.error('Webhook worker job failed', {
           jobId: job?.id,
           error: err.message,
+        });
+
+        const deliveryError = err instanceof WebhookDeliveryError ? err : undefined;
+        void routeFailedWebhookToDlq(job, err, {
+          status: deliveryError?.status,
+          body: deliveryError?.body,
+        }).catch((dlqError) => {
+          logger.error('Failed to move exhausted webhook job to DLQ', {
+            jobId: job?.id,
+            error: dlqError instanceof Error ? dlqError.message : String(dlqError),
+          });
         });
       });
     }

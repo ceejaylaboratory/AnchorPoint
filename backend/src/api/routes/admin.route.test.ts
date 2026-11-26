@@ -58,10 +58,17 @@ jest.mock('../../config/queue', () => ({
   __esModule: true,
   listNotificationDlqJobs: jest.fn(),
   retryNotificationDlqJob: jest.fn(),
+  listWebhookDlqJobs: jest.fn(),
+  retryFailedWebhooks: jest.fn(),
 }));
 
 import adminRouter from './admin.route';
-import { listNotificationDlqJobs, retryNotificationDlqJob } from '../../config/queue';
+import {
+  listNotificationDlqJobs,
+  retryNotificationDlqJob,
+  listWebhookDlqJobs,
+  retryFailedWebhooks,
+} from '../../config/queue';
 import prisma from '../../lib/prisma';
 
 const app = express();
@@ -271,6 +278,66 @@ describe('Admin versioned fee schedule routes (#1348)', () => {
       where: { assetCode: 'USDC' },
       orderBy: { effectiveFrom: 'desc' },
     });
+  });
+});
+
+describe('Admin webhook DLQ routes (#1584)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('re-enqueues a single dead-lettered webhook', async () => {
+    (retryFailedWebhooks as jest.Mock).mockResolvedValue(['redelivered-1']);
+
+    const res = await request(app)
+      .post('/api/admin/webhooks/retry-failed')
+      .send({ jobId: 'dlq-1' });
+
+    expect(res.status).toBe(200);
+    expect(retryFailedWebhooks).toHaveBeenCalledWith('dlq-1', 50);
+    expect(res.body.data).toEqual({ retried: ['redelivered-1'], count: 1 });
+  });
+
+  it('bulk re-enqueues dead-lettered webhooks with a limit', async () => {
+    (retryFailedWebhooks as jest.Mock).mockResolvedValue(['redelivered-1', 'redelivered-2']);
+
+    const res = await request(app)
+      .post('/api/admin/webhooks/retry-failed')
+      .send({ limit: 2 });
+
+    expect(res.status).toBe(200);
+    expect(retryFailedWebhooks).toHaveBeenCalledWith(undefined, 2);
+    expect(res.body.data.count).toBe(2);
+  });
+
+  it('returns 404 when the requested DLQ job does not exist', async () => {
+    (retryFailedWebhooks as jest.Mock).mockResolvedValue([]);
+
+    const res = await request(app)
+      .post('/api/admin/webhooks/retry-failed')
+      .send({ jobId: 'missing' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects unknown properties in the redelivery payload', async () => {
+    const res = await request(app)
+      .post('/api/admin/webhooks/retry-failed')
+      .send({ limit: 1, unexpected: true });
+
+    expect(res.status).toBe(400);
+    expect(retryFailedWebhooks).not.toHaveBeenCalled();
+  });
+
+  it('lists dead-lettered webhooks', async () => {
+    (listWebhookDlqJobs as jest.Mock).mockResolvedValue([
+      { id: 'dlq-1', data: { name: 'webhook-retry', failedReason: 'HTTP 500' } },
+    ]);
+
+    const res = await request(app).get('/api/admin/webhooks/dlq');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data[0]).toEqual({ id: 'dlq-1', name: 'webhook-retry', failedReason: 'HTTP 500' });
   });
 });
 

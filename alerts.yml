@@ -45,3 +45,22 @@ groups:
             of the pool limit ({{ $labels.pool }}). Pool exhaustion will
             surface as 5xx errors and slow queries; check for leaked
             connections or increased load.
+
+  - name: anchorpoint-webhook-dlq
+    interval: 30s
+    rules:
+      # WebhookDlqDepthHigh (#1584): fire when dead-lettered webhooks are not
+      # redelivered and the DLQ depth stays above the operator threshold.
+      - alert: WebhookDlqDepthHigh
+        expr: webhook_dlq_count > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: Webhook dead-letter queue depth exceeds threshold
+          description: >-
+            {{ $value }} webhook deliveries are sitting in the dead-letter queue.
+            Inspect /api/admin/webhooks/dlq and redeliver with
+            POST /api/admin/webhooks/retry-failed.
