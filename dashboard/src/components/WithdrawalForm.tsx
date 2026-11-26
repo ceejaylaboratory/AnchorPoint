@@ -6,6 +6,7 @@ import { validateField, validateAll } from '../lib/validation';
 import { useTranslation } from '../i18n/config';
 import { computePayoutBreakdown, fetchFeeEstimate } from '../lib/fees';
 import type { FeeEstimate } from '../lib/fees';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 interface FormValues {
   [key: string]: string;
@@ -155,7 +156,8 @@ export const WithdrawalForm = ({
       ? computePayoutBreakdown(parsedAmount, feeState.estimate)
       : null;
   const netPayout = breakdown?.netPayout ?? null;
-  const disableSubmit = netPayout !== null && netPayout <= 0;
+  const { isOnline } = useNetworkStatus();
+  const disableSubmit = !isOnline || (netPayout !== null && netPayout <= 0);
 
   return (
     <form
@@ -328,6 +330,8 @@ export const WithdrawalForm = ({
       <button
         type="submit"
         disabled={disableSubmit}
+        aria-disabled={disableSubmit}
+        title={!isOnline ? 'No internet connection — submission disabled' : undefined}
         className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text disabled:cursor-not-allowed disabled:opacity-50"
       >
         {t('withdraw.submit')}
