@@ -347,6 +347,9 @@ Master intuitive gameplay controls designed for both casual players and experien
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1658 -->
+- #1658: feat(contracts/revenue_distributor): add proportional token burning mechanism on revenue distribution
+
 <!-- handsoff-issue-1647 -->
 - #1647: fix(contracts/swap): enforce minimum output amount (slippage check) in single-transaction multi-hop swaps
 

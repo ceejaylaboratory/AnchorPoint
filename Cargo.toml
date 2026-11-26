@@ -26,6 +26,7 @@ members = [
     "src/proxy",
     "src/yield_farming",
     "src/benchmarks",
+    "tests/e2e",
 ]
 resolver = "2"
 
