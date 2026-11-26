@@ -27,6 +27,9 @@ export class MetricsService {
   private batchPaymentOperationsTotal: Counter<string>;
   private redisFailoverEventsTotal: Counter<string>;
   private redisConnectedClients: Gauge<string>;
+  private rpcNodeHealth: Gauge<string>;
+  private rpcNodeFailoverTotal: Counter<string>;
+  private rpcNodeRecoveryTotal: Counter<string>;
   private sepTransactionCompletionDuration: Histogram<string>;
 
   constructor() {
@@ -237,6 +240,28 @@ export class MetricsService {
       registers: [this.registry],
     });
 
+    // #1587: circuit-breaker state for Horizon and Soroban RPC endpoints.
+    this.rpcNodeHealth = new promClient.Gauge({
+      name: 'rpc_node_health',
+      help: 'Health state of a Horizon or Soroban RPC endpoint (1 healthy, 0 degraded)',
+      labelNames: ['provider', 'node_index'] as const,
+      registers: [this.registry],
+    });
+
+    this.rpcNodeFailoverTotal = new promClient.Counter({
+      name: 'rpc_node_failover_total',
+      help: 'Total number of failovers away from a degraded Horizon or Soroban RPC endpoint',
+      labelNames: ['provider', 'from_node', 'to_node', 'reason'] as const,
+      registers: [this.registry],
+    });
+
+    this.rpcNodeRecoveryTotal = new promClient.Counter({
+      name: 'rpc_node_recovery_total',
+      help: 'Total number of recoveries of a previously degraded Horizon or Soroban RPC endpoint',
+      labelNames: ['provider', 'node_index'] as const,
+      registers: [this.registry],
+    });
+
     // #1600: SEP transaction end-to-end completion duration histogram.
     // Records the elapsed time from transaction creation to a terminal status
     // (completed or error). Buckets are sized for financial flows where
@@ -441,6 +466,37 @@ export class MetricsService {
 
   incrementDbHealthcheckFailure(): void {
     this.dbHealthcheckFailuresTotal.inc();
+  }
+
+  /**
+   * #1587: Record whether a Horizon/RPC endpoint is healthy (1) or degraded (0).
+   */
+  setRpcNodeHealth(provider: 'horizon' | 'soroban-rpc', nodeIndex: number, healthy: boolean): void {
+    this.rpcNodeHealth.set({ provider, node_index: String(nodeIndex) }, healthy ? 1 : 0);
+  }
+
+  /**
+   * #1587: Record a failover from one Horizon/RPC endpoint to another.
+   */
+  incrementRpcNodeFailover(
+    provider: 'horizon' | 'soroban-rpc',
+    fromNode: number,
+    toNode: number,
+    reason: string
+  ): void {
+    this.rpcNodeFailoverTotal.inc({
+      provider,
+      from_node: String(fromNode),
+      to_node: String(toNode),
+      reason,
+    });
+  }
+
+  /**
+   * #1587: Record a background probe confirming an endpoint recovered.
+   */
+  incrementRpcNodeRecovery(provider: 'horizon' | 'soroban-rpc', nodeIndex: number): void {
+    this.rpcNodeRecoveryTotal.inc({ provider, node_index: String(nodeIndex) });
   }
 
   /**

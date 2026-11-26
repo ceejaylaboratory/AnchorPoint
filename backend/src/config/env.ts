@@ -131,6 +131,22 @@ const envSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   STELLAR_RPC_URLS: z.string().optional(),
+  // Comma-separated standby Horizon endpoints used when the primary returns
+  // gateway errors (502/503/504) or repeated network timeouts (#1587).
+  STELLAR_HORIZON_FALLBACK_URLS: z.string().optional(),
+  // Consecutive failures before an endpoint is marked degraded and traffic is
+  // routed to the next configured endpoint (#1587).
+  STELLAR_FAILOVER_FAILURE_THRESHOLD: z
+    .string()
+    .default('2')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(10)),
+  // How often a degraded primary endpoint is probed for recovery (#1587).
+  STELLAR_FAILOVER_PROBE_INTERVAL_MS: z
+    .string()
+    .default('30000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1000).max(600000)),
   // Docker/container DNS resolution tuning. Defaults to IPv4-first lookups to
   // avoid IPv6 timeout penalties when resolving sibling containers.
   DNS_RESULT_ORDER: z.enum(['ipv4first', 'verbatim', 'ipv6first']).default('ipv4first'),
