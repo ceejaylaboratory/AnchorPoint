@@ -50,6 +50,7 @@ import { redis, startRedisMonitor, stopRedisMonitor } from './lib/redis';
 import { validateStorageConfigOnStartup } from './services/storage-provider.service';
 import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { dbMetricsScheduler } from './workers/db-metrics.scheduler';
+import { databaseHealthService } from './services/database-health.service';
 import { transactionReconcileScheduler } from './workers/transaction-reconcile.scheduler';
 import { multisigReconcileScheduler } from './workers/multisig-reconcile.scheduler';
 import { initSocket } from './lib/socket';
@@ -142,6 +143,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   dataRetentionScheduler.stop();
   cleanupWorker.stop();
   dbMetricsScheduler.stop();
+  databaseHealthService.stop();
   transactionReconcileScheduler.stop();
   multisigReconcileScheduler.stop();
 
@@ -542,7 +544,18 @@ app.get('/health/ready', async (_req: Request, res: Response) => {
     ready = false;
   }
 
-  const payload = { status: ready ? 'UP' : 'DOWN', timestamp: new Date().toISOString(), dependencies };
+  const dbPoolHealth = databaseHealthService.getState();
+  dependencies.databasePool = dbPoolHealth.healthy ? 'UP' : 'DOWN';
+  if (!dbPoolHealth.healthy) {
+    ready = false;
+  }
+
+  const payload = {
+    status: ready ? 'UP' : 'DOWN',
+    timestamp: new Date().toISOString(),
+    dependencies,
+    databasePool: dbPoolHealth,
+  };
   return res.status(ready ? 200 : 503).json(payload);
 });
 
@@ -677,6 +690,7 @@ if (process.env.NODE_ENV !== 'test') {
           kycExpiryScheduler.start();
           dataRetentionScheduler.start();
           dbMetricsScheduler.start();
+          databaseHealthService.start();
           transactionReconcileScheduler.start();
           multisigReconcileScheduler.start();
           cleanupWorker.start();

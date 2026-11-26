@@ -7,6 +7,7 @@ export class MetricsService {
   private httpRequestsTotal: Counter<string>;
   private activeConnections: Gauge<string>;
   private activeWebSockets: Gauge<string>;
+  private activeSseConnections: Gauge<string>;
   private errorCounter: Counter<string>;
   private dbQueryDuration: Histogram<string>;
   private apiVersionGauge: Gauge<string>;
@@ -15,6 +16,9 @@ export class MetricsService {
   private dbConnectionsActive: Gauge<string>;
   private dbConnectionsLimit: Gauge<string>;
   private dbPoolConnectionsActive: Gauge<string>;
+  private dbConnectionHealth: Gauge<string>;
+  private dbReconnectTotal: Counter<string>;
+  private dbHealthcheckFailuresTotal: Counter<string>;
   private sepTransactionsTotal: Counter<string>;
   private sepTransactionDuration: Histogram<string>;
   private kycVerificationTotal: Counter<string>;
@@ -73,6 +77,13 @@ export class MetricsService {
     this.activeWebSockets = new promClient.Gauge({
       name: 'websocket_active_connections',
       help: 'Number of active WebSocket connections',
+      registers: [this.registry],
+    });
+
+    // Gauge for active Server-Sent Events (SSE) streams
+    this.activeSseConnections = new promClient.Gauge({
+      name: 'sse_active_connections',
+      help: 'Number of active Server-Sent Events connections',
       registers: [this.registry],
     });
 
@@ -140,6 +151,25 @@ export class MetricsService {
       name: 'db_pool_connections_active',
       help: 'Number of active connections in the database connection pool',
       labelNames: ['pool'] as const,
+      registers: [this.registry],
+    });
+
+    // #1588: connection health and automatic reconnect signals.
+    this.dbConnectionHealth = new promClient.Gauge({
+      name: 'db_connection_health',
+      help: 'Whether the most recent database health check succeeded (1 = up, 0 = down)',
+      registers: [this.registry],
+    });
+
+    this.dbReconnectTotal = new promClient.Counter({
+      name: 'db_reconnect_total',
+      help: 'Total number of Prisma pool reconnections after repeated health-check failures',
+      registers: [this.registry],
+    });
+
+    this.dbHealthcheckFailuresTotal = new promClient.Counter({
+      name: 'db_healthcheck_failures_total',
+      help: 'Total number of failed database health checks',
       registers: [this.registry],
     });
 
@@ -343,6 +373,15 @@ export class MetricsService {
     this.activeWebSockets.dec();
   }
 
+  /** Track an SSE stream opening (+1) or closing (-1). */
+  incrementSseConnections(): void {
+    this.activeSseConnections.inc();
+  }
+
+  decrementSseConnections(): void {
+    this.activeSseConnections.dec();
+  }
+
   /**
    * Increment error counter
    */
@@ -390,6 +429,18 @@ export class MetricsService {
    */
   setDbPoolConnectionsActive(count: number, pool = 'default'): void {
     this.dbPoolConnectionsActive.set({ pool }, count);
+  }
+
+  setDbConnectionHealth(healthy: boolean): void {
+    this.dbConnectionHealth.set(healthy ? 1 : 0);
+  }
+
+  incrementDbReconnect(): void {
+    this.dbReconnectTotal.inc();
+  }
+
+  incrementDbHealthcheckFailure(): void {
+    this.dbHealthcheckFailuresTotal.inc();
   }
 
   /**

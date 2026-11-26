@@ -30,6 +30,38 @@ const envSchema = z.object({
   // SSL mode for PostgreSQL connections. Defaults to 'disable' for safe local
   // development. Set to 'require' (or stricter) for production deployments.
   DB_SSL_MODE: z.enum(['require', 'disable', 'allow', 'prefer', 'verify-ca', 'verify-full']).default('disable'),
+  // #1588: TCP keepalive and health-check settings used to detect dropped
+  // database sockets and re-establish the Prisma pool automatically.
+  DB_CONNECT_TIMEOUT_SECONDS: z
+    .string()
+    .default('10')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(60)),
+  DB_KEEPALIVE_IDLE_SECONDS: z
+    .string()
+    .default('15')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(600)),
+  DB_KEEPALIVE_INTERVAL_SECONDS: z
+    .string()
+    .default('5')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(120)),
+  DB_KEEPALIVE_COUNT: z
+    .string()
+    .default('3')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(20)),
+  DB_HEALTHCHECK_INTERVAL_MS: z
+    .string()
+    .default('15000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1000).max(300000)),
+  DB_RECONNECT_FAILURE_THRESHOLD: z
+    .string()
+    .default('2')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(10)),
   JWT_SECRET: z.string().min(8, 'JWT_SECRET must be at least 8 characters').default('stellar-anchor-secret'),
   SEP24_INTERACTIVE_URL_JWT_SECRET: z
     .string()
@@ -142,6 +174,12 @@ const envSchema = z.object({
   SIGNING_KEY: z.string().optional(),
   ENABLE_KEY_ROTATION_WORKER: z.enum(['true', 'false']).default('false'),
   KEY_ROTATION_WORKER_CRON: z.string().default('0 0 1 * *'),
+  // How long tokens signed by the previous JWT key remain valid (#1580).
+  JWT_ROTATION_GRACE_PERIOD_SECONDS: z
+    .string()
+    .default('86400')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(604800)),
   KYC_PROVIDER: z.enum(['mock', 'persona', 'shufti']).default('mock'),
   KYC_WEBHOOK_SECRET: z.string().optional(),
   PERSONA_API_KEY: z.string().optional(),

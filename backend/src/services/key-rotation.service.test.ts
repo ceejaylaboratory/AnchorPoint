@@ -3,6 +3,9 @@ import {
   KeyManagementErrorType,
 } from '../lib/key-management.types';
 import { KeyRotationService } from './key-rotation.service';
+import configService from './config.service';
+import { config } from '../config/env';
+import { storePreviousJwtSecret } from '../lib/jwt-key-state';
 
 jest.mock('../lib/key-management.service', () => ({
   buildKeyManagementConfigFromEnv: jest.fn(),
@@ -22,6 +25,20 @@ jest.mock('../config/env', () => ({
   config: {
     KEY_MANAGEMENT_BACKEND: 'aws-kms',
     AWS_KMS_KEY_ARN: 'arn:aws:kms:us-east-1:123456789012:key/test',
+    JWT_ROTATION_GRACE_PERIOD_SECONDS: 86400,
+  },
+}));
+
+jest.mock('../lib/jwt-key-state', () => ({
+  storePreviousJwtSecret: jest.fn(),
+  getPreviousJwtSecret: jest.fn(),
+}));
+
+jest.mock('./config.service', () => ({
+  __esModule: true,
+  default: {
+    getConfig: jest.fn(),
+    updateConfig: jest.fn(),
   },
 }));
 
@@ -149,5 +166,41 @@ describe('KeyRotationService', () => {
     await service.rotateKeys();
 
     expect(cacheState.has('hot_wallet_keys')).toBe(false);
+  });
+
+  describe('rotateJwtSigningKey', () => {
+    const settings = { JWT_SECRET: 'primary-secret', INTERACTIVE_URL: 'https://anchor.example' };
+    const mockGetConfig = configService.getConfig as jest.Mock;
+    const mockUpdateConfig = configService.updateConfig as jest.Mock;
+    const mockStorePrevious = storePreviousJwtSecret as jest.Mock;
+
+    beforeEach(() => {
+      (config as { JWT_ROTATION_GRACE_PERIOD_SECONDS: number }).JWT_ROTATION_GRACE_PERIOD_SECONDS =
+        86400;
+      mockGetConfig.mockReturnValue({ ...settings });
+      mockUpdateConfig.mockResolvedValue({ version: 2 });
+      mockStorePrevious.mockResolvedValue(undefined);
+    });
+
+    it('retains the previous key for the grace period and signs new tokens with the new key', async () => {
+      const result = await service.rotateJwtSigningKey();
+
+      expect(mockStorePrevious).toHaveBeenCalledWith('primary-secret', 86400);
+      expect(mockUpdateConfig).toHaveBeenCalledTimes(1);
+      const updated = mockUpdateConfig.mock.calls[0][0];
+      expect(updated.JWT_SECRET).not.toBe('primary-secret');
+      expect(updated.JWT_SECRET).toHaveLength(64);
+      expect(updated.INTERACTIVE_URL).toBe(settings.INTERACTIVE_URL);
+      expect(result).toMatchObject({ rotated: true, gracePeriodSeconds: 86400, previousKeyRetained: true });
+    });
+
+    it('discards the previous key when the grace period is zero', async () => {
+      (config as { JWT_ROTATION_GRACE_PERIOD_SECONDS: number }).JWT_ROTATION_GRACE_PERIOD_SECONDS = 0;
+
+      const result = await service.rotateJwtSigningKey();
+
+      expect(mockStorePrevious).toHaveBeenCalledWith('primary-secret', 0);
+      expect(result.previousKeyRetained).toBe(false);
+    });
   });
 });

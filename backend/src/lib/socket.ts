@@ -47,6 +47,22 @@ export function initSocket(httpServer: HttpServer): SocketServer {
     logger.info('WebSocket client connected', { id: socket.id });
     metricsService.incrementWebSocketConnections();
 
+    socket.on('join', (room: string) => {
+      if ((socket as any).connected === false) return;
+      if (typeof room === 'string' && room.trim()) {
+        socket.join(room);
+      }
+    });
+
+    socket.on('disconnect', () => {
+      metricsService.decrementWebSocketConnections();
+      for (const room of Array.from(socket.rooms ?? [])) {
+        socket.leave(room);
+      }
+      (socket as any).removeAllListeners?.();
+      logger.info('WebSocket client disconnected', { id: socket.id });
+    });
+
     const user = (socket as any).user;
     if (user?.sub) {
       socket.join(user.sub);
@@ -57,6 +73,7 @@ export function initSocket(httpServer: HttpServer): SocketServer {
             OR: [{ publicKey: user.sub }, { id: user.sub }],
           },
         });
+        if ((socket as any).connected === false) return;
         if (dbUser) {
           socket.join(dbUser.id);
           socket.join(`user:${dbUser.id}`);
@@ -68,17 +85,6 @@ export function initSocket(httpServer: HttpServer): SocketServer {
         logger.warn('Failed to resolve user for socket room', { error: err });
       }
     }
-
-    socket.on('join', (room: string) => {
-      if (typeof room === 'string' && room.trim()) {
-        socket.join(room);
-      }
-    });
-
-    socket.on('disconnect', () => {
-      metricsService.decrementWebSocketConnections();
-      logger.info('WebSocket client disconnected', { id: socket.id });
-    });
   });
 
   return io;
