@@ -127,10 +127,20 @@ router.get('/stream', (req: Request, res: Response) => {
   // Initial comment so the client knows the connection is established.
   res.write(': connected\n\n');
 
-  req.on('close', () => {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
     unsubscribe();
+    req.removeListener('close', cleanup);
+    req.removeListener('aborted', cleanup);
+    res.removeListener('close', cleanup);
     res.end();
-  });
+  };
+
+  req.on('close', cleanup);
+  req.on('aborted', cleanup);
+  res.on('close', cleanup);
 });
 
 export default router;

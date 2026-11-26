@@ -11,6 +11,7 @@ import { getTransactionAmount, requiresBiometricConfirmation } from '../lib/biom
 import { BiometricConfirmation } from './BiometricConfirmation';
 import { DepositErrorAlert } from './DepositErrorAlert';
 import { useTranslation } from '../i18n/config';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 export interface FormValues {
   [key: string]: string;
@@ -196,6 +197,7 @@ export const DepositForm = ({
 }: DepositFormProps) => {
   const formId = useId();
   const { t } = useTranslation();
+  const { isOnline } = useNetworkStatus();
   const [formError, setFormError] = useState<DepositError | null>(null);
   const [pendingValues, setPendingValues] = useState<FormValues | null>(null);
 
@@ -379,7 +381,10 @@ export const DepositForm = ({
 
         <button
           type="submit"
-          className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+          disabled={!isOnline}
+          aria-disabled={!isOnline}
+          title={!isOnline ? 'No internet connection — submission disabled' : undefined}
+          className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text disabled:cursor-not-allowed disabled:opacity-50"
         >
           {t('deposit.submit')}
         </button>

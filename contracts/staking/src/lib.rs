@@ -1,8 +1,17 @@
 #![no_std]
 
+use ethnum::U256;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String,
+    Vec,
 };
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    CalculationOverflow = 1,
+}
 
 // Fixed-point precision: 1e18
 const PRECISION: i128 = 1_000_000_000_000_000_000;
@@ -60,18 +69,25 @@ impl MultiTokenStaking {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::StakeToken, &stake_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::StakeToken, &stake_token);
         env.storage().instance().set(&DataKey::TotalStaked, &0_i128);
         env.storage().instance().set(&DataKey::Paused, &false);
-        
-        let reward_tokens: Vec<Address> = Vec::new(&env);
-        env.storage().instance().set(&DataKey::RewardTokens, &reward_tokens);
 
-        env.storage().instance().set(&DataKey::ContractMeta, &ContractMetadata {
-            description: String::from_str(&env, ""),
-            icon_url: String::from_str(&env, ""),
-            website: String::from_str(&env, ""),
-        });
+        let reward_tokens: Vec<Address> = Vec::new(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardTokens, &reward_tokens);
+
+        env.storage().instance().set(
+            &DataKey::ContractMeta,
+            &ContractMetadata {
+                description: String::from_str(&env, ""),
+                icon_url: String::from_str(&env, ""),
+                website: String::from_str(&env, ""),
+            },
+        );
         env.events()
             .publish((symbol_short!("stk_init"),), (admin, stake_token));
     }
@@ -99,12 +115,15 @@ impl MultiTokenStaking {
                 .instance()
                 .get(&DataKey::RewardTokens)
                 .unwrap_or_else(|| Vec::new(&env));
-            
+
             reward_tokens.push_back(reward_token.clone());
-            env.storage().instance().set(&DataKey::RewardTokens, &reward_tokens);
             env.storage()
                 .instance()
-                .set(&DataKey::RewardPerTokenStored(reward_token.clone()), &0_i128);
+                .set(&DataKey::RewardTokens, &reward_tokens);
+            env.storage().instance().set(
+                &DataKey::RewardPerTokenStored(reward_token.clone()),
+                &0_i128,
+            );
             env.events()
                 .publish((symbol_short!("rwd_add"),), (admin, reward_token));
         }
@@ -142,22 +161,35 @@ impl MultiTokenStaking {
                 .instance()
                 .get(&DataKey::RewardPerTokenStored(reward_token.clone()))
                 .unwrap_or(0);
-            
-            rpt = rpt.checked_add(
-                amount.checked_mul(PRECISION).expect("rpt overflow") / total_staked
-            ).expect("rpt overflow");
+
+            let amount_u256 = U256::from(amount as u128);
+            let prec_u256 = U256::from(PRECISION as u128);
+            let staked_u256 = U256::from(total_staked as u128);
+
+            let added_rpt_u256 = amount_u256
+                .checked_mul(prec_u256)
+                .and_then(|v| v.checked_div(staked_u256))
+                .unwrap_or_else(|| panic!("rpt overflow"));
+
+            let added_rpt = if added_rpt_u256 > U256::from(i128::MAX as u128) {
+                panic!("rpt overflow")
+            } else {
+                added_rpt_u256.as_i128()
+            };
+
+            rpt = rpt.checked_add(added_rpt).expect("rpt overflow");
             env.storage()
                 .instance()
                 .set(&DataKey::RewardPerTokenStored(reward_token.clone()), &rpt);
         }
 
         // Topic: event name only; from + reward_token + amount in data.
-        env.events()
-            .publish((symbol_short!("dep_rwd"),), (from.clone(), reward_token.clone(), amount));
         env.events().publish(
-            (symbol_short!("dep_rwd"), from, reward_token),
-            amount,
+            (symbol_short!("dep_rwd"),),
+            (from.clone(), reward_token.clone(), amount),
         );
+        env.events()
+            .publish((symbol_short!("dep_rwd"), from, reward_token), amount);
     }
 
     // ── Admin: Pause/Unpause ─────────────────────────────────────────────
@@ -182,7 +214,10 @@ impl MultiTokenStaking {
 
     /// Check if contract is paused.
     pub fn is_paused(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     // ── Staking ───────────────────────────────────────────────────────────
@@ -202,21 +237,24 @@ impl MultiTokenStaking {
         );
 
         let prev: i128 = Self::_stake_of(&env, &user);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Stake(user.clone()), &prev.checked_add(amount).expect("stake overflow"));
+        env.storage().persistent().set(
+            &DataKey::Stake(user.clone()),
+            &prev.checked_add(amount).expect("stake overflow"),
+        );
 
         let total: i128 = env
             .storage()
             .instance()
             .get(&DataKey::TotalStaked)
             .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
+        env.storage().instance().set(
+            &DataKey::TotalStaked,
+            &total.checked_add(amount).expect("total staked overflow"),
+        );
 
         // Topic: event name only; user + amount in data.
-        env.events().publish((symbol_short!("staked"),), (user, amount));
+        env.events()
+            .publish((symbol_short!("staked"),), (user, amount));
     }
 
     pub fn unstake(env: Env, user: Address, amount: i128) {
@@ -229,18 +267,20 @@ impl MultiTokenStaking {
 
         Self::_update_rewards(&env, &user);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Stake(user.clone()), &prev.checked_sub(amount).expect("stake underflow"));
+        env.storage().persistent().set(
+            &DataKey::Stake(user.clone()),
+            &prev.checked_sub(amount).expect("stake underflow"),
+        );
 
         let total: i128 = env
             .storage()
             .instance()
             .get(&DataKey::TotalStaked)
             .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
+        env.storage().instance().set(
+            &DataKey::TotalStaked,
+            &total.checked_sub(amount).expect("total staked underflow"),
+        );
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
         token::Client::new(&env, &stake_token).transfer(
@@ -250,7 +290,8 @@ impl MultiTokenStaking {
         );
 
         // Topic: event name only; user + amount in data.
-        env.events().publish((symbol_short!("unstaked"),), (user, amount));
+        env.events()
+            .publish((symbol_short!("unstaked"),), (user, amount));
     }
 
     // ── Emergency Withdraw ─────────────────────────────────────────────────
@@ -274,9 +315,10 @@ impl MultiTokenStaking {
             .instance()
             .get(&DataKey::TotalStaked)
             .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
+        env.storage().instance().set(
+            &DataKey::TotalStaked,
+            &total.checked_sub(amount).expect("total staked underflow"),
+        );
 
         // Transfer tokens
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
@@ -286,7 +328,8 @@ impl MultiTokenStaking {
             &amount,
         );
 
-        env.events().publish((symbol_short!("emer_wd"),), (user, amount));
+        env.events()
+            .publish((symbol_short!("emer_wd"),), (user, amount));
     }
 
     // ── Claiming ──────────────────────────────────────────────────────────
@@ -305,12 +348,13 @@ impl MultiTokenStaking {
 
         // Divide the scaled accrued amount into whole tokens and keep the
         // sub-stroop remainder so it is not lost (and not locked up).
-        let reward = accrued / PRECISION;
-        let remainder = accrued % PRECISION;
+        let reward = accrued.checked_div(PRECISION).unwrap_or(0);
+        let remainder = accrued.checked_rem(PRECISION).unwrap_or(0);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &remainder);
+        env.storage().persistent().set(
+            &DataKey::Rewards(user.clone(), reward_token.clone()),
+            &remainder,
+        );
 
         if reward > 0 {
             token::Client::new(&env, &reward_token).transfer(
@@ -320,8 +364,10 @@ impl MultiTokenStaking {
             );
         }
 
-        env.events()
-            .publish((symbol_short!("claimed"), user.clone(), reward_token.clone()), reward);
+        env.events().publish(
+            (symbol_short!("claimed"), user.clone(), reward_token.clone()),
+            reward,
+        );
         env.events()
             .publish((symbol_short!("claimed"),), (user, reward_token, reward));
 
@@ -332,8 +378,12 @@ impl MultiTokenStaking {
     pub fn claim_all(env: Env, user: Address) {
         user.require_auth();
         Self::_check_not_paused(&env);
-        let reward_tokens: Vec<Address> = env.storage().instance().get(&DataKey::RewardTokens).unwrap_or_else(|| Vec::new(&env));
-        
+        let reward_tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::RewardTokens)
+            .unwrap_or_else(|| Vec::new(&env));
+
         for reward_token in reward_tokens.iter() {
             // Claim each one internally without separate require_auth since it's already done
             Self::_update_reward_for_token(&env, &user, &reward_token);
@@ -345,12 +395,13 @@ impl MultiTokenStaking {
                 .unwrap_or(0);
 
             // Divide the scaled accrued amount and store the sub-stroop remainder.
-            let reward = accrued / PRECISION;
-            let remainder = accrued % PRECISION;
+            let reward = accrued.checked_div(PRECISION).unwrap_or(0);
+            let remainder = accrued.checked_rem(PRECISION).unwrap_or(0);
 
-            env.storage()
-                .persistent()
-                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &remainder);
+            env.storage().persistent().set(
+                &DataKey::Rewards(user.clone(), reward_token.clone()),
+                &remainder,
+            );
 
             if reward > 0 {
                 token::Client::new(&env, &reward_token).transfer(
@@ -359,8 +410,10 @@ impl MultiTokenStaking {
                     &reward,
                 );
             }
-            env.events()
-                .publish((symbol_short!("claimed"), user.clone(), reward_token.clone()), reward);
+            env.events().publish(
+                (symbol_short!("claimed"), user.clone(), reward_token.clone()),
+                reward,
+            );
         }
     }
 
@@ -375,7 +428,10 @@ impl MultiTokenStaking {
         let user_rpt: i128 = env
             .storage()
             .persistent()
-            .get(&DataKey::UserRewardPerTokenPaid(user.clone(), reward_token.clone()))
+            .get(&DataKey::UserRewardPerTokenPaid(
+                user.clone(),
+                reward_token.clone(),
+            ))
             .unwrap_or(0);
         let stake = Self::_stake_of(&env, &user);
         let accrued: i128 = env
@@ -384,7 +440,73 @@ impl MultiTokenStaking {
             .get(&DataKey::Rewards(user, reward_token))
             .unwrap_or(0);
 
-        (accrued + stake.checked_mul(rpt - user_rpt).expect("rewards overflow")) / PRECISION
+        let delta_rpt = rpt.checked_sub(user_rpt).unwrap_or(0);
+        let delta = if delta_rpt > 0 && stake > 0 {
+            let num = U256::from(stake as u128)
+                .checked_mul(U256::from(delta_rpt as u128))
+                .unwrap_or_else(|| panic!("rewards overflow"));
+            if num > U256::from(i128::MAX as u128) {
+                panic!("rewards overflow");
+            }
+            num.as_i128()
+        } else {
+            0
+        };
+
+        let total_accrued = accrued
+            .checked_add(delta)
+            .unwrap_or_else(|| panic!("rewards overflow"));
+        total_accrued.checked_div(PRECISION).unwrap_or(0)
+    }
+
+    /// Standalone reward calculation using 256-bit fixed-point arithmetic to prevent intermediate overflow.
+    pub fn calculate_rewards(
+        amount: i128,
+        rate: i128,
+        elapsed_seconds: u64,
+        rate_multiplier: i128,
+        emission_bps: i128,
+    ) -> Result<i128, Error> {
+        if amount == 0 || elapsed_seconds == 0 {
+            return Ok(0);
+        }
+        if amount < 0 || rate < 0 || rate_multiplier < 0 || emission_bps < 0 {
+            return Err(Error::CalculationOverflow);
+        }
+
+        let amount_u256 = U256::from(amount as u128);
+        let rate_u256 = U256::from(rate as u128);
+        let seconds_u256 = U256::from(elapsed_seconds);
+        let mult_u256 = U256::from(rate_multiplier as u128);
+        let emission_u256 = U256::from(emission_bps as u128);
+
+        let numerator = amount_u256
+            .checked_mul(rate_u256)
+            .ok_or(Error::CalculationOverflow)?
+            .checked_mul(seconds_u256)
+            .ok_or(Error::CalculationOverflow)?
+            .checked_mul(mult_u256)
+            .ok_or(Error::CalculationOverflow)?
+            .checked_mul(emission_u256)
+            .ok_or(Error::CalculationOverflow)?;
+
+        let denominator = U256::from(
+            10_000_000u128
+                .checked_mul(100)
+                .ok_or(Error::CalculationOverflow)?
+                .checked_mul(10_000)
+                .ok_or(Error::CalculationOverflow)?,
+        );
+
+        let quotient = numerator
+            .checked_div(denominator)
+            .ok_or(Error::CalculationOverflow)?;
+
+        if quotient > U256::from(i128::MAX as u128) {
+            return Err(Error::CalculationOverflow);
+        }
+
+        Ok(quotient.as_i128())
     }
 
     pub fn total_staked(env: Env) -> i128 {
@@ -397,9 +519,12 @@ impl MultiTokenStaking {
     pub fn stake_of(env: Env, user: Address) -> i128 {
         Self::_stake_of(&env, &user)
     }
-    
+
     pub fn get_whitelisted_tokens(env: Env) -> Vec<Address> {
-        env.storage().instance().get(&DataKey::RewardTokens).unwrap_or_else(|| Vec::new(&env))
+        env.storage()
+            .instance()
+            .get(&DataKey::RewardTokens)
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     /// Update the contract's branding metadata (admin only).
@@ -419,7 +544,11 @@ impl MultiTokenStaking {
             .expect("admin not found");
         assert!(caller == admin, "only admin can update contract metadata");
 
-        let meta = ContractMetadata { description, icon_url, website };
+        let meta = ContractMetadata {
+            description,
+            icon_url,
+            website,
+        };
         env.storage().instance().set(&DataKey::ContractMeta, &meta);
 
         env.events().publish((symbol_short!("meta_upd"),), meta);
@@ -454,7 +583,7 @@ impl MultiTokenStaking {
             .instance()
             .get(&DataKey::RewardTokens)
             .unwrap_or_else(|| Vec::new(env));
-            
+
         for reward_token in reward_tokens.iter() {
             Self::_update_reward_for_token(env, user, &reward_token);
         }
@@ -470,7 +599,10 @@ impl MultiTokenStaking {
         let user_rpt: i128 = env
             .storage()
             .persistent()
-            .get(&DataKey::UserRewardPerTokenPaid(user.clone(), reward_token.clone()))
+            .get(&DataKey::UserRewardPerTokenPaid(
+                user.clone(),
+                reward_token.clone(),
+            ))
             .unwrap_or(0);
 
         let stake = Self::_stake_of(env, user);
@@ -478,7 +610,18 @@ impl MultiTokenStaking {
         // fractional remainders are not truncated away on every update. Only the
         // final claim divides by PRECISION and stores the leftover remainder back,
         // which prevents reward tokens from being permanently locked up.
-        let delta = stake.checked_mul(rpt - user_rpt).expect("rewards overflow");
+        let delta_rpt = rpt.checked_sub(user_rpt).unwrap_or(0);
+        let delta = if delta_rpt > 0 && stake > 0 {
+            let num = U256::from(stake as u128)
+                .checked_mul(U256::from(delta_rpt as u128))
+                .unwrap_or_else(|| panic!("rewards overflow"));
+            if num > U256::from(i128::MAX as u128) {
+                panic!("rewards overflow");
+            }
+            num.as_i128()
+        } else {
+            0
+        };
 
         if delta > 0 {
             let prev: i128 = env
@@ -486,15 +629,17 @@ impl MultiTokenStaking {
                 .persistent()
                 .get(&DataKey::Rewards(user.clone(), reward_token.clone()))
                 .unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &prev.checked_add(delta).expect("rewards overflow"));
+            env.storage().persistent().set(
+                &DataKey::Rewards(user.clone(), reward_token.clone()),
+                &prev.checked_add(delta).expect("rewards overflow"),
+            );
         }
 
         // Snapshot current global rate for this user
-        env.storage()
-            .persistent()
-            .set(&DataKey::UserRewardPerTokenPaid(user.clone(), reward_token.clone()), &rpt);
+        env.storage().persistent().set(
+            &DataKey::UserRewardPerTokenPaid(user.clone(), reward_token.clone()),
+            &rpt,
+        );
     }
 
     fn _stake_of(env: &Env, user: &Address) -> i128 {
@@ -511,7 +656,7 @@ impl MultiTokenStaking {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _},
+        testutils::Address as _,
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env,
     };
@@ -537,14 +682,22 @@ mod tests {
         reward_1_sac.mint(&admin, &10_000_000);
         reward_2_sac.mint(&admin, &10_000_000);
 
-        let contract_id = env.register_contract(None, MultiTokenStaking);
+        let contract_id = env.register(MultiTokenStaking, ());
         let client = MultiTokenStakingClient::new(&env, &contract_id);
         client.initialize(&admin, &stake_token_id.address());
-        
+
         client.add_reward_token(&admin, &reward_token_1_id.address());
         client.add_reward_token(&admin, &reward_token_2_id.address());
 
-        (env, contract_id, admin, alice, bob, reward_token_1_id.address(), reward_token_2_id.address())
+        (
+            env,
+            contract_id,
+            admin,
+            alice,
+            bob,
+            reward_token_1_id.address(),
+            reward_token_2_id.address(),
+        )
     }
 
     #[test]
@@ -632,6 +785,9 @@ mod tests {
         // No rewards should remain locked in the contract for this token.
         assert_eq!(client.pending_rewards(&alice, &rwd1), 0);
         assert_eq!(client.pending_rewards(&bob, &rwd1), 0);
+    }
+
+    #[test]
     fn test_update_contract_meta() {
         let (env, contract_id, admin, _, _, _, _) = setup();
         let client = MultiTokenStakingClient::new(&env, &contract_id);
@@ -649,9 +805,18 @@ mod tests {
         );
 
         let updated = client.get_contract_meta();
-        assert_eq!(updated.description, String::from_str(&env, "Multi-token staking on Stellar"));
-        assert_eq!(updated.icon_url, String::from_str(&env, "https://example.com/icon.png"));
-        assert_eq!(updated.website, String::from_str(&env, "https://example.com"));
+        assert_eq!(
+            updated.description,
+            String::from_str(&env, "Multi-token staking on Stellar")
+        );
+        assert_eq!(
+            updated.icon_url,
+            String::from_str(&env, "https://example.com/icon.png")
+        );
+        assert_eq!(
+            updated.website,
+            String::from_str(&env, "https://example.com")
+        );
     }
 
     #[test]
@@ -751,7 +916,7 @@ mod tests {
 
     #[test]
     fn test_pause_and_unpause_cycle() {
-        let (env, contract_id, admin, alice, _bob, rwd1, _rwd2) = setup();
+        let (env, contract_id, admin, alice, _bob, _rwd1, _rwd2) = setup();
         let client = MultiTokenStakingClient::new(&env, &contract_id);
 
         // Operations succeed before pause
@@ -794,5 +959,74 @@ mod tests {
         client.emergency_withdraw(&bob);
         assert_eq!(client.stake_of(&bob), 0);
         assert_eq!(client.total_staked(), 0);
+    }
+
+    // ── Issue #1636: Safe fixed-point reward calculation unit tests ─────────
+
+    #[test]
+    fn test_standard_reward_calculation_regression() {
+        let (env, contract_id, admin, alice, _bob, rwd1, _) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        client.stake(&alice, &500_000);
+        client.deposit_rewards(&admin, &rwd1, &1_000);
+
+        assert_eq!(client.pending_rewards(&alice, &rwd1), 1_000);
+    }
+
+    #[test]
+    fn test_ten_year_lockup_overflow_immunity() {
+        let (env, contract_id, _, _, _, _, _) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        // 10 years in seconds: 10 * 365 * 24 * 3600 = 315_360_000
+        let ten_years = 315_360_000u64;
+        let large_amount: i128 = 1_000_000_000_000_000_000; // 10^18
+        let high_rate: i128 = 10_000_000; // 1 token/sec
+        let rate_multiplier: i128 = 200; // 2x
+        let emission_bps: i128 = 20_000; // 2x
+
+        // With U256 intermediate math, this calculates accurately without panicking.
+        let res = client.calculate_rewards(
+            &large_amount,
+            &high_rate,
+            &ten_years,
+            &rate_multiplier,
+            &emission_bps,
+        );
+
+        let expected: i128 = 1_261_440_000_000_000_000_000_000_000;
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn test_boundary_breach_calculation_overflow() {
+        let (env, contract_id, _, _, _, _, _) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        let ten_years = 315_360_000u64;
+        let res = client.try_calculate_rewards(&i128::MAX, &i128::MAX, &ten_years, &200, &20_000);
+        assert_eq!(res, Err(Ok(Error::CalculationOverflow)));
+    }
+
+    #[test]
+    fn test_small_principal_short_duration_no_premature_truncation() {
+        let (env, contract_id, _, _, _, _, _) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        let amount = 1_i128;
+        let rate = 10_000_000_i128;
+        let elapsed_seconds = 10_000u64;
+        let rate_multiplier = 100_i128;
+        let emission_bps = 10_000_i128;
+
+        let res = client.calculate_rewards(
+            &amount,
+            &rate,
+            &elapsed_seconds,
+            &rate_multiplier,
+            &emission_bps,
+        );
+        assert_eq!(res, 10_000);
     }
 }

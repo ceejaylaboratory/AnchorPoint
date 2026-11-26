@@ -2,6 +2,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
 import { config } from '../config/env';
 import mockPrisma from '../lib/prisma';
+import { metricsService } from './metrics.service';
 
 jest.mock('../lib/prisma', () => ({
   __esModule: true,
@@ -35,6 +36,10 @@ jest.mock('@stellar/stellar-sdk', () => {
 
   return {
     ...original,
+    rpc: {
+      ...original.rpc,
+      Server: jest.fn().mockImplementation(() => ({ getLatestLedger: jest.fn() })),
+    },
     Horizon: {
       Server: jest.fn().mockImplementation(() => mockHorizonServer),
     },
@@ -321,5 +326,133 @@ describe('StellarService.sendPaymentWithClaimableFallback', () => {
       where: { id: 'tx-1' },
       data: { claimableBalanceId: balanceId.toXDR('hex'), stellarTxId: 'tx-hash-cb' },
     });
+  });
+});
+
+// ─── Horizon / Soroban RPC failover (closes #1587) ─────────────────────────────
+
+describe('StellarService endpoint failover', () => {
+  const PRIMARY_HORIZON = 'https://horizon-primary.example';
+  const STANDBY_HORIZON = 'https://horizon-standby.example';
+  const PRIMARY_RPC = 'https://rpc-primary.example';
+  const STANDBY_RPC = 'https://rpc-standby.example';
+  const originalConfig = { ...config } as any;
+  const originalHorizonServer = (StellarSdk.Horizon as any).Server;
+  const rpcServerMock = () => StellarSdk.rpc.Server as jest.Mock;
+
+  let service: StellarService;
+  let primary: any;
+  let standby: any;
+  let failoverSpy: jest.SpyInstance;
+  let recoverySpy: jest.SpyInstance;
+
+  const account = {
+    balances: [],
+    signers: [{ key: 'G_SIGNER', weight: 1, type: 'ed25519_public_key' }],
+    thresholds: { low_threshold: 0, med_threshold: 1, high_threshold: 2 },
+  };
+
+  beforeEach(() => {
+    (config as any).STELLAR_HORIZON_URL = PRIMARY_HORIZON;
+    (config as any).STELLAR_HORIZON_FALLBACK_URLS = STANDBY_HORIZON;
+    (config as any).STELLAR_FAILOVER_FAILURE_THRESHOLD = 1;
+    (config as any).STELLAR_RPC_URLS = undefined;
+
+    primary = {
+      loadAccount: jest.fn().mockResolvedValue(account),
+      fetchBaseFee: jest.fn().mockResolvedValue('100'),
+    };
+    standby = {
+      loadAccount: jest.fn().mockResolvedValue(account),
+      fetchBaseFee: jest.fn().mockResolvedValue('100'),
+    };
+    (StellarSdk.Horizon as any).Server = jest
+      .fn()
+      .mockImplementation((url: string) => (url === PRIMARY_HORIZON ? primary : standby));
+    rpcServerMock().mockReset();
+    rpcServerMock().mockImplementation((url: string) => (url === PRIMARY_RPC ? { getLatestLedger: jest.fn() } : { getLatestLedger: jest.fn() }));
+
+    failoverSpy = jest.spyOn(metricsService, 'incrementRpcNodeFailover').mockImplementation(() => undefined);
+    recoverySpy = jest.spyOn(metricsService, 'incrementRpcNodeRecovery').mockImplementation(() => undefined);
+    service = new (StellarService as any)();
+  });
+
+  afterEach(() => {
+    Object.assign(config, originalConfig);
+    (StellarSdk.Horizon as any).Server = originalHorizonServer;
+    rpcServerMock().mockReset();
+    failoverSpy.mockRestore();
+    recoverySpy.mockRestore();
+    service.stopFailoverMonitor();
+  });
+
+  it('routes a lookup to the standby Horizon node after a 504 gateway timeout', async () => {
+    primary.loadAccount.mockRejectedValue(Object.assign(new Error('Gateway Timeout'), {
+      response: { status: 504 },
+    }));
+
+    await expect(service.getAccountSigners('G_ACCOUNT')).resolves.toEqual({
+      signers: account.signers,
+      thresholds: account.thresholds,
+    });
+    expect(standby.loadAccount).toHaveBeenCalledWith('G_ACCOUNT');
+    expect(failoverSpy).toHaveBeenCalledWith('horizon', 0, 1, 'http_504');
+    expect((service as any).activeHorizonIndex).toBe(1);
+  });
+
+  it('fails over after repeated network timeouts', async () => {
+    primary.loadAccount.mockRejectedValue(Object.assign(new Error('socket hang up'), { code: 'ETIMEDOUT' }));
+
+    await expect(service.hasTrustline('G_ACCOUNT', 'USDC', 'G_ISSUER')).resolves.toBe(false);
+    expect(standby.loadAccount).toHaveBeenCalledWith('G_ACCOUNT');
+    expect(failoverSpy).toHaveBeenCalledWith('horizon', 0, 1, 'network_etimedout');
+  });
+
+  it('does not fail over for a non-retryable client error', async () => {
+    primary.loadAccount.mockRejectedValue(Object.assign(new Error('Bad request'), {
+      response: { status: 400 },
+    }));
+
+    await expect(service.getAccountSigners('G_ACCOUNT')).rejects.toThrow('Bad request');
+    expect(standby.loadAccount).not.toHaveBeenCalled();
+    expect(failoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('throws the last error when every Horizon endpoint fails', async () => {
+    primary.loadAccount.mockRejectedValue(Object.assign(new Error('primary down'), { response: { status: 503 } }));
+    standby.loadAccount.mockRejectedValue(Object.assign(new Error('standby down'), { response: { status: 502 } }));
+
+    await expect(service.getAccountSigners('G_ACCOUNT')).rejects.toThrow('standby down');
+    expect(failoverSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('probes a degraded primary and restores primary routing when it recovers', async () => {
+    primary.loadAccount.mockRejectedValue(Object.assign(new Error('Gateway Timeout'), {
+      response: { status: 504 },
+    }));
+    await service.getAccountSigners('G_ACCOUNT');
+    expect((service as any).activeHorizonIndex).toBe(1);
+
+    await expect(service.probeDegradedNodes()).resolves.toBeGreaterThanOrEqual(1);
+    expect(primary.fetchBaseFee).toHaveBeenCalled();
+    expect((service as any).activeHorizonIndex).toBe(0);
+    expect(recoverySpy).toHaveBeenCalledWith('horizon', 0);
+  });
+
+  it('fails over Soroban RPC calls on a 504 response', async () => {
+    (config as any).STELLAR_RPC_URLS = `${PRIMARY_RPC},${STANDBY_RPC}`;
+    service = new (StellarService as any)();
+
+    const primaryLedger = jest.fn().mockRejectedValue(Object.assign(new Error('Gateway Timeout'), {
+      response: { status: 504 },
+    }));
+    const standbyLedger = jest.fn().mockResolvedValue({ sequence: 42 });
+    rpcServerMock().mockImplementation((url: string) => (
+      url === PRIMARY_RPC ? { getLatestLedger: primaryLedger } : { getLatestLedger: standbyLedger }
+    ));
+
+    await expect((service as any).executeRpcWithFailover('getLatestLedger')).resolves.toEqual({ sequence: 42 });
+    expect(standbyLedger).toHaveBeenCalled();
+    expect(failoverSpy).toHaveBeenCalledWith('soroban-rpc', 0, 1, 'http_504');
   });
 });

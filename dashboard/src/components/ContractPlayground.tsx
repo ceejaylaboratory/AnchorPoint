@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { 
   Play, 
   Terminal, 
@@ -6,8 +6,6 @@ import {
   Code, 
   CheckCircle2, 
   AlertCircle, 
-  Copy, 
-  Check, 
   Cpu, 
   Layers, 
   ExternalLink,
@@ -15,6 +13,10 @@ import {
   FileCode2,
   Sparkles
 } from 'lucide-react';
+import { CopyButton } from './Common/CopyButton';
+import { CopyableText } from './CopyableText';
+import { TableShortcutHints } from './TableShortcutHints';
+import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
 
 export type SorobanType = 'Address' | 'i128' | 'Symbol' | 'Bytes' | 'u32' | 'u64' | 'bool' | 'String';
 
@@ -277,9 +279,33 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [activeTab, setActiveTab] = useState<'params' | 'specJson'>('params');
   const [rawSpecInput, setRawSpecInput] = useState<string>('');
-  const [copiedTx, setCopiedTx] = useState<boolean>(false);
   const [customAddress, setCustomAddress] = useState<string>('');
   const [history, setHistory] = useState<InvocationRecord[]>(() => loadInvocationHistory());
+  const historyRef = useRef<HTMLUListElement>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+
+  useEffect(() => {
+    if (selectedRowIndex >= history.length) setSelectedRowIndex(0);
+  }, [history.length, selectedRowIndex]);
+
+  const handleCopyRow = (index: number) => {
+    const row = historyRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLButtonElement>('button[aria-label^="Copy"]')?.click();
+  };
+
+  const handleOpenRow = (index: number) => {
+    const row = historyRef.current?.querySelectorAll<HTMLElement>('[data-keyboard-row]')[index];
+    row?.querySelector<HTMLElement>('summary')?.focus();
+  };
+
+  useTableRowKeyboardNavigation({
+    containerRef: historyRef,
+    rowCount: history.length,
+    selectedIndex: selectedRowIndex,
+    onSelectRow: setSelectedRowIndex,
+    onCopyRow: handleCopyRow,
+    onOpenRow: handleOpenRow,
+  });
 
   useEffect(() => {
     try {
@@ -451,12 +477,6 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
     } catch (e: any) {
       alert(`Invalid Contract Spec JSON: ${e.message}`);
     }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedTx(true);
-    setTimeout(() => setCopiedTx(false), 2000);
   };
 
   return (
@@ -807,20 +827,9 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
                 </div>
 
                 {/* Tx Hash */}
-                <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
-                  <div className="truncate max-w-[220px]">
-                    <span className="text-slate-500 block text-[10px]">Tx Hash</span>
-                    <span className="font-mono text-slate-300 truncate block">
-                      {executionResult.txHash}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => copyToClipboard(executionResult.txHash)}
-                    className="p-1.5 text-slate-400 hover:text-slate-200"
-                    title="Copy Hash"
-                  >
-                    {copiedTx ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                  </button>
+                <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800 text-xs">
+                  <span className="text-slate-500 block text-[10px]">Tx Hash</span>
+                  <CopyableText value={executionResult.txHash} label="Transaction hash" />
                 </div>
 
                 {/* Return Value */}
@@ -845,27 +854,49 @@ export const ContractPlayground: React.FC<ContractPlaygroundProps> = ({
               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
                 Invocation History
               </h3>
-              {history.length > 0 && (
-                <button
-                  onClick={() => setHistory([])}
-                  className="text-[11px] text-slate-400 hover:text-rose-400"
-                  data-testid="clear-history-btn"
-                >
-                  Clear
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {history.length > 0 && (
+                  <TableShortcutHints copyLabel="contract address" detailsLabel="open JSON details" />
+                )}
+                {history.length > 0 && (
+                  <button
+                    onClick={() => setHistory([])}
+                    className="text-[11px] text-slate-400 hover:text-rose-400"
+                    data-testid="clear-history-btn"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
             {history.length === 0 ? (
               <p className="text-xs text-slate-500">No invocations yet this session.</p>
             ) : (
-              <ul className="space-y-2 max-h-64 overflow-y-auto" data-testid="invocation-history">
-                {history.map(h => (
-                  <li key={h.id} className="p-2.5 bg-slate-950/60 rounded-lg border border-slate-800 text-[11px]">
+              <ul
+                ref={historyRef}
+                data-keyboard-table
+                className="space-y-2 max-h-64 overflow-y-auto"
+                data-testid="invocation-history"
+              >
+                {history.map((h, rowIndex) => (
+                  <li
+                    key={h.id}
+                    data-keyboard-row
+                    tabIndex={selectedRowIndex === rowIndex ? 0 : -1}
+                    aria-selected={selectedRowIndex === rowIndex}
+                    onFocus={() => setSelectedRowIndex(rowIndex)}
+                    className={`p-2.5 bg-slate-950/60 rounded-lg border border-slate-800 text-[11px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                      selectedRowIndex === rowIndex ? 'ring-1 ring-inset ring-primary/30' : ''
+                    }`}
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono font-bold text-slate-200">{h.method}()</span>
                       <span className="text-slate-500">{new Date(h.timestamp).toLocaleTimeString()}</span>
                     </div>
-                    <div className="font-mono text-slate-400 truncate">{h.contractAddress}</div>
+                    <div className="flex items-center gap-1 font-mono text-slate-400">
+                      <span className="truncate">{h.contractAddress}</span>
+                      <CopyButton value={h.contractAddress} label="Contract address" />
+                    </div>
                     <details className="mt-1">
                       <summary className="cursor-pointer text-primary">View JSON</summary>
                       <pre className="mt-1 p-2 bg-slate-900 rounded font-mono text-[10px] text-emerald-300 overflow-x-auto">

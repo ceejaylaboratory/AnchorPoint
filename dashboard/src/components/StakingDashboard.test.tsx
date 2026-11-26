@@ -246,4 +246,40 @@ describe('StakingDashboard component', () => {
     expect(screen.getAllByText(/90 Days/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/365 Days/)).toBeTruthy();
   });
+
+  it('opens APR simulation modal and pre-fills staking form when Stake Now is clicked', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        stakedAmount: 1000,
+        currentRewards: 10,
+        lockTier: '30_days',
+        lockDurationDays: 30,
+        unlockDate: new Date().toISOString(),
+        apy: 4.8,
+        stakedAt: new Date().toISOString(),
+        isUnlocked: true,
+        asset: 'APX',
+      }),
+    } as Response);
+
+    renderDashboard();
+
+    const openCalculatorBtn = screen.getByTestId('open-calculator-modal-button');
+    fireEvent.click(openCalculatorBtn);
+
+    // Calculator modal is open
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/Gross Projected Rewards/i)).toBeInTheDocument();
+
+    // Select 180d tier and click Stake Now in calculator
+    fireEvent.click(screen.getByRole('radio', { name: /180d/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Stake Now/i }));
+
+    // Stake modal should now be open and pre-filled with selected duration and amount
+    await waitFor(() => {
+      expect(screen.getByTestId('stake-amount-input')).toHaveValue(500);
+      expect(screen.getByRole('radio', { name: /180 Days/i })).toHaveAttribute('aria-checked', 'true');
+    });
+  });
 });

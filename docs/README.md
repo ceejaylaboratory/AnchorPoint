@@ -14,6 +14,9 @@ This directory contains operational, security, deployment, and quality documenta
 - [`TESTNET_DEPLOYMENT_ARCHITECTURE.md`](./TESTNET_DEPLOYMENT_ARCHITECTURE.md) describes the existing testnet service topology and request flow.
 - [`security-audit.md`](./security-audit.md) documents the contract security audit process.
 - [`TRACING_README.md`](./TRACING_README.md) documents tracing configuration and validation.
+- [`HORIZON_RPC_FAILOVER.md`](./HORIZON_RPC_FAILOVER.md) documents Horizon/Soroban endpoint health tracking, standby routing and failover metrics.
+- [`SSE_WEBSOCKET_CLEANUP.md`](./SSE_WEBSOCKET_CLEANUP.md) documents SSE/Socket.IO disconnect cleanup and connection gauges.
+- [`DATABASE_POOL_RECOVERY.md`](./DATABASE_POOL_RECOVERY.md) documents Prisma keepalive settings, health probes, and automatic reconnects.
 
 ## Logic Tracking
 
