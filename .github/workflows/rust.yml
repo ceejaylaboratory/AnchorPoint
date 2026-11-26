@@ -21,7 +21,16 @@ jobs:
         with:
           components: clippy
 
+      # Caches ~/.cargo/registry, ~/.cargo/git and both workspaces' target/
+      # dirs. The key hashes every Cargo.toml/Cargo.lock and the toolchain, so
+      # dependency updates invalidate it; unused build artifacts are pruned
+      # before the cache is saved. See contracts/README.md.
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            contracts -> target
+          cache-on-failure: true
 
       - name: Clippy
         run: cargo clippy -p anchorpoint-utils -p anchorpoint-security-registry -p event-hub --all-targets --all-features -- -D warnings
@@ -87,7 +96,16 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Caches ~/.cargo/registry, ~/.cargo/git and both workspaces' target/
+      # dirs. The key hashes every Cargo.toml/Cargo.lock and the toolchain, so
+      # dependency updates invalidate it; unused build artifacts are pruned
+      # before the cache is saved. See contracts/README.md.
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            contracts -> target
+          cache-on-failure: true
 
       - uses: taiki-e/install-action@v2
         with:
