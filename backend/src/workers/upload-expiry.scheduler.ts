@@ -2,7 +2,9 @@ import cron, { ScheduledTask } from 'node-cron';
 import { uploadStore } from '../services/upload-store.service';
 import { storageProvider } from '../services/storage-provider.service';
 import prisma from '../lib/prisma';
+import { pingHeartbeat } from '../lib/heartbeat';
 import logger from '../utils/logger';
+import { getRetentionCutoff, KYC_RETENTION_YEARS } from '../services/data-retention.service';
 
 const TTL_DAYS = 30;
 
@@ -12,6 +14,7 @@ export class UploadExpiryScheduler {
   start(): void {
     // Run every minute to expire stale uploads
     this.task = cron.schedule('* * * * *', async () => {
+      let succeeded = true;
       try {
         // In-memory fallback expiry
         const expiredCount = uploadStore.expireStale();
@@ -20,12 +23,28 @@ export class UploadExpiryScheduler {
         }
       } catch (error) {
         logger.error('Failed to run in-memory upload expiry task', { error });
+        succeeded = false;
       }
 
       try {
         await this.expireDbUploads();
       } catch (error) {
         logger.error('Failed to run DB upload expiry task', { error });
+        succeeded = false;
+      }
+
+      if (succeeded) {
+        await pingHeartbeat('upload-expiry', process.env.HEARTBEAT_UPLOAD_EXPIRY_URL);
+      }
+
+      try {
+        // Purge expired KYC documents once per hour (every 60th minute)
+        const now = new Date();
+        if (now.getMinutes() === 0) {
+          await this.purgeExpiredKycDocuments();
+        }
+      } catch (error) {
+        logger.error('Failed to run KYC document purge task', { error });
       }
     });
 
@@ -75,6 +94,52 @@ export class UploadExpiryScheduler {
     }
 
     return deleted;
+  }
+
+  /**
+   * Permanently purge KYC documents for customers past retention period.
+   * Called by background scheduler to clean up documents after GDPR retention.
+   */
+  async purgeExpiredKycDocuments(): Promise<number> {
+    const cutoff = getRetentionCutoff(new Date(), KYC_RETENTION_YEARS);
+
+    const expiredCustomers = await prisma.kycCustomer.findMany({
+      where: {
+        deletedAt: { not: null, lt: cutoff },
+      },
+      select: { id: true, userId: true },
+    });
+
+    if (expiredCustomers.length === 0) return 0;
+
+    let purged = 0;
+    for (const customer of expiredCustomers) {
+      try {
+        const uploads = await (prisma as any).uploadRecord.findMany({
+          where: { key: { contains: customer.userId } },
+          select: { key: true },
+        });
+
+        for (const upload of uploads) {
+          try {
+            await storageProvider.deleteObject(upload.key);
+          } catch (err) {
+            logger.warn('Failed to delete KYC document', { key: upload.key, error: err });
+          }
+        }
+
+        await prisma.kycCustomer.delete({ where: { id: customer.id } });
+        purged++;
+      } catch (error) {
+        logger.error('Failed to purge KYC customer documents', { customerId: customer.id, error });
+      }
+    }
+
+    if (purged > 0) {
+      logger.info(`Purged ${purged} expired KYC customer records and documents`);
+    }
+
+    return purged;
   }
 }
 

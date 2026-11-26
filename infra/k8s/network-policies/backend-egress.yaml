@@ -1,0 +1,107 @@
+# =============================================================================
+# Backend and worker egress - Issue #1690
+# =============================================================================
+# Backend and worker pods may only connect to:
+#   - cluster DNS
+#   - Postgres (5432) and Redis (6379), in-cluster or managed
+#   - external HTTPS (443) endpoints such as Stellar Horizon and Soroban RPC
+#
+# Standard NetworkPolicy cannot match hostnames, so external HTTPS is limited
+# to public IPs: private ranges and the cloud metadata endpoint are excluded.
+# To pin egress to specific Horizon endpoints, replace 0.0.0.0/0 below with
+# their CIDRs, or use a CNI that supports FQDN rules (see README.md).
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-restrict-egress
+  labels:
+    app: anchorpoint
+    component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Postgres and Redis: in-cluster pods or managed instances (production
+    # keeps both external, e.g. RDS / ElastiCache inside the VPC)
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    # External HTTPS (Stellar Horizon / Soroban RPC), public IPs only
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-restrict-egress
+  labels:
+    app: anchorpoint
+    component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: anchorpoint
+      component: worker
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Postgres and Redis: in-cluster pods or managed instances (production
+    # keeps both external, e.g. RDS / ElastiCache inside the VPC)
+    - ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    # External HTTPS (Stellar Horizon / Soroban RPC), public IPs only
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 443

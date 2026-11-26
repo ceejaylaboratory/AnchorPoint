@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -16,6 +17,11 @@ export const THEME_STORAGE_KEY = 'theme';
 export const THEME_PREFERENCES: ThemePreference[] = ['light', 'dark', 'system'];
 
 const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)';
+
+/** Class that enables the palette cross-fade defined in `index.css`. */
+export const THEME_TRANSITION_CLASS = 'theme-transition';
+/** Slightly longer than the 250ms CSS transition so it can finish. */
+export const THEME_TRANSITION_MS = 300;
 
 export interface ThemeContextValue {
   /** The stored preference, which may be `system`. */
@@ -66,6 +72,7 @@ export function resolveTheme(theme: ThemePreference, systemPrefersDark: boolean)
  * property overrides in `index.css`.
  */
 export function applyTheme(resolved: ResolvedTheme, root: HTMLElement): void {
+  // Only the scheme classes are swapped; `theme-transition` must survive.
   root.classList.remove('light', 'dark');
   root.classList.add(resolved);
   root.dataset.theme = resolved;
@@ -99,8 +106,28 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children, defaultT
     [theme, systemPrefersDark],
   );
 
+  // The first application matches what the inline boot script in index.html
+  // already painted, so it must not animate. Later changes cross-fade.
+  const hasAppliedRef = useRef(false);
+
   useEffect(() => {
-    applyTheme(resolvedTheme, document.documentElement);
+    const root = document.documentElement;
+    if (!hasAppliedRef.current) {
+      hasAppliedRef.current = true;
+      applyTheme(resolvedTheme, root);
+      return;
+    }
+
+    root.classList.add(THEME_TRANSITION_CLASS);
+    applyTheme(resolvedTheme, root);
+    const timer = window.setTimeout(
+      () => root.classList.remove(THEME_TRANSITION_CLASS),
+      THEME_TRANSITION_MS,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      root.classList.remove(THEME_TRANSITION_CLASS);
+    };
   }, [resolvedTheme]);
 
   const setTheme = useCallback((next: ThemePreference) => {

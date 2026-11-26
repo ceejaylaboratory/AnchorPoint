@@ -205,3 +205,73 @@ groups:
             {{ printf "%.0f" ((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400) }}
             days. Immediate action is required to avoid a TLS outage.
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/k8s/cert-manager/CERTIFICATE_LIFECYCLE.md
+
+  # ---------------------------------------------------------------------------
+  # SEP transaction completion latency alerts (#1600)
+  # These rules fire when end-to-end SEP transaction durations exceed SLA
+  # thresholds, which typically indicates bank partner delays, Horizon
+  # congestion, or stuck worker queues.
+  # ---------------------------------------------------------------------------
+  - name: anchorpoint-sep-transaction-latency
+    interval: 60s
+    rules:
+      # Fires when P95 SEP transaction completion latency exceeds 5 minutes
+      # over a 15-minute evaluation window. Applies across all SEP types and
+      # assets; use label matchers in a silencing rule to scope to a specific
+      # SEP type or asset if needed.
+      - alert: SepTransactionHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(sep_transaction_duration_seconds_bucket[15m])
+            ) by (le, sep_type, asset)
+          ) > 300
+        for: 15m
+        labels:
+          severity: warning
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: >-
+            SEP transaction P95 latency exceeds 5 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 95th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 5 minutes over the last 15 minutes.
+            Current P95 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            Investigate bank partner delays, Horizon RPC congestion, and
+            stuck worker queues in BullMQ.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Fires when P99 latency breaches 15 minutes — a more severe threshold
+      # indicating a large fraction of transactions are stuck.
+      - alert: SepTransactionHighP99Latency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(
+              rate(sep_transaction_duration_seconds_bucket[15m])
+            ) by (le, sep_type, asset)
+          ) > 900
+        for: 15m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: >-
+            SEP transaction P99 latency exceeds 15 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 99th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 15 minutes over the last 15 minutes.
+            Current P99 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            This likely indicates a systemic failure. Page the on-call
+            engineer and check Horizon, the bank partner API, and BullMQ
+            worker health.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md

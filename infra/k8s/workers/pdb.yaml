@@ -1,0 +1,35 @@
+# =============================================================================
+# Kubernetes Worker PodDisruptionBudget - Issue #1667
+# =============================================================================
+# Keeps at least 2 worker pods running during voluntary disruptions such as
+# node drains and cluster upgrades.
+# =============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: anchorpoint-worker
+  labels:
+    app: anchorpoint
+    component: worker
+    environment: testnet
+spec:
+  minAvailable: 2
+  # Must match the pod labels in deployment.yaml
+  selector:
+    matchLabels:
+      app: anchorpoint
+      component: worker
+      environment: testnet
+
+# =============================================================================
+# Manual QA Steps:
+# =============================================================================
+# 1. Validate:
+#    kubeval infra/k8s/workers/pdb.yaml
+# 2. Apply:
+#    kubectl apply -f infra/k8s/workers/pdb.yaml -n anchorpoint-testnet
+# 3. Check allowed disruptions:
+#    kubectl get pdb anchorpoint-worker -n anchorpoint-testnet
+# 4. Drain a node and confirm evictions stop at 2 available pods:
+#    kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+# =============================================================================

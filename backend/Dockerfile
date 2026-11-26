@@ -59,21 +59,32 @@ FROM node:20-alpine AS runner
 #   wget       — lightweight health-check probe (no curl needed)
 RUN apk add --no-cache dumb-init wget
 
+# Dedicated unprivileged user and group with a fixed UID/GID (10001) so the
+# runtime identity is explicit and matches runAsUser in the Helm chart.
+RUN addgroup -S -g 10001 appgroup \
+ && adduser -S -D -H -u 10001 -G appgroup appuser
+
 WORKDIR /app
 
 ENV NODE_ENV=production
 
 # Copy only the artefacts needed at runtime. Nothing from the build toolchain
 # (TypeScript compiler, devDependencies, npm cache) ever enters this image.
-COPY --from=prod-deps /app/node_modules      ./node_modules
-COPY --from=builder  /app/package*.json      ./
-COPY --from=builder  /app/dist               ./dist
-COPY --from=builder  /app/prisma             ./prisma
-COPY --from=builder  /app/tools              ./tools
-COPY --from=builder  /app/docker-entrypoint.sh ./docker-entrypoint.sh
+COPY --chown=10001:10001 --from=prod-deps /app/node_modules      ./node_modules
+COPY --chown=10001:10001 --from=builder  /app/package*.json      ./
+COPY --chown=10001:10001 --from=builder  /app/dist               ./dist
+COPY --chown=10001:10001 --from=builder  /app/prisma             ./prisma
+COPY --chown=10001:10001 --from=builder  /app/tools              ./tools
+COPY --chown=10001:10001 --from=builder  /app/docker-entrypoint.sh ./docker-entrypoint.sh
 
-# Run as the unprivileged 'node' user supplied by the official Node image.
-USER node
+# /app is owned by the app user. /app/uploads is the mount point for the
+# ephemeral uploads volume; with a read-only root filesystem it and /tmp are
+# the only writable paths (see docker-compose*.yml and the Helm chart).
+RUN mkdir -p /app/uploads \
+ && chown 10001:10001 /app /app/uploads
+
+# Run as the unprivileged app user (numeric so runAsNonRoot can verify it).
+USER 10001
 
 # Backend API port
 EXPOSE 3002
