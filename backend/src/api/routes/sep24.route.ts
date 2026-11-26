@@ -17,6 +17,7 @@ import { FeeService } from '../../services/fee.service';
 import { RedisService } from '../../services/redis.service';
 import { redis } from '../../lib/redis';
 import { emitTransactionStatusUpdate } from '../../lib/socket';
+import { metricsService } from '../../services/metrics.service';
 
 const router = Router();
 
@@ -256,11 +257,18 @@ router.get('/transaction/sse', (req: Request, res: Response) => {
     closed = true;
     try {
       (subscriber as any).unsubscribe?.(channel);
+      (subscriber as any).removeAllListeners?.('message');
       (subscriber as any).quit?.();
     } catch {
       // Best-effort cleanup
     }
+    req.removeListener('close', cleanup);
+    req.removeListener('aborted', cleanup);
+    res.removeListener('close', cleanup);
+    metricsService.decrementSseConnections();
   };
+
+  metricsService.incrementSseConnections();
 
   (subscriber as any).subscribe(channel, (err: Error | null) => {
     if (err) {
@@ -287,9 +295,10 @@ router.get('/transaction/sse', (req: Request, res: Response) => {
     }
   });
 
-  // Clean up subscription when the client disconnects
+  // Clean up subscription and listeners when the client disconnects
   req.on('close', cleanup);
   req.on('aborted', cleanup);
+  res.on('close', cleanup);
 
   return;
 });

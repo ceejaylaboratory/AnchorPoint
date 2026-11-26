@@ -116,13 +116,13 @@ readinessProbe:
 # -- Security context (pod-level) ---------------------------------------------
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
+  runAsUser: 10001
+  fsGroup: 10001
 
 # -- Security context (container-level) ---------------------------------------
 containerSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1000
+  runAsUser: 10001
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
@@ -179,13 +179,21 @@ extraEnv: []
 #   value: "true"
 
 # -- Extra volumes / volumeMounts (e.g. tmp dir for readOnlyRootFilesystem) ---
+# /tmp and /app/uploads are memory-backed (tmpfs) so they stay ephemeral and
+# are the only writable paths under readOnlyRootFilesystem.
 extraVolumes:
   - name: tmp
-    emptyDir: {}
+    emptyDir:
+      medium: Memory
+  - name: uploads
+    emptyDir:
+      medium: Memory
 
 extraVolumeMounts:
   - name: tmp
     mountPath: /tmp
+  - name: uploads
+    mountPath: /app/uploads
 
 # -- Redis (optional) --------------------------------------------------------
 # Disabled by default: production should point REDIS_URL at a managed Redis.

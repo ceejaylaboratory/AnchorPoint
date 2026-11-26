@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MotionGlobalConfig } from 'framer-motion';
 import { axe, toHaveNoViolations } from 'jest-axe';
@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Modal } from './Modal';
 import { ConfirmModal } from './ConfirmModal';
 import { WalletModal } from './WalletModal';
+import { ShortcutHelpModal } from './ShortcutHelpModal';
 
 expect.extend(toHaveNoViolations);
 
@@ -264,5 +265,67 @@ describe('Modal preventClose (#1528)', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ShortcutHelpModal accessibility (#1612)', () => {
+  it('renders as a labelled modal dialog with aria-modal="true"', () => {
+    render(<ShortcutHelpModal open onClose={() => {}} />);
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    const labelledBy = dialog.getAttribute('aria-labelledby');
+    expect(document.getElementById(labelledBy as string)?.textContent).toBe('Keyboard Shortcuts');
+  });
+
+  it('closes on Escape via the shared Modal base', () => {
+    const onClose = vi.fn();
+    render(<ShortcutHelpModal open onClose={onClose} />);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('traps keyboard focus inside the dialog', () => {
+    render(<ShortcutHelpModal open onClose={() => {}} />);
+
+    const dialog = screen.getByRole('dialog');
+    const buttons = Array.from(dialog.querySelectorAll<HTMLElement>('button'));
+    expect(buttons.length).toBeGreaterThan(0);
+
+    // Tab past the last button should wrap to the first.
+    buttons[buttons.length - 1].focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(document.activeElement).toBe(buttons[0]);
+  });
+
+  it('restores focus to the triggering element when closed', async () => {
+    const Harness = () => {
+      const [open, setOpen] = React.useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open shortcuts
+          </button>
+          <ShortcutHelpModal open={open} onClose={() => setOpen(false)} />
+        </>
+      );
+    };
+
+    render(<Harness />);
+    const trigger = screen.getByRole('button', { name: 'Open shortcuts' });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole('dialog')).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('has no axe violations', async () => {
+    const { container } = render(<ShortcutHelpModal open onClose={() => {}} />);
+    expect(await axe(container)).toHaveNoViolations();
   });
 });

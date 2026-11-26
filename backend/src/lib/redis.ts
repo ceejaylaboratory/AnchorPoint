@@ -55,6 +55,10 @@ const attachRedisEventHandlers = <T extends RedisClientLike>(client: T) => {
       logger.info('Redis connected successfully');
     });
 
+    client.on('ready', () => {
+      logger.info('Redis client ready');
+    });
+
     client.on('error', (err: unknown) => {
       logger.error('Redis connection error:', err instanceof Error ? err : new Error(String(err)));
     });
@@ -65,6 +69,11 @@ const attachRedisEventHandlers = <T extends RedisClientLike>(client: T) => {
 
     client.on('reconnecting', (delay: unknown) => {
       logger.warn(`Redis reconnecting in ${typeof delay === 'number' ? delay : 0}ms`);
+    });
+
+    // Handle end event to prevent unhandled error events
+    client.on('end', () => {
+      logger.warn('Redis connection ended');
     });
   }
 
@@ -84,10 +93,22 @@ const decorateDuplicateMethod = <T extends RedisClientLike>(client: T): T => {
 const createRedisClient = () => {
   const options = {
     maxRetriesPerRequest: 3,
+    // Exponential backoff retry strategy with max attempts
     retryStrategy: (times: number) => {
-      const delay = Math.min(times * 50, 2000);
+      if (times > 10) {
+        logger.error('Redis max reconnection attempts reached');
+        return null; // Stop retrying
+      }
+      const delay = Math.min(50 * Math.pow(2, times), 30000); // Exponential: 50ms, 100ms, 200ms... up to 30s
       return delay;
     },
+    // Socket configuration for timeout handling
+    connectTimeout: 10000,
+    commandTimeout: 5000,
+    // Enable automatic reconnection
+    lazyConnect: false,
+    // Keep alive for persistent connections
+    keepAlive: 30000,
   };
 
   const client = (

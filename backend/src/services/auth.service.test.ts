@@ -26,6 +26,28 @@ jest.mock('../utils/logger', () => ({
   }
 }));
 
+jest.mock('../lib/jwt-key-state', () => ({
+  getPreviousJwtSecret: jest.fn(),
+  storePreviousJwtSecret: jest.fn(),
+}));
+
+jest.mock('../lib/redis', () => ({
+  redis: {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue('OK'),
+    del: jest.fn().mockResolvedValue(1),
+    expire: jest.fn().mockResolvedValue(1),
+  },
+}));
+
+jest.mock('./config.service', () => ({
+  __esModule: true,
+  default: {
+    getConfig: jest.fn(() => ({ JWT_SECRET: process.env.JWT_SECRET ?? 'test-secret' })),
+    updateConfig: jest.fn(),
+  },
+}));
+
 const loadAuthService = () => {
   jest.resetModules();
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -106,6 +128,31 @@ describe('Auth Service', () => {
     const { verifyToken, jwtMock } = loadAuthService();
     (jwtMock.verify as jest.Mock).mockReturnValue({});
     await expect(verifyToken('tok_123')).rejects.toThrow('Invalid token payload');
+  });
+
+  it('verifyToken accepts a token signed by the previous key during the grace period', async () => {
+    process.env.JWT_SECRET = 'new-secret';
+    const { verifyToken, jwtMock } = loadAuthService();
+    const { getPreviousJwtSecret } = jest.requireMock('../lib/jwt-key-state');
+    getPreviousJwtSecret.mockResolvedValue('previous-secret');
+    (jwtMock.verify as jest.Mock)
+      .mockImplementationOnce(() => { throw new Error('invalid signature'); })
+      .mockImplementationOnce(() => ({ sub: 'GLEGACY_KEY' }));
+
+    await expect(verifyToken('tok_legacy')).resolves.toEqual({ sub: 'GLEGACY_KEY' });
+    expect(jwtMock.verify).toHaveBeenNthCalledWith(1, 'tok_legacy', 'new-secret');
+    expect(jwtMock.verify).toHaveBeenNthCalledWith(2, 'tok_legacy', 'previous-secret');
+  });
+
+  it('verifyToken rejects legacy tokens once the grace period has expired', async () => {
+    process.env.JWT_SECRET = 'new-secret';
+    const { verifyToken, jwtMock } = loadAuthService();
+    const { getPreviousJwtSecret } = jest.requireMock('../lib/jwt-key-state');
+    getPreviousJwtSecret.mockResolvedValue(null);
+    (jwtMock.verify as jest.Mock).mockImplementation(() => { throw new Error('invalid signature'); });
+
+    await expect(verifyToken('tok_old')).rejects.toThrow('invalid signature');
+    expect(jwtMock.verify).toHaveBeenCalledTimes(1);
   });
 
   describe('Challenge Management', () => {

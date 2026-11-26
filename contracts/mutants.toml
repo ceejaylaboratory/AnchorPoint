@@ -5,15 +5,31 @@
 # The contracts workspace is separate from the root workspace, so it needs
 # its own config. Run from the contracts/ directory:
 #
-#   cd contracts && cargo mutants --config mutants.toml -p liquid_staking
+#   cd contracts && cargo mutants --config mutants.toml --workspace --in-place
 #
 # The same command is run in CI (see .github/workflows/rust.yml).
 
-# Only mutate the liquid staking contract as requested.
-examine_globs = ["liquid_staking/**"]
+# Mutate the core contracts. Other workspace members are still built and
+# their tests run, but their source is not mutated.
+examine_globs = [
+  "anchorpoint/**",
+  "staking/**",
+  "swap/**",
+  "governance/**",
+  "liquid_staking/**",
+]
 
-# Skip test and example files.
-exclude_globs = ["**/tests/**", "**/examples/**"]
+# Skip test and example files. Test code is not contract logic, so mutating it
+# only adds runtime without measuring anything.
+exclude_globs = [
+  "**/tests/**",
+  "**/examples/**",
+  "**/test.rs",
+  "**/tests.rs",
+  "**/test_*.rs",
+  "**/*_test.rs",
+  "**/*_tests.rs",
+]
 
 # Standard timeout floor for Soroban contract tests, in seconds.
 minimum_test_timeout = 300

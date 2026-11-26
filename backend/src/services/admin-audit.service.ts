@@ -24,7 +24,8 @@ export type AdminAuditAction =
   | 'FEATURE_FLAG_TARGET_USERS_ADD'
   | 'FEATURE_FLAG_TARGET_USERS_REMOVE'
   | 'FEATURE_FLAG_DELETE'
-  | 'ADMIN_NOTIFICATION_DLQ_RETRY';
+  | 'ADMIN_NOTIFICATION_DLQ_RETRY'
+  | 'ADMIN_WEBHOOK_DLQ_RETRY';
 
 /**
  * Outcome of the audited admin action.

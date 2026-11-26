@@ -171,6 +171,21 @@ Old key versions remain available for decryption after rotation. No downtime is 
 |----------|---------|-------------|
 | `ENABLE_KEY_ROTATION_WORKER` | `false` | Set to `true` to activate the worker |
 | `KEY_ROTATION_WORKER_CRON` | `0 0 1 * *` | Cron expression for rotation schedule |
+| `JWT_ROTATION_GRACE_PERIOD_SECONDS` | `86400` | How long tokens signed by the previous JWT key stay valid |
+
+### JWT Signing Key Rotation (#1580)
+
+The same cron tick rotates the JWT signing secret stored in the admin dynamic config.
+The previous secret is retained in Redis under `jwt:previous_signing_key` for
+`JWT_ROTATION_GRACE_PERIOD_SECONDS` (24 hours by default).
+
+- New tokens are always signed with the current primary secret.
+- Verification tries the primary secret first, then the previous secret while its Redis TTL is live.
+- Once the TTL expires, tokens signed with older keys are rejected.
+- Setting the grace period to `0` disables fallback immediately.
+- Revocation is checked before signature verification, so revoked tokens are never accepted via the fallback.
+
+No JWKS endpoint is exposed; clients do not need to change because verification happens server-side.
 
 ### Automatic Rotation (AWS KMS)
 

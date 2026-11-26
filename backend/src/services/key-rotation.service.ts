@@ -10,10 +10,20 @@ import {
   KeyRotationResult,
 } from '../lib/key-management.types';
 import { config } from '../config/env';
+import { randomBytes } from 'node:crypto';
+import { storePreviousJwtSecret } from '../lib/jwt-key-state';
+import configService from './config.service';
 import { reencryptStoredDocuments } from './upload-store.service';
 import logger from '../utils/logger';
 
 const HOT_WALLET_KEYS_CACHE_KEY = 'hot_wallet_keys';
+
+export interface JwtKeyRotationResult {
+  rotated: true;
+  rotatedAt: string;
+  gracePeriodSeconds: number;
+  previousKeyRetained: boolean;
+}
 
 /**
  * Service for automated encryption key rotation.
@@ -76,6 +86,40 @@ export class KeyRotationService {
     });
 
     return result;
+  }
+
+  /**
+   * Rotate the JWT signing key while keeping the previous key verifiable for
+   * the configured grace period. New tokens are always signed with the new
+   * primary secret (#1580).
+   */
+  async rotateJwtSigningKey(): Promise<JwtKeyRotationResult> {
+    const currentSettings = configService.getConfig();
+    const currentSecret = currentSettings.JWT_SECRET;
+    const nextSecret = randomBytes(32).toString('hex');
+    const gracePeriodSeconds = config.JWT_ROTATION_GRACE_PERIOD_SECONDS;
+
+    if (!nextSecret || nextSecret === currentSecret) {
+      throw new Error('Failed to generate a new JWT signing key');
+    }
+
+    await storePreviousJwtSecret(currentSecret, gracePeriodSeconds);
+    await configService.updateConfig({
+      ...currentSettings,
+      JWT_SECRET: nextSecret,
+    });
+
+    logger.info('JWT signing key rotated', {
+      grace_period_seconds: gracePeriodSeconds,
+      previous_key_retained: gracePeriodSeconds > 0,
+    });
+
+    return {
+      rotated: true,
+      rotatedAt: new Date().toISOString(),
+      gracePeriodSeconds,
+      previousKeyRetained: gracePeriodSeconds > 0,
+    };
   }
 
   private refreshKeyMaterialInMemory(): void {

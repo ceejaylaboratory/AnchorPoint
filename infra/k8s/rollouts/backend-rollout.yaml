@@ -1,0 +1,152 @@
+# =============================================================================
+# Argo Rollouts canary for the AnchorPoint backend - Issue #1689
+# =============================================================================
+# Replaces the Helm chart's standard Deployment as the controller of backend
+# pods. The Rollout references the Helm-rendered Deployment (workloadRef) for
+# its pod template, so image/config changes made with `helm upgrade` are
+# released as a canary instead of a rolling update.
+#
+# Release flow:
+#   10% canary -> 5m pause -> 33% -> 10m pause -> 100%
+# with a Prometheus analysis running throughout. If the canary's 5xx error
+# rate exceeds 1% (or p99 latency exceeds 1s), the Rollout aborts and all
+# traffic is shifted back to the stable ReplicaSet with no downtime.
+#
+# Prerequisites:
+#   - Argo Rollouts controller installed in the cluster
+#   - ingress-nginx (traffic is split with canary Ingress annotations)
+#   - Helm release `anchor-point` in namespace `anchorpoint-prod`, installed
+#     with `--set replicaCount=0` so the Rollout owns the replica count
+#   - Prometheus scraping backend pods with pod labels mapped to metric labels
+#     (labelmap __meta_kubernetes_pod_label_(.+)), which exposes
+#     `rollouts_pod_template_hash` on http_* metrics
+#
+# See deploy/README.md for the rollout commands.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Canary Service: receives the canary share of traffic. Argo Rollouts injects
+# the canary ReplicaSet's pod-template-hash into this selector (and the stable
+# hash into the Helm-managed `anchor-point` Service).
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: anchor-point-canary
+  namespace: anchorpoint-prod
+  labels:
+    app.kubernetes.io/name: anchor-point
+    app.kubernetes.io/instance: anchor-point
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: anchor-point
+    app.kubernetes.io/instance: anchor-point
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 3002
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9464
+      targetPort: metrics
+      protocol: TCP
+
+# -----------------------------------------------------------------------------
+# AnalysisTemplate: Prometheus health checks scoped to the canary pods only.
+# -----------------------------------------------------------------------------
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: backend-canary-health
+  namespace: anchorpoint-prod
+spec:
+  args:
+    - name: canary-hash
+    - name: prometheus-address
+      value: http://prometheus-server.monitoring.svc.cluster.local:80
+  metrics:
+    # 5xx error rate on canary pods must stay at or below 1%.
+    # No traffic yet (NaN) is treated as healthy.
+    - name: canary-error-rate
+      interval: 1m
+      failureLimit: 1
+      successCondition: len(result) == 0 || isNaN(result[0]) || result[0] <= 0.01
+      provider:
+        prometheus:
+          address: "{{args.prometheus-address}}"
+          query: |
+            sum(rate(http_requests_total{namespace="anchorpoint-prod",rollouts_pod_template_hash="{{args.canary-hash}}",status_code=~"5.."}[2m]))
+            /
+            sum(rate(http_requests_total{namespace="anchorpoint-prod",rollouts_pod_template_hash="{{args.canary-hash}}"}[2m]))
+    # p99 latency on canary pods must stay at or below 1s (matches the
+    # HighP99Latency alert in infra/prometheus/alerts.rules.yml).
+    - name: canary-p99-latency
+      interval: 1m
+      failureLimit: 2
+      successCondition: len(result) == 0 || isNaN(result[0]) || result[0] <= 1.0
+      provider:
+        prometheus:
+          address: "{{args.prometheus-address}}"
+          query: |
+            histogram_quantile(0.99,
+              sum by (le) (rate(http_request_duration_seconds_bucket{namespace="anchorpoint-prod",rollouts_pod_template_hash="{{args.canary-hash}}"}[2m])))
+
+# -----------------------------------------------------------------------------
+# Rollout: canary strategy for the backend.
+# -----------------------------------------------------------------------------
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: anchor-point
+  namespace: anchorpoint-prod
+  labels:
+    app.kubernetes.io/name: anchor-point
+    app.kubernetes.io/instance: anchor-point
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 3
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: anchor-point
+      app.kubernetes.io/instance: anchor-point
+      app.kubernetes.io/component: backend
+  # Pod template comes from the Helm-rendered Deployment; Helm keeps that
+  # Deployment at 0 replicas (`--set replicaCount=0`).
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: anchor-point
+    scaleDown: never
+  strategy:
+    canary:
+      stableService: anchor-point
+      canaryService: anchor-point-canary
+      trafficRouting:
+        nginx:
+          # Ingress rendered by the Helm chart; Argo creates a companion
+          # canary Ingress with weight annotations.
+          stableIngress: anchor-point
+      # Keep the canary pods available for an instant switch-back on abort.
+      abortScaleDownDelaySeconds: 30
+      # Background analysis runs from the first step until promotion; any
+      # failed measurement aborts the rollout and routes 100% to stable.
+      analysis:
+        templates:
+          - templateName: backend-canary-health
+        startingStep: 1
+        args:
+          - name: canary-hash
+            valueFrom:
+              podTemplateHashValue: Latest
+      steps:
+        - setWeight: 10
+        - pause: { duration: 5m }
+        - setWeight: 33
+        - pause: { duration: 10m }
+        - setWeight: 100

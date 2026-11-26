@@ -25,6 +25,12 @@ x-backend-common: &backend-common
     retries: 3
     start_period: 40s
   restart: unless-stopped
+  # Read-only root filesystem; /tmp and /app/uploads are the only writable
+  # paths, as ephemeral tmpfs mounts owned by the image's app user (10001).
+  read_only: true
+  tmpfs:
+    - /tmp:uid=10001,gid=10001,mode=1777
+    - /app/uploads:uid=10001,gid=10001,mode=0700
   networks:
     - anchorpoint-production-network
 

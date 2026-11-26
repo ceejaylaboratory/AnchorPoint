@@ -1,0 +1,30 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: horizon-rpc-netem
+  namespace: anchorpoint-staging
+  labels:
+    app.kubernetes.io/part-of: anchorpoint
+    app.kubernetes.io/component: chaos
+spec:
+  action: netem
+  mode: all
+  selector:
+    namespaces:
+      - anchorpoint-staging
+    labelSelectors:
+      app.kubernetes.io/name: anchor-point
+      app.kubernetes.io/component: backend
+  direction: to
+  externalTargets:
+    - horizon-testnet.stellar.org
+    - horizon.stellar.org
+    - horizon-futurenet.stellar.org
+  delay:
+    latency: 500ms
+    jitter: 50ms
+    correlation: "0"
+  loss:
+    loss: "5"
+    correlation: "0"
+  duration: 30m

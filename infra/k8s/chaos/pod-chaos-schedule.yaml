@@ -1,0 +1,23 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: backend-pod-kill-every-10m
+  namespace: anchorpoint-staging
+  labels:
+    app.kubernetes.io/part-of: anchorpoint
+    app.kubernetes.io/component: chaos
+spec:
+  schedule: "@every 10m"
+  type: PodChaos
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  podChaos:
+    action: pod-kill
+    mode: one
+    gracePeriod: 30
+    selector:
+      namespaces:
+        - anchorpoint-staging
+      labelSelectors:
+        app.kubernetes.io/name: anchor-point
+        app.kubernetes.io/component: backend

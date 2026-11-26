@@ -132,4 +132,9 @@ export function useNetwork(): NetworkContextValue {
   return context;
 }
 
+/** Like useNetwork, but returns null outside a provider (for reusable widgets). */
+export function useOptionalNetwork(): NetworkContextValue | null {
+  return useContext(NetworkContext);
+}
+
 export default NetworkProvider;
