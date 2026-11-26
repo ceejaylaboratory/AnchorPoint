@@ -72,6 +72,7 @@ model ApiKey {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   tier      Tier     @default(Free)
+  scopes    String[] @default([]) // Granular permission scopes: read:transactions, write:payments, etc.
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
@@ -537,6 +538,7 @@ model ApiKey {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   tier      Tier     @default(Free)
+  scopes    String[] @default([]) // Granular permission scopes: read:transactions, write:payments, etc.
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
