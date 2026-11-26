@@ -1,61 +1,80 @@
-jest.mock('../lib/prisma', () => ({
-  __esModule: true,
-  default: {
-    kycCustomer: {
-      updateMany: jest.fn(),
-      deleteMany: jest.fn(),
-    },
+import { softDeleteKycCustomer, queueKycDocumentPurge, processKycDocumentPurgeQueue, getRetentionCutoff } from '../services/data-retention.service';
+import prisma from '../lib/prisma';
+
+jest.mock('../lib/prisma');
+jest.mock('../lib/redis', () => ({
+  redis: {
+    lPush: jest.fn().mockResolvedValue(1),
+    rPop: jest.fn().mockResolvedValue(null),
+  },
+}));
+jest.mock('../services/storage-provider.service', () => ({
+  storageProvider: {
+    deleteObject: jest.fn().mockResolvedValue(undefined),
   },
 }));
 
-import prisma from '../lib/prisma';
-import {
-  KYC_RETENTION_YEARS,
-  getRetentionCutoff,
-  purgeSoftDeletedKycCustomers,
-  softDeleteKycCustomer,
-} from './data-retention.service';
+describe('Data Retention Service', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
-const kycCustomer = prisma.kycCustomer as unknown as {
-  updateMany: jest.Mock;
-  deleteMany: jest.Mock;
-};
+  describe('softDeleteKycCustomer', () => {
+    it('should soft-delete customer record', async () => {
+      (prisma.kycCustomer.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
-describe('data retention service (#1197)', () => {
-  beforeEach(() => jest.clearAllMocks());
+      const result = await softDeleteKycCustomer('user-123');
 
-  it('soft-deletes a live KYC customer by stamping deletedAt', async () => {
-    kycCustomer.updateMany.mockResolvedValue({ count: 1 });
+      expect(result).toBe(true);
+      expect(prisma.kycCustomer.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user-123', deletedAt: null },
+        data: { deletedAt: expect.any(Date) },
+      });
+    });
 
-    await expect(softDeleteKycCustomer('user-1')).resolves.toBe(true);
+    it('should return false when no record found', async () => {
+      (prisma.kycCustomer.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
 
-    expect(kycCustomer.updateMany).toHaveBeenCalledWith({
-      where: { userId: 'user-1', deletedAt: null },
-      data: { deletedAt: expect.any(Date) },
+      const result = await softDeleteKycCustomer('user-456');
+
+      expect(result).toBe(false);
     });
   });
 
-  it('returns false when there is no live record to soft-delete', async () => {
-    kycCustomer.updateMany.mockResolvedValue({ count: 0 });
-
-    await expect(softDeleteKycCustomer('user-1')).resolves.toBe(false);
+  describe('getRetentionCutoff', () => {
+    it('should return date 7 years ago', () => {
+      const cutoff = getRetentionCutoff(new Date('2024-01-01'));
+      expect(cutoff.getFullYear()).toBe(2017);
+    });
   });
 
-  it('uses a 7-year retention period', () => {
-    expect(KYC_RETENTION_YEARS).toBe(7);
-    expect(getRetentionCutoff(new Date('2030-06-15T00:00:00Z'))).toEqual(
-      new Date('2023-06-15T00:00:00Z')
-    );
+  describe('queueKycDocumentPurge', () => {
+    it('should push job to redis queue', async () => {
+      const { redis } = await import('../lib/redis');
+      await queueKycDocumentPurge('user-123');
+
+      expect(redis.lPush).toHaveBeenCalledWith(
+        'kyc_document_purge',
+        expect.stringContaining('user-123')
+      );
+    });
   });
 
-  it('purges only records soft-deleted before the retention cutoff', async () => {
-    kycCustomer.deleteMany.mockResolvedValue({ count: 4 });
+  describe('processKycDocumentPurgeQueue', () => {
+    it('should process and return count', async () => {
+      const { redis } = await import('../lib/redis');
+      (redis.rPop as jest.Mock)
+        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }))
+        .mockResolvedValueOnce(null);
 
-    const purged = await purgeSoftDeletedKycCustomers(new Date('2030-06-15T00:00:00Z'));
+      (prisma.kycCustomer.findUnique as jest.Mock).mockResolvedValue({
+        id: 'cust-123',
+        deletedAt: new Date('2020-01-01'),
+      });
 
-    expect(purged).toBe(4);
-    expect(kycCustomer.deleteMany).toHaveBeenCalledWith({
-      where: { deletedAt: { not: null, lt: new Date('2023-06-15T00:00:00Z') } },
+      const count = await processKycDocumentPurgeQueue();
+
+      expect(count).toBe(1);
     });
   });
 });

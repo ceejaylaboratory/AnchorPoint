@@ -10,7 +10,7 @@ import logger from '../../utils/logger';
 import { storageProvider } from '../../services/storage-provider.service';
 import { UploadStorageError, uploadStore } from '../../services/upload-store.service';
 import { config } from '../../config/env';
-import { softDeleteKycCustomer } from '../../services/data-retention.service';
+import { softDeleteKycCustomer, queueKycDocumentPurge } from '../../services/data-retention.service';
 
 type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 
@@ -300,10 +300,26 @@ export class Sep12Controller {
       const account = req.params.account;
       if (!account) return res.status(400).json({ error: 'account is required' });
 
+      if (!StrKey.isValidEd25519PublicKey(account)) {
+        return res.status(400).json({ error: 'Invalid Stellar account' });
+      }
+
+      if (req.user && req.user.publicKey !== account) {
+        return res.status(403).json({
+          error: 'Authenticated account does not match request account',
+        });
+      }
+
       const user = await prisma.user.findUnique({ where: { publicKey: account } });
-      if (user && !(await softDeleteKycCustomer(user.id))) {
+      if (!user) {
         return res.status(404).json({ error: 'Customer not found' });
       }
+      const deleted = await softDeleteKycCustomer(user.id);
+      if (!deleted) {
+        return res.status(404).json({ error: 'Customer not found' });
+      }
+      // Queue background job to purge KYC documents after retention period
+      await queueKycDocumentPurge(user.id);
       res.status(200).send();
     } catch (error) {
       logger.error('SEP-12 customer DELETE failed', {

@@ -90,6 +90,10 @@ export function initSocket(httpServer: HttpServer): SocketServer {
   return io;
 }
 
+/**
+ * Broadcast transaction status update to specific account rooms
+ * with resilient error handling to prevent process crashes
+ */
 export function emitTransactionStatusUpdate(
   userIdOrPublicKey: string | string[],
   payload: {
@@ -100,6 +104,7 @@ export function emitTransactionStatusUpdate(
   }
 ): void {
   if (!io) return;
+
   const formattedPayload: TransactionStatusUpdatePayload = {
     id: payload.id,
     status: payload.status,
@@ -108,18 +113,145 @@ export function emitTransactionStatusUpdate(
   };
 
   const targets = Array.isArray(userIdOrPublicKey) ? userIdOrPublicKey : [userIdOrPublicKey];
-  let broadcaster: any = io;
+
   for (const target of targets) {
-    if (target) {
-      broadcaster = broadcaster.to(target).to(`user:${target}`);
+    if (!target) continue;
+
+    const roomId = String(target);
+    try {
+      const room = io.sockets.adapter.rooms.get(roomId);
+      if (!room || room.size === 0) {
+        logger.debug('No clients in room, skipping broadcast', { room: roomId, transactionId: payload.id });
+        continue;
+      }
+      io.to(roomId).emit('transaction:status_update', formattedPayload);
+      io.to(`user:${roomId}`).emit('transaction:status_update', formattedPayload);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      logger.warn('Transaction status broadcast failed', {
+        room: roomId,
+        transactionId: payload.id,
+        errorType: error.name,
+        errorMessage: error.message,
+      });
     }
   }
-  broadcaster.emit('transaction:status_update', formattedPayload);
 }
 
+/**
+ * Broadcast transaction update with resilient error handling
+ */
 export function emitTxUpdated(payload: { id: string; status: string; [key: string]: unknown }): void {
-  io?.emit('tx_updated', payload);
-  io?.emit('transaction:status_update', payload);
+  if (!io) return;
+
+  try {
+    io.emit('tx_updated', payload);
+    io.emit('transaction:status_update', payload);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    logger.warn('Transaction update broadcast failed', {
+      transactionId: payload.id,
+      errorType: error.name,
+      errorMessage: error.message,
+    });
+  }
+}
+
+/**
+ * Safely emit to a specific room with comprehensive error handling
+ * Handles socket serialization errors and buffer overflows gracefully
+ */
+export async function safeEmit(
+  room: string,
+  event: string,
+  payload: unknown,
+  options?: { timeoutMs?: number }
+): Promise<{ success: boolean; error?: string }> {
+  if (!io) {
+    return { success: false, error: 'Socket.IO server not initialized' };
+  }
+
+  const timeoutMs = options?.timeoutMs ?? 5000;
+  const startTime = Date.now();
+
+  try {
+    const rooms = io.sockets.adapter.rooms;
+    if (!rooms.has(room)) {
+      return { success: false, error: 'Room does not exist' };
+    }
+
+    // Validate payload is serializable
+    try {
+      JSON.stringify(payload);
+    } catch (serializeErr) {
+      return { success: false, error: 'Payload is not serializable' };
+    }
+
+    const emitPromise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Emit timeout'));
+      }, timeoutMs);
+
+      try {
+        io!.to(room).emit(event, payload);
+        clearTimeout(timeout);
+        resolve();
+      } catch (emitErr) {
+        clearTimeout(timeout);
+        reject(emitErr);
+      }
+    });
+
+    await emitPromise;
+    return { success: true };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    const elapsed = Date.now() - startTime;
+
+    logger.warn('Safe emit failed', {
+      room,
+      event,
+      elapsedMs: elapsed,
+      errorType: error.name,
+      errorMessage: error.message,
+    });
+
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Broadcast to multiple rooms with error isolation.
+ * Continues broadcasting to remaining rooms if one fails.
+ */
+export function emitToRooms(
+  rooms: string[],
+  event: string,
+  payload: unknown
+): { success: number; failed: number; errors: string[] } {
+  if (!io) {
+    return { success: 0, failed: rooms.length, errors: ['Socket.IO server not initialized'] };
+  }
+
+  let success = 0;
+  const failed = 0;
+  const errors: string[] = [];
+
+  for (const room of rooms) {
+    try {
+      const roomSet = io.sockets.adapter.rooms.get(room);
+      if (!roomSet || roomSet.size === 0) {
+        continue;
+      }
+      io.to(room).emit(event, payload);
+      success++;
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      errors.push(`Room ${room}: ${errorMsg}`);
+    }
+  }
+
+  return { success, failed: rooms.length - success, errors };
 }
 
 export function getIo(): SocketServer | null {
@@ -157,4 +289,3 @@ export async function closeSocket(): Promise<void> {
     }
   }
 }
-
