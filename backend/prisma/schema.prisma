@@ -949,4 +949,30 @@ model FeeSchedule {
 
   @@index([assetCode, effectiveFrom])
 }
+
+// Admin audit log for tracking privileged administrative actions
+// Includes SHA-256 hash chain for tamper-evidence
+model AdminAuditLog {
+  id            String   @id @default(uuid())
+  actorId       String?  // Admin user ID
+  actorEmail    String?  // Admin email for display
+  action        String   // Action type: KYC_OVERRIDE, FEE_SCHEDULE_UPDATE, RELAYER_ALLOWANCE, PAUSE_DEPOSIT, etc.
+  resource      String   // Resource type: User, Transaction, FeeSchedule, etc.
+  resourceId    String?  // ID of the affected resource
+  beforeState   Json?    // State before mutation
+  afterState    Json?    // State after mutation
+  ipAddress     String?  // Client IP address
+  userAgent     String?  // Client user agent
+  timestamp     DateTime @default(now())
+  
+  // Hash chain for tamper-evidence
+  hash          String   @unique   // SHA-256 hash of this record
+  previousHash  String?  // SHA-256 hash of the previous record
+
+  @@index([actorId])
+  @@index([action])
+  @@index([resource, resourceId])
+  @@index([timestamp])
+  @@index([previousHash])
+}
 }

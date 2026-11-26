@@ -26,7 +26,7 @@ import multisigRouter from './api/routes/multisig.route';
 import sep31Router from './api/routes/sep31.route';
 
 import authRouter from './api/routes/auth.route';
-import { errorHandler } from './api/middleware/error.middleware';
+import { errorHandler } from './api/middleware/error-handler.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
 import { sanitizeRequestMiddleware } from './api/middleware/sanitize.middleware';

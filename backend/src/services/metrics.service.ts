@@ -27,6 +27,8 @@ export class MetricsService {
   private batchPaymentOperationsTotal: Counter<string>;
   private redisFailoverEventsTotal: Counter<string>;
   private redisConnectedClients: Gauge<string>;
+  private financialReconciliationTotal: Counter<string>;
+  private reconciliationMismatchTotal: Counter<string>;
   private rpcNodeHealth: Gauge<string>;
   private rpcNodeFailoverTotal: Counter<string>;
   private rpcNodeRecoveryTotal: Counter<string>;
@@ -237,6 +239,22 @@ export class MetricsService {
     this.redisConnectedClients = new promClient.Gauge({
       name: 'redis_connected_clients',
       help: 'Number of clients currently connected to Redis',
+      registers: [this.registry],
+    });
+
+    // Financial reconciliation metrics
+    this.financialReconciliationTotal = new promClient.Counter({
+      name: 'financial_reconciliation_total',
+      help: 'Total number of financial reconciliation checks by asset and outcome',
+      labelNames: ['asset_code', 'outcome'] as const,
+      registers: [this.registry],
+    });
+
+    // Reconciliation mismatch counter (alert metric)
+    this.reconciliationMismatchTotal = new promClient.Counter({
+      name: 'reconciliation_mismatch_total',
+      help: 'Total number of reconciliation mismatches detected',
+      labelNames: ['asset_code'] as const,
       registers: [this.registry],
     });
 
@@ -518,6 +536,20 @@ export class MetricsService {
    */
   reset(): void {
     this.registry.resetMetrics();
+  }
+
+  /**
+   * Record financial reconciliation result for an asset
+   */
+  incrementFinancialReconciliation(assetCode: string, outcome: 'match' | 'mismatch'): void {
+    this.financialReconciliationTotal.inc({ asset_code: assetCode, outcome });
+  }
+
+  /**
+   * Increment reconciliation mismatch counter (alert metric)
+   */
+  incrementReconciliationMismatch(count: number = 1): void {
+    this.reconciliationMismatchTotal.inc({ asset_code: 'total' }, count);
   }
 }
 
