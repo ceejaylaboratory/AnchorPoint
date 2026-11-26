@@ -1,9 +1,14 @@
-import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsView from '../components/SettingsView';
+import { I18nProvider } from '../i18n/config';
 import type { UiConfig } from '../types';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   THEME_STORAGE_KEY,
+  THEME_TRANSITION_CLASS,
+  THEME_TRANSITION_MS,
   ThemeProvider,
   applyTheme,
   resolveTheme,
@@ -179,6 +184,79 @@ describe('ThemeProvider', () => {
   });
 });
 
+describe('theme transitions', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not animate the initial application', () => {
+    renderHook(() => useTheme(), { wrapper: wrapper('dark') });
+    expect(document.documentElement.classList.contains(THEME_TRANSITION_CLASS)).toBe(false);
+  });
+
+  it('cross-fades when the theme changes, then removes the transition class', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useTheme(), { wrapper: wrapper('dark') });
+
+    act(() => result.current.setTheme('light'));
+    expect(document.documentElement.classList.contains(THEME_TRANSITION_CLASS)).toBe(true);
+    expect(document.documentElement.classList.contains('light')).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(THEME_TRANSITION_MS);
+    });
+    expect(document.documentElement.classList.contains(THEME_TRANSITION_CLASS)).toBe(false);
+  });
+
+  it('cross-fades when the OS scheme flips under a "system" preference', () => {
+    vi.useFakeTimers();
+    const media = stubMatchMedia(true);
+    renderHook(() => useTheme(), { wrapper: wrapper('system') });
+
+    act(() => media.setDark(false));
+    expect(document.documentElement.classList.contains(THEME_TRANSITION_CLASS)).toBe(true);
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
+});
+
+describe('index.html theme boot script (no flash of wrong theme)', () => {
+  const html = readFileSync(resolve(__dirname, '../../index.html'), 'utf8');
+  const match = html.match(/<script id="theme-boot">([\s\S]*?)<\/script>/);
+  const runBootScript = () => {
+    new Function(match![1])();
+  };
+
+  it('is present and runs before the app bundle', () => {
+    expect(match).not.toBeNull();
+    expect(html.indexOf('id="theme-boot"')).toBeLessThan(html.indexOf('/src/main.tsx'));
+  });
+
+  it('follows the OS preference when nothing is stored', () => {
+    stubMatchMedia(false);
+    runBootScript();
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.classList.contains('light')).toBe(true);
+  });
+
+  it('honours an explicit stored choice over the OS preference', () => {
+    stubMatchMedia(false);
+    localStorage.setItem(THEME_STORAGE_KEY, 'dark');
+    runBootScript();
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.style.colorScheme).toBe('dark');
+  });
+
+  it('agrees with the provider so hydration does not repaint', () => {
+    stubMatchMedia(false);
+    localStorage.setItem(THEME_STORAGE_KEY, 'system');
+    runBootScript();
+    const painted = document.documentElement.dataset.theme;
+
+    const { result } = renderHook(() => useTheme(), { wrapper: wrapper() });
+    expect(result.current.resolvedTheme).toBe(painted);
+  });
+});
+
 describe('SettingsView theme selector', () => {
   const uiConfig: UiConfig = {
     brandName: 'AnchorPoint',
@@ -191,7 +269,9 @@ describe('SettingsView theme selector', () => {
   const renderSettings = () =>
     render(
       <ThemeProvider>
-        <SettingsView uiConfig={uiConfig} apiBaseUrl="http://localhost:3002" />
+        <I18nProvider>
+          <SettingsView uiConfig={uiConfig} apiBaseUrl="http://localhost:3002" />
+        </I18nProvider>
       </ThemeProvider>,
     );
 
@@ -200,8 +280,8 @@ describe('SettingsView theme selector', () => {
 
     const group = screen.getByRole('radiogroup', { name: 'Theme' });
     expect(group).toBeInTheDocument();
-    expect(screen.getAllByRole('radio')).toHaveLength(3);
-    expect(screen.getByRole('radio', { name: /System/ })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getAllByRole('radio')).toHaveLength(3);
+    expect(within(group).getByRole('radio', { name: /System Default/ })).toHaveAttribute('aria-checked', 'true');
   });
 
   it('persists the selection and repaints the document', () => {

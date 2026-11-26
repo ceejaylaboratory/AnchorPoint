@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWalletStore } from '../store/walletStore';
 import { WalletConnectModal } from './WalletConnectModal';
 
@@ -45,7 +45,9 @@ describe('WalletConnectModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /freighter/i }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('User rejected the request');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/request cancelled/i);
+    expect(alert).toHaveTextContent(/nothing was signed/i);
     expect(useWalletStore.getState().publicKey).toBeNull();
   });
 
@@ -62,7 +64,7 @@ describe('WalletConnectModal', () => {
     render(<WalletConnectModal isOpen onClose={onClose} />);
 
     fireEvent.click(screen.getByRole('button', { name: /freighter/i }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('User rejected the request');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/request cancelled/i);
 
     fireEvent.click(screen.getByRole('button', { name: /albedo/i }));
 
@@ -82,7 +84,7 @@ describe('WalletConnectModal', () => {
     render(<WalletConnectModal isOpen onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /freighter/i }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('User rejected the request');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/request cancelled/i);
 
     fireEvent.click(screen.getByRole('button', { name: /rabet/i }));
 
@@ -90,6 +92,75 @@ describe('WalletConnectModal', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Rabet is not installed'),
     );
     expect(screen.getAllByRole('alert')).toHaveLength(1);
-    expect(screen.queryByText('User rejected the request')).toBeNull();
+    expect(screen.queryByText(/request cancelled/i)).toBeNull();
+  });
+
+  describe('signing / approval safeguards (#1617)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('times out a prompt the wallet never answers and offers Try Again', async () => {
+      vi.useFakeTimers();
+      connectWallet.mockImplementationOnce(() => new Promise<string>(() => {}));
+      render(<WalletConnectModal isOpen onClose={vi.fn()} timeoutMs={90_000} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /freighter/i }));
+      expect(screen.getByText(/waiting for approval/i)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /freighter/i })).toBeDisabled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(90_000);
+      });
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveAttribute('data-error-code', 'timeout');
+      expect(alert).toHaveTextContent(/did not respond within 90 seconds/i);
+      // The spinner is gone and every provider is selectable again.
+      expect(screen.queryByText(/waiting for approval/i)).toBeNull();
+      expect(screen.getByRole('button', { name: /freighter/i })).not.toBeDisabled();
+    });
+
+    it('retries the same provider from the error banner without a reload', async () => {
+      connectWallet
+        .mockRejectedValueOnce(new Error('User declined access'))
+        .mockResolvedValueOnce(PUBLIC_KEY);
+      const onClose = vi.fn();
+      render(<WalletConnectModal isOpen onClose={onClose} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /rabet/i }));
+      await screen.findByRole('alert');
+
+      fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+
+      await waitFor(() => expect(onClose).toHaveBeenCalled());
+      expect(connectWallet).toHaveBeenNthCalledWith(2, 'rabet');
+      expect(useWalletStore.getState().publicKey).toBe(PUBLIC_KEY);
+    });
+
+    it('lets the user cancel a pending prompt and returns to idle', async () => {
+      let resolveLate: (key: string) => void = () => {};
+      connectWallet.mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveLate = resolve;
+          }),
+      );
+      const onClose = vi.fn();
+      render(<WalletConnectModal isOpen onClose={onClose} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /freighter/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /^cancel$/i }));
+
+      expect(screen.queryByText(/waiting for approval/i)).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+
+      // A wallet that answers after the user gave up must not connect.
+      await act(async () => {
+        resolveLate(PUBLIC_KEY);
+      });
+      expect(useWalletStore.getState().publicKey).toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+    });
   });
 });

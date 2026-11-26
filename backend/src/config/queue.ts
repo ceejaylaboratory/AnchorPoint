@@ -1,4 +1,9 @@
 import { Queue, Job, QueueOptions, WorkerOptions, JobsOptions } from 'bullmq';
+import type { WebhookRetryJobData } from '../services/webhookRetry.queue';
+import {
+  incrementWebhookDlqCount,
+  decrementWebhookDlqCount,
+} from './webhook-dlq-metrics';
 
 // Redis connection for BullMQ with resiliency settings (#361)
 export const queueConnection = {
@@ -198,6 +203,7 @@ export const QUEUE_NAMES = {
   SETTLEMENTS: 'settlements',
   NOTIFICATIONS: 'notifications',
   WEBHOOK_DELIVERY: 'webhook-delivery',
+  WEBHOOK_DELIVERY_DLQ: 'webhook-delivery-dlq',
   DEAD_LETTER_QUEUE: 'dead-letter-queue',
   NOTIFICATION_DLQ: 'notification-dlq',
   FEE_REPORTS: 'fee-reports',
@@ -317,4 +323,123 @@ export async function retryNotificationDlqJob(
   const retried = await queue.add(deadLetter.data.name, deadLetter.data.data);
   await deadLetter.remove();
   return retried;
+}
+
+// ── Webhook dead-letter queue (#1584) ────────────────────────────────
+
+export interface WebhookFailureDiagnostics {
+  status?: number;
+  body?: string;
+}
+
+export interface WebhookDeadLetterData {
+  originalJobId?: string;
+  name: string;
+  data: WebhookRetryJobData;
+  failedReason: string;
+  responseStatus?: number;
+  responseBody?: string;
+  attemptsMade: number;
+  failedAt: string;
+}
+
+let webhookDlq: Queue<WebhookDeadLetterData> | null = null;
+let webhookRetryQueue: Queue<WebhookRetryJobData> | null = null;
+
+/** Lazily created so importing this module does not open Redis connections. */
+export function getWebhookDlq(): Queue<WebhookDeadLetterData> {
+  webhookDlq ??= new Queue<WebhookDeadLetterData>(QUEUE_NAMES.WEBHOOK_DELIVERY_DLQ, {
+    connection: queueConnection,
+  });
+  return webhookDlq;
+}
+
+function getWebhookRetryQueue(): Queue<WebhookRetryJobData> {
+  webhookRetryQueue ??= new Queue<WebhookRetryJobData>(QUEUE_NAMES.WEBHOOK_DELIVERY, {
+    connection: queueConnection,
+  });
+  return webhookRetryQueue;
+}
+
+/**
+ * Moves a webhook job that exhausted its retries to the DLQ, preserving full
+ * failure diagnostics. Returns true when the job was dead-lettered.
+ */
+export async function routeFailedWebhookToDlq(
+  job: Job<WebhookRetryJobData> | undefined,
+  err: Error,
+  diagnostics: WebhookFailureDiagnostics = {},
+  dlq: Pick<Queue<WebhookDeadLetterData>, 'add'> = getWebhookDlq()
+): Promise<boolean> {
+  if (!job) return false;
+  const maxAttempts = job.opts.attempts ?? 1;
+  if (job.attemptsMade < maxAttempts) return false;
+
+  const deadLetter: WebhookDeadLetterData = {
+    originalJobId: job.id,
+    name: job.name,
+    data: job.data,
+    failedReason: err.message,
+    responseStatus: diagnostics.status,
+    responseBody: diagnostics.body,
+    attemptsMade: job.attemptsMade,
+    failedAt: new Date().toISOString(),
+  };
+  await dlq.add(job.name, deadLetter, { removeOnComplete: true, removeOnFail: false });
+  incrementWebhookDlqCount();
+  return true;
+}
+
+/** Lists dead-lettered webhook jobs for operator inspection. */
+export async function listWebhookDlqJobs(
+  start = 0,
+  end = 49,
+  dlq: Pick<Queue<WebhookDeadLetterData>, 'getJobs'> = getWebhookDlq()
+): Promise<Job<WebhookDeadLetterData>[]> {
+  return dlq.getJobs(['waiting', 'delayed', 'paused'], start, end);
+}
+
+/**
+ * Re-enqueues a dead-lettered webhook on the delivery queue and removes it from
+ * the DLQ. Returns the new job, or null when the DLQ job does not exist.
+ */
+export async function retryWebhookDlqJob(
+  dlqJobId: string,
+  dlq: Pick<Queue<WebhookDeadLetterData>, 'getJob'> = getWebhookDlq(),
+  queue: Pick<Queue<WebhookRetryJobData>, 'add'> = getWebhookRetryQueue()
+): Promise<Job<WebhookRetryJobData> | null> {
+  const deadLetter: Job<WebhookDeadLetterData> | undefined = await dlq.getJob(dlqJobId);
+  if (!deadLetter) return null;
+
+  const retried = await queue.add(deadLetter.data.name, deadLetter.data.data, {
+    attempts: 5,
+    backoff: { type: 'exponential', delay: 2000 },
+  });
+  await deadLetter.remove();
+  decrementWebhookDlqCount();
+  return retried;
+}
+
+/**
+ * Redelivers a single dead-lettered webhook (when `jobId` is provided) or a
+ * batch of them. Returns the ids of newly enqueued delivery jobs.
+ */
+export async function retryFailedWebhooks(
+  jobId?: string,
+  limit = 50,
+  dlq: Pick<Queue<WebhookDeadLetterData>, 'getJob' | 'getJobs'> = getWebhookDlq(),
+  queue: Pick<Queue<WebhookRetryJobData>, 'add'> = getWebhookRetryQueue()
+): Promise<string[]> {
+  if (jobId) {
+    const retried = await retryWebhookDlqJob(jobId, dlq, queue);
+    return retried?.id ? [retried.id] : [];
+  }
+
+  const jobs = await dlq.getJobs(['waiting', 'delayed', 'paused'], 0, Math.max(0, limit - 1));
+  const retriedIds: string[] = [];
+  for (const job of jobs) {
+    const retried = await retryWebhookDlqJob(job.id!, dlq, queue);
+    if (retried?.id) retriedIds.push(retried.id);
+  }
+  return retriedIds;
 }

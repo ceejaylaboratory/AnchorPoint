@@ -2,6 +2,11 @@ import express from 'express';
 import request from 'supertest';
 import http from 'http';
 
+jest.mock('@prisma/client', () => ({
+  QuoteStatus: { EXPIRED: 'EXPIRED' },
+  PrismaClient: jest.fn(),
+}));
+
 jest.mock('crypto', () => {
   const actual = jest.requireActual('crypto');
   return {

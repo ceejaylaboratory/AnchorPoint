@@ -190,3 +190,52 @@ describe('MetricsService API latency & error metrics (#1202)', () => {
     expect(metrics).toMatch(/websocket_active_connections\{[^}]*\} 1/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #1600: SEP transaction completion latency histogram
+// ---------------------------------------------------------------------------
+describe('MetricsService SEP transaction completion duration (#1600)', () => {
+  beforeEach(() => metricsService.reset());
+
+  it('registers the sep_transaction_duration_seconds histogram', async () => {
+    const metrics = await metricsService.getMetrics();
+    expect(metrics).toContain('# TYPE sep_transaction_duration_seconds histogram');
+    expect(metrics).toContain('sep_transaction_duration_seconds');
+  });
+
+  it('records a completed SEP-24 transaction observation', async () => {
+    // Simulate a 90-second (1.5 min) SEP-24 USDC deposit completing successfully.
+    metricsService.observeSepTransactionCompletionDuration('sep24', 'USDC', 'completed', 90);
+
+    const metrics = await metricsService.getMetrics();
+    expect(metrics).toContain('sep_transaction_duration_seconds_count');
+    // The 120s bucket should include an observation of 90s.
+    expect(metrics).toMatch(
+      /sep_transaction_duration_seconds_bucket\{[^}]*le="120"[^}]*\} 1/,
+    );
+    // The 60s bucket should NOT include the 90s observation.
+    expect(metrics).toMatch(
+      /sep_transaction_duration_seconds_bucket\{[^}]*le="60"[^}]*\} 0/,
+    );
+  });
+
+  it('records an errored SEP-31 transaction observation', async () => {
+    metricsService.observeSepTransactionCompletionDuration('sep31', 'EURT', 'error', 310);
+
+    const metrics = await metricsService.getMetrics();
+    // The 600s bucket should include the 310s observation.
+    expect(metrics).toMatch(
+      /sep_transaction_duration_seconds_bucket\{[^}]*le="600"[^}]*\} 1/,
+    );
+    expect(metrics).toContain('status="error"');
+    expect(metrics).toContain('sep_type="sep31"');
+    expect(metrics).toContain('asset="EURT"');
+  });
+
+  it('uses financial-flow bucket boundaries (10, 30, 60, 120, 300, 600, 1800)', async () => {
+    const metrics = await metricsService.getMetrics();
+    for (const bucket of [10, 30, 60, 120, 300, 600, 1800]) {
+      expect(metrics).toContain(`sep_transaction_duration_seconds_bucket{le="${bucket}"`);
+    }
+  });
+});

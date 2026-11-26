@@ -7,6 +7,7 @@ export class MetricsService {
   private httpRequestsTotal: Counter<string>;
   private activeConnections: Gauge<string>;
   private activeWebSockets: Gauge<string>;
+  private activeSseConnections: Gauge<string>;
   private errorCounter: Counter<string>;
   private dbQueryDuration: Histogram<string>;
   private apiVersionGauge: Gauge<string>;
@@ -15,6 +16,9 @@ export class MetricsService {
   private dbConnectionsActive: Gauge<string>;
   private dbConnectionsLimit: Gauge<string>;
   private dbPoolConnectionsActive: Gauge<string>;
+  private dbConnectionHealth: Gauge<string>;
+  private dbReconnectTotal: Counter<string>;
+  private dbHealthcheckFailuresTotal: Counter<string>;
   private sepTransactionsTotal: Counter<string>;
   private sepTransactionDuration: Histogram<string>;
   private kycVerificationTotal: Counter<string>;
@@ -26,6 +30,7 @@ export class MetricsService {
   private rpcNodeHealth: Gauge<string>;
   private rpcNodeFailoverTotal: Counter<string>;
   private rpcNodeRecoveryTotal: Counter<string>;
+  private sepTransactionCompletionDuration: Histogram<string>;
 
   constructor() {
     this.registry = new promClient.Registry();
@@ -75,6 +80,13 @@ export class MetricsService {
     this.activeWebSockets = new promClient.Gauge({
       name: 'websocket_active_connections',
       help: 'Number of active WebSocket connections',
+      registers: [this.registry],
+    });
+
+    // Gauge for active Server-Sent Events (SSE) streams
+    this.activeSseConnections = new promClient.Gauge({
+      name: 'sse_active_connections',
+      help: 'Number of active Server-Sent Events connections',
       registers: [this.registry],
     });
 
@@ -142,6 +154,25 @@ export class MetricsService {
       name: 'db_pool_connections_active',
       help: 'Number of active connections in the database connection pool',
       labelNames: ['pool'] as const,
+      registers: [this.registry],
+    });
+
+    // #1588: connection health and automatic reconnect signals.
+    this.dbConnectionHealth = new promClient.Gauge({
+      name: 'db_connection_health',
+      help: 'Whether the most recent database health check succeeded (1 = up, 0 = down)',
+      registers: [this.registry],
+    });
+
+    this.dbReconnectTotal = new promClient.Counter({
+      name: 'db_reconnect_total',
+      help: 'Total number of Prisma pool reconnections after repeated health-check failures',
+      registers: [this.registry],
+    });
+
+    this.dbHealthcheckFailuresTotal = new promClient.Counter({
+      name: 'db_healthcheck_failures_total',
+      help: 'Total number of failed database health checks',
       registers: [this.registry],
     });
 
@@ -230,6 +261,18 @@ export class MetricsService {
       labelNames: ['provider', 'node_index'] as const,
       registers: [this.registry],
     });
+
+    // #1600: SEP transaction end-to-end completion duration histogram.
+    // Records the elapsed time from transaction creation to a terminal status
+    // (completed or error). Buckets are sized for financial flows where
+    // typical completion times range from seconds to 30 minutes.
+    this.sepTransactionCompletionDuration = new promClient.Histogram({
+      name: 'sep_transaction_duration_seconds',
+      help: 'End-to-end duration of SEP transactions from creation to terminal status (completed/error)',
+      labelNames: ['sep_type', 'asset', 'status'] as const,
+      buckets: [10, 30, 60, 120, 300, 600, 1800],
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -244,6 +287,24 @@ export class MetricsService {
    */
   observeSepTransactionDuration(sep: string, operation: string, durationSeconds: number): void {
     this.sepTransactionDuration.observe({ sep, operation }, durationSeconds);
+  }
+
+  /**
+   * #1600: Record the end-to-end duration of a SEP transaction from creation
+   * to a terminal status (completed or error).
+   *
+   * @param sepType   SEP protocol identifier, e.g. 'sep24', 'sep31'.
+   * @param asset     Asset code involved, e.g. 'USDC'.
+   * @param status    Terminal status: 'completed' | 'error'.
+   * @param durationSeconds  Elapsed seconds from transaction creation to now.
+   */
+  observeSepTransactionCompletionDuration(
+    sepType: string,
+    asset: string,
+    status: 'completed' | 'error',
+    durationSeconds: number,
+  ): void {
+    this.sepTransactionCompletionDuration.observe({ sep_type: sepType, asset, status }, durationSeconds);
   }
 
   /**
@@ -337,6 +398,15 @@ export class MetricsService {
     this.activeWebSockets.dec();
   }
 
+  /** Track an SSE stream opening (+1) or closing (-1). */
+  incrementSseConnections(): void {
+    this.activeSseConnections.inc();
+  }
+
+  decrementSseConnections(): void {
+    this.activeSseConnections.dec();
+  }
+
   /**
    * Increment error counter
    */
@@ -384,6 +454,18 @@ export class MetricsService {
    */
   setDbPoolConnectionsActive(count: number, pool = 'default'): void {
     this.dbPoolConnectionsActive.set({ pool }, count);
+  }
+
+  setDbConnectionHealth(healthy: boolean): void {
+    this.dbConnectionHealth.set(healthy ? 1 : 0);
+  }
+
+  incrementDbReconnect(): void {
+    this.dbReconnectTotal.inc();
+  }
+
+  incrementDbHealthcheckFailure(): void {
+    this.dbHealthcheckFailuresTotal.inc();
   }
 
   /**

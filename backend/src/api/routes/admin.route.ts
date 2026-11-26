@@ -31,7 +31,12 @@ import adminAuditService, {
   AdminAuditAction,
   getAuditActor,
 } from '../../services/admin-audit.service';
-import { listNotificationDlqJobs, retryNotificationDlqJob } from '../../config/queue';
+import {
+  listNotificationDlqJobs,
+  retryNotificationDlqJob,
+  listWebhookDlqJobs,
+  retryFailedWebhooks,
+} from '../../config/queue';
 
 const router = Router();
 const adminPasswordResetService = new AdminPasswordResetService();
@@ -738,6 +743,93 @@ router.post('/queues/notification-dlq/:jobId/retry', requireWriteAccess, async (
       metadata: { error: error?.message },
     });
     res.status(500).json({ status: 'error', message: 'Failed to retry notification DLQ job' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/admin/webhooks/retry-failed:
+ *   post:
+ *     summary: Redeliver failed webhook jobs from the dead-letter queue
+ *     description: Re-enqueues a single dead-lettered webhook (jobId) or a batch of them (limit).
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             additionalProperties: false
+ *             properties:
+ *               jobId:
+ *                 type: string
+ *               limit:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 100
+ *     responses:
+ *       200:
+ *         description: Webhook jobs re-enqueued
+ *       400:
+ *         description: Invalid request payload
+ *       404:
+ *         description: DLQ job not found
+ */
+const webhookRetryFailedSchema = z
+  .object({
+    jobId: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(100).default(50),
+  })
+  .strict();
+
+router.post(
+  '/webhooks/retry-failed',
+  requireWriteAccess,
+  validate({ body: webhookRetryFailedSchema }),
+  async (req: Request, res: Response) => {
+    const { jobId, limit } = req.body as z.infer<typeof webhookRetryFailedSchema>;
+    try {
+      const retried = await retryFailedWebhooks(jobId, limit);
+      if (jobId && retried.length === 0) {
+        return res.status(404).json({ status: 'error', message: 'DLQ job not found' });
+      }
+      await adminAuditService.recordConfigChange({
+        action: 'ADMIN_WEBHOOK_DLQ_RETRY',
+        actor: getAuditActor(req),
+        targetEntity: jobId ? `webhook_dlq_job:${jobId}` : 'webhook_dlq',
+        after: { retried },
+      });
+      return res.json({ status: 'success', data: { retried, count: retried.length } });
+    } catch (error: any) {
+      logger.error('Failed to retry webhook DLQ jobs', { message: error?.message });
+      return res.status(500).json({ status: 'error', message: 'Failed to retry webhook DLQ jobs' });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/admin/webhooks/dlq:
+ *   get:
+ *     summary: List dead-lettered webhook jobs
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Dead-lettered webhook jobs
+ */
+router.get('/webhooks/dlq', requireReadAccess, async (_req: Request, res: Response) => {
+  try {
+    const jobs = await listWebhookDlqJobs();
+    return res.json({
+      status: 'success',
+      data: jobs.map((job) => ({ id: job.id, ...job.data })),
+    });
+  } catch (error: any) {
+    logger.error('Failed to list webhook DLQ jobs', { message: error?.message });
+    return res.status(500).json({ status: 'error', message: 'Failed to list webhook DLQ jobs' });
   }
 });
 

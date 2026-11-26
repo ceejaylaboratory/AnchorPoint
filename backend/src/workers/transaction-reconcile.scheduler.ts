@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import { stellarService } from '../services/stellar.service';
 import { metricsService } from '../services/metrics.service';
 import { emitTransactionStatusUpdate } from '../lib/socket';
+import { pingHeartbeat } from '../lib/heartbeat';
 import logger from '../utils/logger';
 
 /** Transactions must have been pending for at least this long before reconciling. */
@@ -20,6 +21,7 @@ export class TransactionReconcileScheduler {
     this.task = cron.schedule('*/10 * * * *', async () => {
       try {
         await this.reconcile();
+        await pingHeartbeat('transaction-reconcile', process.env.HEARTBEAT_TRANSACTION_RECONCILE_URL);
       } catch (error) {
         logger.error('Failed to run transaction reconciliation task', {
           error: error instanceof Error ? error.message : 'Unknown error',

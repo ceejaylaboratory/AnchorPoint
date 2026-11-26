@@ -60,6 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -103,6 +104,21 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
 
+      - name: Scan ${{ matrix.image }} image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-${{ matrix.image }}-${{ matrix.platform }}.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+
+      - name: Upload Trivy SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-${{ matrix.image }}-${{ matrix.platform }}.sarif'
+
   # Main / tag / manual pushes produce a single multi-arch manifest list, so
   # `:main` and the release tag each resolve to the right image on any host.
   publish:
@@ -113,6 +129,7 @@ jobs:
       contents: read
       # Required to push image layers to this repository's GHCR packages.
       packages: write
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -172,3 +189,18 @@ jobs:
           echo "$manifest" | grep -q 'linux/amd64'
           echo "$manifest" | grep -q 'linux/arm64'
           docker buildx imagetools inspect "$image"
+
+      - name: Scan published ${{ matrix.image }} image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-${{ matrix.image }}.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+
+      - name: Upload Trivy SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-${{ matrix.image }}.sarif'
