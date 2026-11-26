@@ -498,9 +498,41 @@ router.get(
  */
 router.delete(
   '/customer/:account',
+  authMiddleware,
   validate({ params: deleteCustomerParamsSchema }),
   sep12Controller.deleteCustomer.bind(sep12Controller)
 );
+
+/**
+ * @swagger
+ * /sep12/customer/{account}:
+ *   delete:
+ *     summary: Delete customer PII (Right to be Forgotten)
+ *     description: Soft-deletes the customer KYC record and queues document purging. PII is anonymized while transaction records are retained for accounting compliance.
+ *     tags: [SEP-12]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: account
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar account (G...)
+ *     responses:
+ *       200:
+ *         description: Customer deleted successfully
+ *       400:
+ *         description: Invalid account
+ *       401:
+ *         description: Missing or invalid SEP-10 JWT
+ *       403:
+ *         description: Authenticated account does not match request account
+ *       404:
+ *         description: Customer not found
+ *       500:
+ *         description: Internal server error
+ */
 
 /**
  * @swagger

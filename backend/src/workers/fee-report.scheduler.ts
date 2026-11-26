@@ -1,5 +1,6 @@
 import cron, { ScheduledTask } from 'node-cron';
 import { FeeReportService } from '../services/fee-report.service';
+import { pingHeartbeat } from '../lib/heartbeat';
 import logger from '../utils/logger';
 
 const feeReportService = new FeeReportService();
@@ -50,6 +51,7 @@ export class FeeReportScheduler {
         logger.info('Scheduling daily fee report job in queue');
         const job = await feeReportService.enqueueDailyReportJob();
         logger.info('Daily fee report job enqueued successfully', { jobId: job.id });
+        await pingHeartbeat('fee-report-daily', process.env.HEARTBEAT_FEE_REPORT_DAILY_URL);
       } catch (error) {
         logger.error('Failed to enqueue daily fee report job', { error });
       }
@@ -72,6 +74,7 @@ export class FeeReportScheduler {
           now.getMonth() - 1 // Previous month
         );
         logger.info('Monthly fee report job enqueued successfully', { jobId: job.id });
+        await pingHeartbeat('fee-report-monthly', process.env.HEARTBEAT_FEE_REPORT_MONTHLY_URL);
       } catch (error) {
         logger.error('Failed to enqueue monthly fee report job', { error });
       }

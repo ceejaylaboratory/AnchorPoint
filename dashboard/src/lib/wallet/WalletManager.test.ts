@@ -84,4 +84,63 @@ describe('WalletManager', () => {
     const result = await walletManager.signTransaction('freighter', 'TEST_XDR', 'PUBLIC');
     expect(result).toBe('SIGNED_XDR');
   });
+
+  describe('guarded signing (#1617)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('rejects with a timeout instead of hanging when the wallet never answers', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(walletManager.getAdapter('freighter')!, 'signTransaction').mockImplementation(
+        () => new Promise<string>(() => {}),
+      );
+
+      const promise = walletManager.signTransactionGuarded('freighter', 'TEST_XDR', 'PUBLIC');
+      const assertion = expect(promise).rejects.toMatchObject({ name: 'WalletSigningError', code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(90_000);
+      await assertion;
+    });
+
+    it('aborts when the extension disconnects mid-prompt', async () => {
+      vi.spyOn(walletManager.getAdapter('freighter')!, 'signTransaction').mockImplementation(
+        () => new Promise<string>(() => {}),
+      );
+
+      const promise = walletManager.signTransactionGuarded('freighter', 'TEST_XDR', 'PUBLIC');
+      window.dispatchEvent(new Event('freighter:disconnect'));
+
+      await expect(promise).rejects.toMatchObject({ code: 'disconnected' });
+    });
+
+    it('aborts when a different account becomes active', async () => {
+      vi.spyOn(walletManager.getAdapter('freighter')!, 'signTransaction').mockImplementation(
+        () => new Promise<string>(() => {}),
+      );
+
+      const promise = walletManager.signTransactionGuarded('freighter', 'TEST_XDR', 'PUBLIC', {
+        expectedPublicKey: 'GA_ORIGINAL',
+      });
+      window.dispatchEvent(new CustomEvent('freighter:accountChanged', { detail: { publicKey: 'GB_OTHER' } }));
+
+      await expect(promise).rejects.toMatchObject({ code: 'account_changed' });
+    });
+
+    it('maps a user rejection in the wallet to "cancelled"', async () => {
+      vi.spyOn(walletManager.getAdapter('freighter')!, 'signTransaction').mockRejectedValue(
+        new Error('Failed to sign transaction: User declined access'),
+      );
+
+      await expect(
+        walletManager.signTransactionGuarded('freighter', 'TEST_XDR', 'PUBLIC'),
+      ).rejects.toMatchObject({ code: 'cancelled' });
+    });
+
+    it('resolves with the signed XDR on success', async () => {
+      vi.spyOn(walletManager.getAdapter('freighter')!, 'signTransaction').mockResolvedValue('SIGNED_XDR');
+      await expect(
+        walletManager.signTransactionGuarded('freighter', 'TEST_XDR', 'PUBLIC'),
+      ).resolves.toBe('SIGNED_XDR');
+    });
+  });
 });
