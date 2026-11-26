@@ -3,6 +3,7 @@ export { FreighterAdapter } from './FreighterAdapter';
 export { AlbedoAdapter } from './AlbedoAdapter';
 export { XBullAdapter } from './XBullAdapter';
 export { RabetAdapter } from './RabetAdapter';
+export { LedgerAdapter } from './LedgerAdapter';
 export { WalletManager, type WalletOption, type GuardedSignOptions } from './WalletManager';
 export {
   SIGNING_TIMEOUT_MS,
