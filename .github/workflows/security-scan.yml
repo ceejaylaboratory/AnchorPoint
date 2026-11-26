@@ -1,0 +1,75 @@
+name: Secret Scanning
+
+# CI gate for credential leaks (#1666). The local pre-commit hook (#1256) can be
+# skipped with SKIP_SECRETLINT=1 or by not installing hooks at all, so every
+# pull request is scanned again here and the check fails on any finding.
+#
+# False positives are overridden only by an explicit entry in .secretlintignore,
+# which secretlint reads by default.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  secretlint:
+    name: secretlint (changed files)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: List changed files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
+          count=$(wc -l < "$RUNNER_TEMP/changed-files.txt")
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Changed files to scan: $count"
+
+      # Same secretlint version and config as the pre-commit hook and
+      # `npm run lint:secrets`.
+      - name: Run secretlint
+        if: steps.changed.outputs.count != '0'
+        run: |
+          tr '\n' '\0' < "$RUNNER_TEMP/changed-files.txt" | xargs -0 npx --yes \
+            --package secretlint@8 \
+            --package @secretlint/secretlint-rule-preset-recommend@8 \
+            secretlint \
+            --config .secretlintrc.json \
+            --secretlintignore .secretlintignore \
+            --no-color
+
+  trufflehog:
+    name: trufflehog (commit history)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Scans every commit in the PR range, not just the final tree, so a key
+      # added in one commit and removed in a later one is still caught.
+      # The action runs with --fail, so any finding fails the job. Verified and
+      # unknown results are reported: a key that cannot be checked is still
+      # treated as a leak.
+      - name: Run trufflehog
+        uses: trufflesecurity/trufflehog@d232362a64a09a9e7d58267b8f5acef00ae90e23 # v3.100.0
+        with:
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          extra_args: --results=verified,unknown

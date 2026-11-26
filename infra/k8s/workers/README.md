@@ -5,6 +5,11 @@ This directory contains the Kubernetes deployment manifest for AnchorPoint worke
 ## Files
 
 - `deployment.yaml` - Complete Kubernetes manifest including ConfigMap, Secret, Deployment, and Service
+- `hpa.yaml` - HorizontalPodAutoscaler (3–15 replicas, 70% CPU / 80% memory, 5 min stabilization windows) - Issue #1667
+- `pdb.yaml` - PodDisruptionBudget keeping at least 2 worker pods available during node drains - Issue #1667
+
+For the Helm-managed backend, the same settings are configured through `autoscaling.*` and
+`podDisruptionBudget.*` in `infra/helm/anchor-point/values-prod.yaml`.
 
 ## Manual QA Steps
 

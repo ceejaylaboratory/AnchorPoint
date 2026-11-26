@@ -1,13 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import prisma from '../lib/prisma';
 import logger from '../utils/logger';
+import type { MigrationRepository } from '../repositories/migration.repository';
+import { createMigrationRepository } from '../repositories/prisma-repositories';
 
 const MIGRATIONS_DIR = path.join(__dirname, '../../prisma/migrations');
-
-interface AppliedMigrationRow {
-  migration_name: string;
-}
 
 function getMigrationDirNames(): string[] {
   if (!fs.existsSync(MIGRATIONS_DIR)) return [];
@@ -16,12 +13,10 @@ function getMigrationDirNames(): string[] {
   );
 }
 
-async function getAppliedMigrationNames(): Promise<Set<string>> {
-  const rows = await prisma.$queryRaw<AppliedMigrationRow[]>`
-    SELECT migration_name FROM _prisma_migrations
-    WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL
-  `;
-  return new Set(rows.map((row) => row.migration_name));
+async function getAppliedMigrationNames(
+  repository: MigrationRepository = createMigrationRepository()
+): Promise<Set<string>> {
+  return new Set(await repository.findAppliedMigrationNames());
 }
 
 /**

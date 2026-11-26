@@ -41,13 +41,13 @@ spec:
     {{- end }}
   behavior:
     scaleDown:
-      stabilizationWindowSeconds: 300   # 5 min cool-down before scaling in
+      stabilizationWindowSeconds: {{ .Values.autoscaling.scaleDownStabilizationWindowSeconds | default 300 }}   # cool-down before scaling in
       policies:
         - type: Pods
           value: 1
           periodSeconds: 60             # Remove at most 1 pod per minute
     scaleUp:
-      stabilizationWindowSeconds: 60
+      stabilizationWindowSeconds: {{ .Values.autoscaling.scaleUpStabilizationWindowSeconds | default 60 }}
       policies:
         - type: Pods
           value: 2
