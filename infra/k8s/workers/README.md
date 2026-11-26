@@ -61,6 +61,20 @@ kubectl describe pod -n anchorpoint-testnet -l app=anchorpoint,component=worker 
 kubectl delete -f deployment.yaml -n anchorpoint-testnet
 ```
 
+## Resource Sizing Guidelines
+
+Every container must declare explicit CPU and memory requests and limits so a single container cannot exhaust node memory and trigger the kernel OOM killer against neighbouring pods.
+
+| Container | CPU request | Memory request | CPU limit | Memory limit | Node.js heap cap |
+|-----------|-------------|----------------|-----------|--------------|------------------|
+| Backend (`docker-compose.prod.yml`) | 250m | 512Mi | 1000m | 1.5Gi | `--max-old-space-size=1200` |
+| Worker (`deployment.yaml`) | 200m | 384Mi | 800m | 1Gi | `--max-old-space-size=768` |
+
+- Set `--max-old-space-size` (via `NODE_OPTIONS`) to roughly 75–80% of the container memory limit. V8 then runs garbage collection before the heap reaches the cgroup ceiling, leaving headroom for buffers, native modules and the stack.
+- If you raise or lower a memory limit, change the heap cap with it.
+- Supporting containers in `docker-compose.prod.yml` (proxy, dashboard, Postgres, Redis, Jaeger, smoke test) also have `deploy.resources` reservations and limits.
+- Watch for `OOMKilled` in `kubectl describe pod` or `kubectl get pods` restart counts. Repeated OOM kills mean the limit (and heap cap) should be raised, or `QUEUE_CONCURRENCY` lowered.
+
 ## Security Notes
 
 - **Never** commit actual secrets to this file

@@ -9,5 +9,9 @@ modules:
       follow_redirects: true
       fail_if_ssl: false
       fail_if_not_ssl: false
+      # Verify the certificate chain and hostname on HTTPS targets so invalid or
+      # expired certificates fail the probe.
+      tls_config:
+        insecure_skip_verify: false
       headers:
         Accept: application/json
