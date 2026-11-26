@@ -1,0 +1,58 @@
+# =============================================================================
+# Data store ingress - Issue #1690
+# =============================================================================
+# Only backend pods (Helm chart, app.kubernetes.io/component: backend) and
+# worker pods (infra/k8s/workers, component: worker) may reach the database
+# and cache ports. All other ingress to Postgres and Redis is denied.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-backend-ingress
+  labels:
+    app: anchorpoint
+    component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+        - podSelector:
+            matchLabels:
+              app: anchorpoint
+              component: worker
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-backend-ingress
+  labels:
+    app: anchorpoint
+    component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+        - podSelector:
+            matchLabels:
+              app: anchorpoint
+              component: worker
+      ports:
+        - protocol: TCP
+          port: 6379

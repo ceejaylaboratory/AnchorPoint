@@ -349,3 +349,15 @@ Master intuitive gameplay controls designed for both casual players and experien
 
 <!-- handsoff-issue-1658 -->
 - #1658: feat(contracts/revenue_distributor): add proportional token burning mechanism on revenue distribution
+
+<!-- handsoff-issue-1647 -->
+- #1647: fix(contracts/swap): enforce minimum output amount (slippage check) in single-transaction multi-hop swaps
+
+<!-- handsoff-issue-1659 -->
+- #1659: fix(contracts/staking): prevent zero-token staking deposits from creating empty state records
+
+<!-- handsoff-issue-1661 -->
+- #1661: perf(contracts): reduce storage footprint by packing user stake state into compact bitfields
+
+<!-- handsoff-issue-1662 -->
+- #1662: security(contracts): audit and prevent flash-loan price manipulation vulnerabilities in oracle feeds

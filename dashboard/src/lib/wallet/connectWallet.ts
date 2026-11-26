@@ -8,6 +8,13 @@ type RabetWindow = Window & {
   };
 };
 
+type XBullWindow = Window & {
+  xBull?: {
+    isConnected(): Promise<boolean>;
+    getPublicKey(): Promise<string>;
+  };
+};
+
 export async function connectWallet(provider: WalletProviderId): Promise<string> {
   if (provider === 'freighter') {
     const result = await requestAccess();
@@ -24,6 +31,22 @@ export async function connectWallet(provider: WalletProviderId): Promise<string>
       throw new Error('Albedo did not return a public key.');
     }
     return result.pubkey;
+  }
+
+  if (provider === 'xbull') {
+    const xBull = (window as XBullWindow).xBull;
+    if (!xBull) {
+      throw new Error('xBull extension is not available.');
+    }
+    const connected = await xBull.isConnected();
+    if (!connected) {
+      throw new Error('xBull is not connected. Please unlock the extension and try again.');
+    }
+    const publicKey = await xBull.getPublicKey();
+    if (!publicKey) {
+      throw new Error('xBull did not return a public key.');
+    }
+    return publicKey;
   }
 
   const rabet = (window as RabetWindow).rabet;

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { createSecureStorage, DEFAULT_EXCLUDE_KEYS } from './storage';
 
-export type WalletProviderId = 'freighter' | 'albedo' | 'rabet';
+export type WalletProviderId = 'freighter' | 'albedo' | 'xbull' | 'rabet';
 
 /**
  * Wallet connection state

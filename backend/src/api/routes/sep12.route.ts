@@ -45,7 +45,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024 },
+  limits: { 
+    fileSize: config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024,
+    files: 2, // Maximum 2 files per request to prevent DoS
+  },
 });
 
 /** Runs `upload.any()`, translating Multer's own errors (e.g. oversized files) into a 400 response. */
@@ -55,6 +58,11 @@ function handleUpload(req: Request, res: Response, next: NextFunction) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({
           error: `File exceeds maximum allowed size of ${config.SEP12_MAX_FILE_SIZE_MB} MB`,
+        });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          error: 'Maximum 2 files allowed per request',
         });
       }
       return res.status(400).json({ error: err.message });
@@ -490,9 +498,41 @@ router.get(
  */
 router.delete(
   '/customer/:account',
+  authMiddleware,
   validate({ params: deleteCustomerParamsSchema }),
   sep12Controller.deleteCustomer.bind(sep12Controller)
 );
+
+/**
+ * @swagger
+ * /sep12/customer/{account}:
+ *   delete:
+ *     summary: Delete customer PII (Right to be Forgotten)
+ *     description: Soft-deletes the customer KYC record and queues document purging. PII is anonymized while transaction records are retained for accounting compliance.
+ *     tags: [SEP-12]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: account
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar account (G...)
+ *     responses:
+ *       200:
+ *         description: Customer deleted successfully
+ *       400:
+ *         description: Invalid account
+ *       401:
+ *         description: Missing or invalid SEP-10 JWT
+ *       403:
+ *         description: Authenticated account does not match request account
+ *       404:
+ *         description: Customer not found
+ *       500:
+ *         description: Internal server error
+ */
 
 /**
  * @swagger
