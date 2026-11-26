@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, Address, Env, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +24,8 @@ pub enum GovernanceError {
     InsufficientSignatures = 5,
     UnauthorizedSigner = 6,
     DuplicateSigner = 7,
+    CyclicalDelegation = 8,
+    SelfDelegation = 9,
 }
 
 #[contracttype]
@@ -42,6 +44,7 @@ pub enum DataKey {
     Admin,
     CouncilSigners,
     Threshold,
+    Delegate(Address),
 }
 
 #[contract]
@@ -106,7 +109,69 @@ impl GovernanceContract {
         prop_id
     }
 
+    /// Delegate voting power from `delegator` to `delegatee`.
+    /// Rejects self-delegation and cyclical delegation chains.
+    pub fn delegate_votes(env: Env, delegator: Address, delegatee: Address) -> Result<(), GovernanceError> {
+        delegator.require_auth();
+
+        if delegator == delegatee {
+            return Err(GovernanceError::SelfDelegation);
+        }
+
+        // Walk the existing delegation chain from the delegatee to detect cycles.
+        let mut cursor = delegatee.clone();
+        let mut hops: u32 = 0;
+        loop {
+            if cursor == delegator {
+                return Err(GovernanceError::CyclicalDelegation);
+            }
+            match env.storage().persistent().get::<DataKey, Address>(&DataKey::Delegate(cursor.clone())) {
+                Some(next) => {
+                    cursor = next;
+                    hops += 1;
+                    if hops > 64 {
+                        return Err(GovernanceError::CyclicalDelegation);
+                    }
+                }
+                None => break,
+            }
+        }
+
+        env.storage().persistent().set(&DataKey::Delegate(delegator.clone()), &delegatee);
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("delegate")),
+            (delegator, delegatee),
+        );
+        Ok(())
+    }
+
+    /// Revoke any active delegation for `delegator`.
+    pub fn revoke_delegation(env: Env, delegator: Address) {
+        delegator.require_auth();
+        env.storage().persistent().remove(&DataKey::Delegate(delegator.clone()));
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("revoke")),
+            (delegator,),
+        );
+    }
+
+    /// Return the current delegatee for `delegator`, if any.
+    pub fn get_delegate(env: Env, delegator: Address) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::Delegate(delegator))
+    }
+
     pub fn vote(env: Env, caller: Address, prop_id: u32, support: bool, weight: u64) {
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("voted")),
+            (caller, prop_id, support, weight),
+        );
+    }
+
+    /// Cast a vote using quadratic voting power derived from `staked_tokens`.
+    /// Voting weight is `sqrt(staked_tokens)`, mitigating whale dominance.
+    pub fn vote_quadratic(env: Env, caller: Address, prop_id: u32, support: bool, staked_tokens: u64) {
+        caller.require_auth();
+        let weight = ProposalMath::quadratic_weight(staked_tokens);
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("voted")),
             (caller, prop_id, support, weight),
@@ -191,6 +256,25 @@ impl ProposalMath {
         Ok(result as u64)
     }
     pub fn calculate_deadline(start: u32, duration: u32) -> Result<u32, ()> { start.checked_add(duration).ok_or(()) }
+
+    /// Integer square root of `n` (floor). Used for quadratic voting weight.
+    pub fn sqrt(n: u64) -> u64 {
+        if n < 2 {
+            return n;
+        }
+        let mut x = n;
+        let mut y = (x + 1) / 2;
+        while y < x {
+            x = y;
+            y = (x + n / x) / 2;
+        }
+        x
+    }
+
+    /// Quadratic voting weight: `sqrt(staked_tokens)`.
+    pub fn quadratic_weight(staked_tokens: u64) -> u64 {
+        Self::sqrt(staked_tokens)
+    }
 }
 
 #[cfg(test)]

@@ -20,8 +20,8 @@ declare global {
 // Append PostgreSQL connection-pool and SSL parameters to DATABASE_URL
 // when running against a PostgreSQL datasource. SQLite URLs are left
 // untouched.
-function buildDatabaseUrl(): string {
-  let url = process.env.DATABASE_URL!;
+export function buildDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL!;
 
   // Only decorate PostgreSQL connection strings.
   if (!url.startsWith('postgresql://') && !url.startsWith('postgres://')) {
@@ -39,6 +39,14 @@ function buildDatabaseUrl(): string {
   // SSL mode – configurable per environment. Set to 'require' or stricter
   // for production deployments.
   params.set('sslmode', config.DB_SSL_MODE);
+
+  // #1588: TCP keepalive + connect timeout detect silently dropped sockets
+  // (NAT/Firewall/LB idle timeouts) so failed connections are recycled quickly.
+  params.set('connect_timeout', String(config.DB_CONNECT_TIMEOUT_SECONDS));
+  params.set('keepalives', '1');
+  params.set('keepalives_idle', String(config.DB_KEEPALIVE_IDLE_SECONDS));
+  params.set('keepalives_interval', String(config.DB_KEEPALIVE_INTERVAL_SECONDS));
+  params.set('keepalives_count', String(config.DB_KEEPALIVE_COUNT));
 
   // Merge with any existing query-string params, giving our explicit params
   // precedence.
@@ -60,7 +68,7 @@ function buildDatabaseUrl(): string {
 const MAX_CONNECT_RETRIES = 5;
 const CONNECT_RETRY_BASE_MS = 2_000;
 
-async function connectWithRetry(client: PrismaClient): Promise<void> {
+export async function connectWithRetry(client: PrismaClient): Promise<void> {
   for (let attempt = 1; attempt <= MAX_CONNECT_RETRIES; attempt++) {
     try {
       await client.$connect();
@@ -103,6 +111,9 @@ const prisma =
 if (process.env.NODE_ENV !== 'production') {
   global.__prisma = prisma;
 }
+
+/** Raw (non-extended) client used for connection-level health checks. */
+export const prismaRaw = prisma;
 
 // ── Metrics middleware ────────────────────────────────────────────────
 type PrismaMiddlewareParams = {

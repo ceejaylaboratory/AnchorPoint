@@ -7,7 +7,9 @@ On inspection, these were already implemented. This document records verificatio
 ## Verified in docker-compose.prod.yml
 - postgres: `pg_isready` healthcheck (interval 10s, retries 5, start_period 10s)
 - redis: `redis-cli -a $REDIS_PASSWORD ping` healthcheck
-- backend-1/2/3 (via x-backend-common anchor): wget health endpoint check against `/health`
+- backend-1/2/3 (via x-backend-common anchor): wget liveness check against `/health/live`
+  (interval 10s, timeout 5s, retries 3, start_period 40s so migrations and secret/KMS
+  hydration finish before failed probes count; issue #1668)
 - dashboard: wget health endpoint check against `/health`
 - All dependent services use `condition: service_healthy` in `depends_on`
 - Named persistent volumes: `postgres-data`, `redis-data`

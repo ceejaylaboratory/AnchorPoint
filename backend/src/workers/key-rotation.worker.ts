@@ -24,18 +24,28 @@ function startWorker(): void {
       })();
 
   scheduledTask = cron.schedule(validSchedule, () => {
-    service
-      .rotateKeys()
-      .then((result) => {
+    void (async () => {
+      try {
+        const result = await service.rotateKeys();
         logger.info('Key rotation cron tick completed', {
           backend: result.backend,
           rotated: result.rotated,
           message: result.message,
         });
-      })
-      .catch((err) =>
-        logger.error(`Key rotation tick failed: ${(err as Error).message}`)
-      );
+      } catch (err) {
+        logger.error(`Key rotation tick failed: ${(err as Error).message}`);
+      }
+
+      try {
+        const jwtResult = await service.rotateJwtSigningKey();
+        logger.info('JWT signing key rotation cron tick completed', {
+          rotated: jwtResult.rotated,
+          grace_period_seconds: jwtResult.gracePeriodSeconds,
+        });
+      } catch (err) {
+        logger.error(`JWT signing key rotation tick failed: ${(err as Error).message}`);
+      }
+    })();
   });
 
   logger.info('Key rotation worker started');

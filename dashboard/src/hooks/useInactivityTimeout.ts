@@ -1,78 +1,184 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+/** Default inactivity window: 15 minutes. */
+export const DEFAULT_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** Events that count as the user being present. */
+export const ACTIVITY_EVENTS = [
+  'mousedown',
+  'mousemove',
+  'keydown',
+  'click',
+  'scroll',
+  'touchstart',
+  'wheel',
+] as const;
+
+export interface InactivityTimeoutOptions {
+  /**
+   * How long before the timeout a warning phase begins. While warning, ambient
+   * activity (mouse movement, scrolling) no longer resets the timer, so the
+   * warning cannot vanish from under the user's cursor; only `reset()` — e.g.
+   * a "Stay Logged In" button — extends the session.
+   */
+  warningMs?: number;
+  /** Fired once when the warning phase begins. */
+  onWarning?: () => void;
+  /** When false, no timers run and no listeners are attached. Default true. */
+  enabled?: boolean;
+}
+
+export interface InactivityTimeoutState {
+  /** True during the warning phase that precedes the timeout. */
+  isWarning: boolean;
+  /** Milliseconds until timeout while warning; null otherwise. */
+  remainingMs: number | null;
+  /** Restarts the full inactivity window, also leaving the warning phase. */
+  reset: () => void;
+}
+
+/** A null, non-positive or infinite timeout means "Never". */
+const isActiveTimeout = (timeoutMs: number | null | undefined): timeoutMs is number =>
+  typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0;
 
 /**
- * Custom hook that logs out users after a period of inactivity.
- * 
- * @param timeoutMs - Duration of inactivity before timeout fires (default: 15 minutes = 900000ms)
- * @param onTimeout - Callback function executed when timeout occurs
- * 
+ * Fires `onTimeout` after a period without mouse, touch, keyboard or scroll
+ * activity, optionally preceded by a warning phase.
+ *
+ * Expiry is tracked against a wall-clock deadline as well as a timer: browsers
+ * throttle timers in background tabs, so when the tab becomes visible again an
+ * overdue session is expired immediately instead of whenever the throttled
+ * timer finally runs.
+ *
+ * @param timeoutMs - Inactivity window. `null`/`0`/`Infinity` disables it ("Never").
+ * @param onTimeout - Called once when the window elapses.
+ *
  * @example
  * ```tsx
- * const handleLogout = useCallback(() => {
- *   sessionStorage.clear();
- *   window.location.href = '/login';
- * }, []);
- * 
- * useInactivityTimeout(900000, handleLogout);
+ * const { isWarning, remainingMs, reset } = useInactivityTimeout(15 * 60_000, lock, {
+ *   warningMs: 60_000,
+ *   enabled: walletConnected,
+ * });
  * ```
  */
 export function useInactivityTimeout(
-  timeoutMs: number = 15 * 60 * 1000, // 15 minutes default
-  onTimeout: () => void
-): void {
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onTimeoutRef = useRef(onTimeout);
+  timeoutMs: number | null = DEFAULT_INACTIVITY_TIMEOUT_MS,
+  onTimeout: () => void,
+  options: InactivityTimeoutOptions = {},
+): InactivityTimeoutState {
+  const { warningMs = 0, onWarning, enabled = true } = options;
+  const active = enabled && isActiveTimeout(timeoutMs);
 
-  // Keep the callback ref updated to avoid stale closures
+  const [isWarning, setIsWarning] = useState(false);
+  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warningRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deadlineRef = useRef<number | null>(null);
+  const warningActiveRef = useRef(false);
+
+  // Keep the callbacks in refs to avoid stale closures without re-arming timers.
+  const onTimeoutRef = useRef(onTimeout);
+  const onWarningRef = useRef(onWarning);
   useEffect(() => {
     onTimeoutRef.current = onTimeout;
-  }, [onTimeout]);
+    onWarningRef.current = onWarning;
+  }, [onTimeout, onWarning]);
 
-  /**
-   * Clears the existing timeout and starts a new one.
-   * This is called whenever user activity is detected.
-   */
-  const resetTimer = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
+  const clearTimers = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    if (warningRef.current) clearTimeout(warningRef.current);
+    if (tickRef.current) clearInterval(tickRef.current);
+    timeoutRef.current = null;
+    warningRef.current = null;
+    tickRef.current = null;
+  }, []);
+
+  const leaveWarning = useCallback(() => {
+    warningActiveRef.current = false;
+    setIsWarning(false);
+    setRemainingMs(null);
+  }, []);
+
+  const expire = useCallback(() => {
+    clearTimers();
+    deadlineRef.current = null;
+    leaveWarning();
+    onTimeoutRef.current();
+  }, [clearTimers, leaveWarning]);
+
+  const startWarning = useCallback(() => {
+    const deadline = deadlineRef.current;
+    if (deadline === null) return;
+
+    warningActiveRef.current = true;
+    setIsWarning(true);
+    setRemainingMs(Math.max(0, deadline - Date.now()));
+    onWarningRef.current?.();
+
+    tickRef.current = setInterval(() => {
+      setRemainingMs(Math.max(0, deadline - Date.now()));
+    }, 1000);
+  }, []);
+
+  /** Clears the existing timers and starts a fresh inactivity window. */
+  const reset = useCallback(() => {
+    clearTimers();
+    leaveWarning();
+
+    if (!active) {
+      deadlineRef.current = null;
+      return;
     }
 
-    timeoutRef.current = setTimeout(() => {
-      onTimeoutRef.current();
-    }, timeoutMs);
-  }, [timeoutMs]);
+    deadlineRef.current = Date.now() + timeoutMs;
 
-  /**
-   * Event handlers that reset the inactivity timer.
-   * These cover all common user interaction patterns.
-   */
+    const lead = Math.min(Math.max(warningMs, 0), timeoutMs);
+    if (lead > 0) {
+      warningRef.current = setTimeout(startWarning, timeoutMs - lead);
+    }
+    timeoutRef.current = setTimeout(expire, timeoutMs);
+  }, [active, timeoutMs, warningMs, clearTimers, leaveWarning, startWarning, expire]);
+
   useEffect(() => {
-    // User activity events that should reset the timer
-    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'click', 'scroll', 'touchstart'] as const;
+    if (!active) {
+      clearTimers();
+      deadlineRef.current = null;
+      leaveWarning();
+      return;
+    }
 
     const handleActivity = () => {
-      resetTimer();
+      if (warningActiveRef.current) return;
+      reset();
     };
 
-    // Add event listeners for all activity types
-    activityEvents.forEach((event) => {
-      document.addEventListener(event, handleActivity, { passive: true });
-    });
-
-    // Initialize the timer when the hook mounts
-    resetTimer();
-
-    // Cleanup on unmount
-    return () => {
-      activityEvents.forEach((event) => {
-        document.removeEventListener(event, handleActivity);
-      });
-
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      const deadline = deadlineRef.current;
+      if (deadline !== null && Date.now() >= deadline) {
+        expire();
       }
     };
-  }, [resetTimer]);
+
+    ACTIVITY_EVENTS.forEach((event) => {
+      document.addEventListener(event, handleActivity, { passive: true });
+    });
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    reset();
+
+    return () => {
+      ACTIVITY_EVENTS.forEach((event) => {
+        document.removeEventListener(event, handleActivity);
+      });
+      document.removeEventListener('visibilitychange', handleVisibility);
+      clearTimers();
+    };
+  }, [active, reset, expire, clearTimers, leaveWarning]);
+
+  return { isWarning, remainingMs, reset };
 }
 
 export default useInactivityTimeout;

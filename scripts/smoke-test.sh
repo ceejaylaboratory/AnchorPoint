@@ -2,6 +2,7 @@
 #
 # Synthetic smoke tests for production endpoint monitoring.
 # Verifies core health, SEP-1 TOML, SEP-10 challenge, and /info flows.
+# Requires curl and jq.
 #
 # Usage:
 #   TARGET_HOST=https://api.example.com ./scripts/smoke-test.sh
@@ -11,6 +12,7 @@
 #   SMOKE_TEST_ACCOUNT   Optional Stellar public key used for GET /auth.
 #   SMOKE_TEST_CONNECT_TIMEOUT  Optional curl connect timeout (default 10s).
 #   SMOKE_TEST_MAX_TIME         Optional curl max time (default 30s).
+#   SMOKE_TEST_MAX_DURATION     Optional total runtime budget in seconds (default 30).
 #
 # Exit codes:
 #   0  all checks passed
@@ -22,6 +24,7 @@ TARGET_HOST="${TARGET_HOST:-${BASE_URL:-}}"
 SMOKE_TEST_ACCOUNT="${SMOKE_TEST_ACCOUNT:-GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K}"
 CONNECT_TIMEOUT="${SMOKE_TEST_CONNECT_TIMEOUT:-10}"
 MAX_TIME="${SMOKE_TEST_MAX_TIME:-30}"
+MAX_DURATION="${SMOKE_TEST_MAX_DURATION:-30}"
 # Comma/space separated list of hosts whose TLS certificates must be checked.
 # Defaults to the AnchorPoint testnet hostnames managed by cert-manager.
 CERT_HOSTS="${CERT_HOSTS:-api.anchorpoint-testnet.example.com,worker.anchorpoint-testnet.example.com,dashboard.anchorpoint-testnet.example.com,soroban.anchorpoint-testnet.example.com}"
@@ -80,6 +83,54 @@ check_endpoint() {
   printf '[smoke-test][PASS] %s %s (HTTP 200)\n' "$method" "$path"
 }
 
+fetch_body() {
+  curl --silent --show-error --fail \
+    --connect-timeout "$CONNECT_TIMEOUT" \
+    --max-time "$MAX_TIME" \
+    "${TARGET_HOST}$1"
+}
+
+# Asserts that the JSON body of GET <path> satisfies a jq filter.
+check_json() {
+  local path="$1"
+  local description="$2"
+  local filter="$3"
+  local body
+
+  if ! body="$(fetch_body "$path")"; then
+    printf '[smoke-test][FAIL] GET %s %s (request failed)\n' "$path" "$description" >&2
+    FAILURES=$((FAILURES + 1))
+    return 0
+  fi
+
+  if ! printf '%s' "$body" | jq -e "$filter" >/dev/null 2>&1; then
+    printf '[smoke-test][FAIL] GET %s %s\n' "$path" "$description" >&2
+    FAILURES=$((FAILURES + 1))
+    return 0
+  fi
+
+  printf '[smoke-test][PASS] GET %s %s\n' "$path" "$description"
+}
+
+# Asserts that stellar.toml publishes a valid Stellar SIGNING_KEY.
+check_signing_key() {
+  local body
+
+  if ! body="$(fetch_body '/.well-known/stellar.toml')"; then
+    printf '[smoke-test][FAIL] GET /.well-known/stellar.toml SIGNING_KEY (request failed)\n' >&2
+    FAILURES=$((FAILURES + 1))
+    return 0
+  fi
+
+  if ! printf '%s\n' "$body" | grep -Eiq '^signing_key[[:space:]]*=[[:space:]]*"G[A-Z2-7]{55}"'; then
+    printf '[smoke-test][FAIL] GET /.well-known/stellar.toml has no valid SIGNING_KEY\n' >&2
+    FAILURES=$((FAILURES + 1))
+    return 0
+  fi
+
+  printf '[smoke-test][PASS] GET /.well-known/stellar.toml has a valid SIGNING_KEY\n'
+}
+
 check_endpoint GET '/health'
 check_endpoint GET '/.well-known/stellar.toml'
 check_endpoint GET "/auth?account=${SMOKE_TEST_ACCOUNT}"
@@ -87,6 +138,11 @@ check_endpoint GET '/info'
 check_endpoint POST '/sep10' "{\"account\":\"${SMOKE_TEST_ACCOUNT}\"}"
 check_endpoint GET '/sep24/info'
 check_endpoint GET '/sep38/info'
+
+check_json '/health' 'reports status UP' '.status == "UP"'
+check_signing_key
+check_json '/info' 'lists enabled assets with deposit/withdraw requirements' \
+  '(.assets | length > 0) and (.fee_variations.deposit | type == "object") and (.fee_variations.withdraw | type == "object")'
 
 # -----------------------------------------------------------------------------
 # Certificate expiration check
@@ -138,6 +194,11 @@ check_certificate_expiry() {
 for host in ${CERT_HOSTS//,/ }; do
   check_certificate_expiry "$host"
 done
+
+if [[ "$SECONDS" -gt "$MAX_DURATION" ]]; then
+  printf '[smoke-test][FAIL] run took %ss (budget %ss)\n' "$SECONDS" "$MAX_DURATION" >&2
+  FAILURES=$((FAILURES + 1))
+fi
 
 if [[ "$FAILURES" -gt 0 ]]; then
   printf '[smoke-test][ERROR] %s endpoint check(s) failed.\n' "$FAILURES" >&2

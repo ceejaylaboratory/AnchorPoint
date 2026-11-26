@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -79,13 +79,87 @@ const buildKycSchema = (t: TranslateFn) =>
 
 export type KycFormValues = z.infer<ReturnType<typeof buildKycSchema>>;
 
-const EMPTY_KYC_VALUES: KycFormValues = {
+export const EMPTY_KYC_VALUES: KycFormValues = {
   firstName: '',
   lastName: '',
   emailAddress: '',
   mobileNumber: '',
   idType: 'national_id',
   idNumber: '',
+};
+
+export const KYC_DRAFT_STORAGE_KEY = 'anchorpoint_kyc_draft';
+export const KYC_SESSION_KEY_STORAGE = 'anchorpoint_kyc_session_key';
+
+let inMemorySessionKey: string | null = null;
+
+export const getKycSessionKey = (): string => {
+  try {
+    const stored = sessionStorage.getItem(KYC_SESSION_KEY_STORAGE);
+    if (stored) return stored;
+    const generated =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    sessionStorage.setItem(KYC_SESSION_KEY_STORAGE, generated);
+    return generated;
+  } catch {
+    if (!inMemorySessionKey) {
+      inMemorySessionKey = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+    return inMemorySessionKey;
+  }
+};
+
+export const encryptKycDraft = (draft: Partial<KycFormValues>): string => {
+  const key = getKycSessionKey();
+  const json = JSON.stringify(draft);
+  let result = '';
+  for (let i = 0; i < json.length; i++) {
+    result += String.fromCharCode(json.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+  }
+  return btoa(result);
+};
+
+export const decryptKycDraft = (ciphertext: string): Partial<KycFormValues> | null => {
+  try {
+    const key = getKycSessionKey();
+    const raw = atob(ciphertext);
+    let result = '';
+    for (let i = 0; i < raw.length; i++) {
+      result += String.fromCharCode(raw.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    return JSON.parse(result) as Partial<KycFormValues>;
+  } catch {
+    return null;
+  }
+};
+
+export const loadKycDraft = (): Partial<KycFormValues> | null => {
+  try {
+    const ciphertext = localStorage.getItem(KYC_DRAFT_STORAGE_KEY);
+    if (!ciphertext) return null;
+    return decryptKycDraft(ciphertext);
+  } catch {
+    return null;
+  }
+};
+
+export const saveKycDraft = (draft: Partial<KycFormValues>): void => {
+  try {
+    const encrypted = encryptKycDraft(draft);
+    localStorage.setItem(KYC_DRAFT_STORAGE_KEY, encrypted);
+  } catch {
+    // Ignore storage errors (quota exceeded, private browsing)
+  }
+};
+
+export const clearKycDraft = (): void => {
+  try {
+    localStorage.removeItem(KYC_DRAFT_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
 };
 
 interface KycFormProps {
@@ -105,19 +179,20 @@ const FieldError = ({ id, message }: { id: string; message?: string }) =>
   ) : null;
 
 /**
- * SEP-12 customer creation form with real-time validation feedback.
- *
- * Validation runs on blur (and re-runs on change once a field has errored) so
- * users see problems as they leave each field rather than only on submit.
+ * SEP-12 customer creation form with real-time validation feedback
+ * and encrypted draft persistence across tab reloads.
  */
 export const KycForm = ({ onSubmit, defaultValues }: KycFormProps) => {
   const { t } = useTranslation();
   const kycSchema = buildKycSchema(t);
 
+  const [savedDraft, setSavedDraft] = useState<Partial<KycFormValues> | null>(null);
+
   const {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting, isSubmitSuccessful },
   } = useForm<KycFormValues>({
     resolver: zodResolver(kycSchema),
@@ -129,20 +204,66 @@ export const KycForm = ({ onSubmit, defaultValues }: KycFormProps) => {
     },
   });
 
-  // Clear submitted PII so returning to the form never shows stale data. The
-  // success banner stays visible until the user edits or submits again.
+  // On form mount, detect existing draft and prompt user
+  useEffect(() => {
+    const draft = loadKycDraft();
+    if (draft) {
+      const hasContent = Object.entries(draft).some(([k, v]) => {
+        if (k === 'idType') return v && v !== 'national_id';
+        return typeof v === 'string' && v.trim().length > 0;
+      });
+      if (hasContent) {
+        setSavedDraft(draft);
+      }
+    }
+  }, []);
+
+  // Automatically sync form state to encrypted local draft storage on change
+  useEffect(() => {
+    const subscription = watch((values) => {
+      if (!isSubmitSuccessful) {
+        const hasContent = Object.entries(values).some(([k, v]) => {
+          if (k === 'idType') return v && v !== 'national_id';
+          return typeof v === 'string' && v.trim().length > 0;
+        });
+        if (hasContent) {
+          saveKycDraft(values);
+        }
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [watch, isSubmitSuccessful]);
+
+  // Clear submitted PII so returning to the form never shows stale data.
   useEffect(() => {
     if (isSubmitSuccessful) {
+      clearKycDraft();
+      setSavedDraft(null);
       reset(EMPTY_KYC_VALUES, { keepIsSubmitSuccessful: true });
     }
   }, [isSubmitSuccessful, reset]);
 
   const submitHandler = handleSubmit(async (values) => {
+    clearKycDraft();
+    setSavedDraft(null);
     await onSubmit?.(values);
-    // Clear fields (and any uploaded file references held by the form) so a
-    // revisit after success starts from a clean, empty form.
     reset();
   });
+
+  const handleResumeDraft = () => {
+    if (savedDraft) {
+      reset({
+        ...EMPTY_KYC_VALUES,
+        ...savedDraft,
+      });
+      setSavedDraft(null);
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    clearKycDraft();
+    setSavedDraft(null);
+  };
 
   /** Wires a field to its error message for both sighted and AT users. */
   const fieldA11y = (name: keyof KycFormValues) => ({
@@ -159,6 +280,38 @@ export const KycForm = ({ onSubmit, defaultValues }: KycFormProps) => {
         <h3 className="font-display text-xl font-bold text-slate-100">{t('kyc.title')}</h3>
         <p className="mt-1 text-sm text-slate-400">{t('kyc.subtitle')}</p>
       </div>
+
+      {/* Resume saved draft prompt */}
+      {savedDraft && (
+        <div
+          role="region"
+          aria-label="Saved KYC submission draft prompt"
+          className="flex flex-col gap-3 rounded-xl border border-primary/30 bg-primary/10 p-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle size={18} className="text-primary-text shrink-0" aria-hidden="true" />
+            <p className="text-sm font-medium text-slate-200">
+              Resume saved KYC submission?
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleResumeDraft}
+              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text transition-all"
+            >
+              Resume
+            </button>
+            <button
+              type="button"
+              onClick={handleDiscardDraft}
+              className="rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 transition-all"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         <div>

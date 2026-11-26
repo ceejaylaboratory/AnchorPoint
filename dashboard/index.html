@@ -5,11 +5,41 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AnchorPoint | Stellar Anchor Dashboard</title>
+    <!--
+      Resolve the colour scheme before first paint so a light-mode user never
+      sees a dark frame (and vice versa) while the bundle downloads. Mirrors
+      readStoredTheme/resolveTheme/applyTheme in src/contexts/ThemeContext.tsx;
+      keep the storage key and fallbacks in sync.
+    -->
+    <script id="theme-boot">
+      (function () {
+        var root = document.documentElement;
+        var preference = 'system';
+        try {
+          var stored = localStorage.getItem('theme');
+          if (stored === 'light' || stored === 'dark' || stored === 'system') preference = stored;
+        } catch (e) {}
+        var systemDark = true;
+        try {
+          if (window.matchMedia) systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } catch (e) {}
+        var resolved = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
+        root.classList.remove('light', 'dark');
+        root.classList.add(resolved);
+        root.setAttribute('data-theme', resolved);
+        root.style.colorScheme = resolved;
+      })();
+    </script>
+    <style>
+      /* Paint the right ground before the stylesheet arrives. */
+      html { background-color: #020617; color: #f8fafc; }
+      html[data-theme="light"] { background-color: #f8fafc; color: #0f172a; }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
-  <body class="bg-[#020617] text-slate-50 antialiased overflow-x-hidden">
+  <body class="antialiased overflow-x-hidden">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
