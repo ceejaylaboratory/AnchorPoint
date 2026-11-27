@@ -10,6 +10,7 @@ import type { UiConfig } from '../types';
 import { CopyableText } from './CopyableText';
 import { TableShortcutHints } from './TableShortcutHints';
 import { useTableRowKeyboardNavigation } from '../hooks/useKeyboardShortcuts';
+import { useFiatConverter } from '../hooks/useFiatConverter';
 
 export type StatusFilter = 'All' | 'Pending' | 'Completed' | 'Failed';
 
@@ -27,6 +28,8 @@ type DashboardOverviewProps = {
   uiConfig: UiConfig;
   /** Renders pulsing placeholders instead of a blank panel while stats load. */
   isLoading?: boolean;
+  /** Backend base URL for live FX rates used by the display currency. */
+  apiBaseUrl?: string;
 };
 
 const STATUS_FILTERS: StatusFilter[] = ['All', 'Pending', 'Completed', 'Failed'];
@@ -85,7 +88,8 @@ export function writeStatusFilterToUrl(filter: StatusFilter): void {
   window.history.replaceState(null, '', url.toString());
 }
 
-export const DashboardOverview = ({ uiConfig, isLoading = false }: DashboardOverviewProps) => {
+export const DashboardOverview = ({ uiConfig, isLoading = false, apiBaseUrl }: DashboardOverviewProps) => {
+  const { formatAmount } = useFiatConverter({ apiBaseUrl });
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(readStatusFilterFromUrl);
   const [query, setQuery] = useState('');
 
@@ -142,13 +146,13 @@ export const DashboardOverview = ({ uiConfig, isLoading = false }: DashboardOver
     return [
       {
         label: 'Filtered Volume',
-        value: `$${fmtAmount(totalVolume)}`,
+        value: formatAmount(totalVolume),
         change: filteredTransactions.length > 0 ? `${filteredTransactions.length} tx` : '0 tx',
       },
       { label: 'Deposits', value: String(deposits), change: `${filteredTransactions.length} total` },
       { label: 'Pending Withdrawals', value: String(pending), change: statusFilter },
     ];
-  }, [filteredTransactions, statusFilter]);
+  }, [filteredTransactions, statusFilter, formatAmount]);
 
   if (isLoading) {
     return <DashboardOverviewSkeleton />;

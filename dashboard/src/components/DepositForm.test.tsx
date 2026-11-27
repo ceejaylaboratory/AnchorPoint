@@ -256,7 +256,10 @@ describe('<DepositForm />', () => {
     submit();
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit).toHaveBeenCalledWith({ walletAddress: VALID_WALLET, amount: '250.75' });
+    expect(onSubmit).toHaveBeenCalledWith(
+      { walletAddress: VALID_WALLET, amount: '250.75' },
+      expect.any(AbortSignal),
+    );
   });
 
   it('clears the field error as soon as the value is corrected', async () => {
@@ -326,7 +329,10 @@ describe('<DepositForm /> high-value confirmation', () => {
 
     fireEvent.click(screen.getByTestId('biometric-verify-button'));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit).toHaveBeenCalledWith({ walletAddress: VALID_WALLET, amount: '250.75' });
+    expect(onSubmit).toHaveBeenCalledWith(
+      { walletAddress: VALID_WALLET, amount: '250.75' },
+      expect.any(AbortSignal),
+    );
     expect(authenticate).toHaveBeenCalledTimes(1);
   });
 
@@ -379,5 +385,74 @@ describe('<DepositForm /> high-value confirmation', () => {
     fireEvent.click(screen.getByTestId('biometric-fallback-confirm'));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('<DepositForm /> double-submission guard', () => {
+  const fillValid = () => {
+    fireEvent.change(screen.getByLabelText(/Wallet Address/), {
+      target: { value: VALID_WALLET },
+    });
+    fireEvent.change(screen.getByLabelText(/Amount/), { target: { value: '250.75' } });
+  };
+
+  const renderForm = (onSubmit: (values: Record<string, string>, signal?: AbortSignal) => Promise<void>) =>
+    render(
+      <I18nProvider>
+        <DepositForm fields={FIELDS} assetCode="USDC" onSubmit={onSubmit} />
+      </I18nProvider>,
+    );
+
+  it('fires a single request when submit is clicked repeatedly on a slow network', async () => {
+    let resolve!: () => void;
+    const onSubmit = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+    renderForm(onSubmit);
+    fillValid();
+
+    const button = screen.getByRole('button', { name: 'Continue to Verification' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    const processing = await screen.findByRole('button', { name: /Processing/ });
+    expect(processing).toBeDisabled();
+    fireEvent.click(processing);
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    resolve();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Continue to Verification' })).toBeEnabled(),
+    );
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-enables the button and shows a retryable error when the request fails', async () => {
+    const onSubmit = vi.fn().mockRejectedValueOnce(new Error('Gateway timeout')).mockResolvedValueOnce(undefined);
+    renderForm(onSubmit);
+    fillValid();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Verification' }));
+    expect(await screen.findByText('Gateway timeout')).toBeInTheDocument();
+
+    const button = screen.getByRole('button', { name: 'Continue to Verification' });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+  });
+
+  it('aborts the in-flight request when the form unmounts', async () => {
+    let captured: AbortSignal | undefined;
+    const onSubmit = vi.fn((_v: Record<string, string>, signal?: AbortSignal) => {
+      captured = signal;
+      return new Promise<void>(() => {});
+    });
+    const { unmount } = renderForm(onSubmit);
+    fillValid();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Verification' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(captured?.aborted).toBe(true);
   });
 });

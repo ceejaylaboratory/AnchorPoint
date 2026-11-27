@@ -592,7 +592,7 @@ const AppShell = () => {
             >
               <Suspense fallback={<TabFallback />}>
                 {activeTab === 'dashboard' && (
-                  <DashboardOverview uiConfig={uiConfig} isLoading={loadingState === 'loading'} />
+                  <DashboardOverview uiConfig={uiConfig} isLoading={loadingState === 'loading'} apiBaseUrl={apiBaseUrl} />
                 )}
                 {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}
                 {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} account={wallet?.publicKey} />}

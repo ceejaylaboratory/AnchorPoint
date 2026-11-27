@@ -30,6 +30,7 @@
     "required": "Obrigatório",
     "optional": "Opcional",
     "submit": "Continuar para verificação",
+    "processing": "Processando…",
     "errors": {
       "required": "{{label}} é obrigatório.",
       "amountInvalid": "Insira um valor válido com até {{decimals}} casas decimais{{s}}.",

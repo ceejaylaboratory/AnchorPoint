@@ -34,12 +34,19 @@ export const SEP24Flow = ({
   uiConfig,
   apiBaseUrl,
   account,
+  onSubmitDeposit,
 }: {
   type: FlowType;
   uiConfig: UiConfig;
   apiBaseUrl?: string;
   /** Stellar account the KYC documents are uploaded for; uploads are hidden without it. */
   account?: string;
+  /**
+   * Sends the deposit request. The form stays disabled until the promise
+   * settles; a rejection is shown as a retryable error. Without it the flow
+   * advances immediately (demo mode).
+   */
+  onSubmitDeposit?: (values: Record<string, string>, signal?: AbortSignal) => Promise<void>;
 }) => {
   const [activeType, setActiveType] = useState<FlowType>(type);
   const [step, setStep] = useState(1);
@@ -66,11 +73,22 @@ export const SEP24Flow = ({
     setDepositError(null);
   };
 
-  const handleDepositFormSubmit = () => {
-    // Simulate potential deposit errors for demonstration
-    // In production, this would call the backend API
+  const handleDepositFormSubmit = async (values: Record<string, string>, signal?: AbortSignal) => {
     setDepositError(null);
-    goToStep(4);
+    try {
+      await onSubmitDeposit?.(values, signal);
+    } catch (err) {
+      if (signal?.aborted) return;
+      setDepositError({
+        type: 'network',
+        title: 'Deposit request failed',
+        message: err instanceof Error ? err.message : 'The deposit could not be submitted.',
+        details: 'Check your connection and try again.',
+        retryable: true,
+      });
+      return;
+    }
+    if (!signal?.aborted) goToStep(4);
   };
 
   const selectTab = (next: FlowType) => {
@@ -262,7 +280,7 @@ export const SEP24Flow = ({
                   <DepositForm
                     fields={transactionFields}
                     assetCode={selectedAsset}
-                    onSubmit={() => handleDepositFormSubmit()}
+                    onSubmit={handleDepositFormSubmit}
                   />
                   {documentUploadTrigger}
                   <button

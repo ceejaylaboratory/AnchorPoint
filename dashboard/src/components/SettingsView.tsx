@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react';
-import { Fingerprint, Globe, Lock, Monitor, Moon, Sun } from 'lucide-react';
+import { Banknote, Fingerprint, Globe, Lock, Monitor, Moon, Sun } from 'lucide-react';
 import type { UiConfig } from '../types';
 import { loadBiometricSettings, sanitizeThreshold, saveBiometricSettings } from '../lib/biometricSettings';
 import { RequirementList } from './RequirementList';
@@ -9,6 +9,8 @@ import { THEME_PREFERENCES, useTheme } from '../contexts/ThemeContext';
 import type { ThemePreference } from '../contexts/ThemeContext';
 import { useTranslation, type Language } from '../i18n/config';
 import { AUTOLOCK_OPTIONS, useAutoLockSetting } from '../lib/sessionLock';
+import { useFiatConverter } from '../hooks/useFiatConverter';
+import { FIAT_CURRENCY_LABELS, SUPPORTED_FIAT_CURRENCIES, formatFiat } from '../lib/fiat';
 
 const THEME_OPTIONS: Record<ThemePreference, { label: string; hint: string; Icon: typeof Sun }> = {
   light: { label: 'Light', hint: 'High-contrast light palette', Icon: Sun },
@@ -244,6 +246,55 @@ export const BiometricSettingsSection: React.FC = () => {
   );
 };
 
+const CURRENCY_PREVIEW_USD = 1000;
+
+/** Display-currency picker; values elsewhere are converted from USD with live FX rates. */
+export const CurrencySelector: React.FC<{ apiBaseUrl?: string; fetchImpl?: typeof fetch }> = ({
+  apiBaseUrl,
+  fetchImpl,
+}) => {
+  const { t } = useTranslation();
+  const selectId = useId();
+  const { selectedCurrency, setSelectedCurrency, formatAmount, isLive } = useFiatConverter({
+    apiBaseUrl,
+    fetchImpl,
+  });
+
+  return (
+    <div className="glass-card p-8">
+      <h3 className="mb-1 flex items-center gap-2 text-xl font-bold">
+        <Banknote size={18} aria-hidden="true" />
+        {t('settings.currency')}
+      </h3>
+      <p className="mb-4 text-sm text-slate-400">{t('settings.currencySubtitle')}</p>
+      <label htmlFor={selectId} className="sr-only">
+        {t('settings.currency')}
+      </label>
+      <select
+        id={selectId}
+        value={selectedCurrency}
+        onChange={(e) => setSelectedCurrency(e.target.value)}
+        className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+      >
+        {SUPPORTED_FIAT_CURRENCIES.map((code) => (
+          <option key={code} value={code}>
+            {code} — {FIAT_CURRENCY_LABELS[code]}
+          </option>
+        ))}
+      </select>
+      <p data-testid="currency-preview" className="mt-3 text-sm text-slate-300">
+        {t('settings.currencyPreview', {
+          usd: formatFiat(CURRENCY_PREVIEW_USD, 'USD'),
+          converted: formatAmount(CURRENCY_PREVIEW_USD),
+        })}
+      </p>
+      <p className={`mt-1 text-xs ${isLive ? 'text-emerald-400' : 'text-amber-400'}`}>
+        {isLive ? t('settings.currencyLive') : t('settings.currencyFallback')}
+      </p>
+    </div>
+  );
+};
+
 export interface SettingsViewProps {
   uiConfig: UiConfig;
   apiBaseUrl: string;
@@ -257,6 +308,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ uiConfig, apiBaseUrl }) => 
       <div className="space-y-6">
         <ThemeSelector />
         <LanguageSelector />
+        <CurrencySelector apiBaseUrl={apiBaseUrl} />
         <BiometricSettingsSection />
         <AutoLockSettingsSection />
         <div className="glass-card p-8">

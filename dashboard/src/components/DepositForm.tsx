@@ -1,9 +1,9 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import type { FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import type { FieldRequirement } from '../types';
 import type { DepositError } from './DepositErrorAlert';
 import type { BiometricVerificationResult } from '../lib/webauthn';
@@ -32,8 +32,12 @@ interface DepositFormProps {
   assetCode: string;
   /** Overrides the limits looked up from `assetCode`. */
   assetLimits?: AssetLimits;
-  /** Called with validated form values when the user submits */
-  onSubmit: (values: FormValues) => void;
+  /** Called with validated form values when the user submits. Return a
+   *  promise to keep the button disabled until the request settles; the
+   *  AbortSignal fires if the form unmounts mid-request. A rejection is shown
+   *  as a retryable error and re-enables the button.
+   */
+  onSubmit: (values: FormValues, signal?: AbortSignal) => void | Promise<void>;
   /** Override for the WebAuthn ceremony (used in tests / alternate authenticators). */
   onAuthenticate?: () => Promise<BiometricVerificationResult>;
 }
@@ -200,6 +204,9 @@ export const DepositForm = ({
   const { isOnline } = useNetworkStatus();
   const [formError, setFormError] = useState<DepositError | null>(null);
   const [pendingValues, setPendingValues] = useState<FormValues | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef(false);
 
   const limits = useMemo(
     () => assetLimits ?? getAssetLimits(assetCode),
@@ -246,14 +253,46 @@ export const DepositForm = ({
       setPendingValues(submitted);
       return;
     }
-    onSubmit(submitted);
+    void callOnSubmit(submitted);
+  };
+
+  // Abort whatever is still in flight if the form goes away mid-request.
+  useEffect(() => () => abortControllerRef.current?.abort(), []);
+
+  const callOnSubmit = async (submitted: FormValues) => {
+    // A ref (not state) so a second click landing before React re-renders the
+    // disabled button is still rejected synchronously.
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setIsSubmitting(true);
+    try {
+      await onSubmit(submitted, controller.signal);
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setFormError({
+          type: 'network',
+          title: t('deposit.errors.title'),
+          message: err instanceof Error ? err.message : String(err),
+          retryable: true,
+        });
+      }
+    } finally {
+      inFlightRef.current = false;
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
+      setIsSubmitting(false);
+    }
   };
 
   const confirmPending = () => {
     if (!pendingValues) return;
     const values = pendingValues;
     setPendingValues(null);
-    onSubmit(values);
+    void callOnSubmit(values);
   };
 
   // RHF hands the fresh error map to this callback; the `errors` captured from
@@ -381,12 +420,19 @@ export const DepositForm = ({
 
         <button
           type="submit"
-          disabled={!isOnline}
-          aria-disabled={!isOnline}
+          disabled={!isOnline || isSubmitting}
+          aria-disabled={!isOnline || isSubmitting}
           title={!isOnline ? 'No internet connection — submission disabled' : undefined}
           className="btn-primary w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {t('deposit.submit')}
+          {isSubmitting ? (
+            <>
+              <RefreshCw size={16} className="animate-spin inline-block mr-1.5" aria-hidden="true" />
+              {t('deposit.processing')}
+            </>
+          ) : (
+            t('deposit.submit')
+          )}
         </button>
       </form>
 

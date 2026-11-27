@@ -30,6 +30,7 @@
     "required": "Requis",
     "optional": "Facultatif",
     "submit": "Continuer vers la vérification",
+    "processing": "Traitement…",
     "errors": {
       "required": "{{label}} est requis.",
       "amountInvalid": "Saisissez un montant valide avec jusqu'à {{decimals}} décimales{{s}}.",

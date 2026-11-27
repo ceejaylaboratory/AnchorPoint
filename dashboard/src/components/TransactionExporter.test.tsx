@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CSV_COLUMNS,
   TransactionExporter,
+  rangeForPreset,
+  toPdf,
+  toUtcTimestamp,
+  totalsByAsset,
   applyActiveFilters,
   buildFilename,
   csvEscape,
@@ -109,7 +113,7 @@ describe('toCsv', () => {
 
   it('writes columns in the declared order', () => {
     const lines = toCsv([tx()], context).split('\n');
-    expect(lines[5]).toBe('tx-1,Deposit,USDC,100,Completed,2026-01-10,REF-1');
+    expect(lines[5]).toBe('2026-01-10 00:00:00,REF-1,Deposit,USDC,100,,Completed,');
   });
 
   it('escapes values that would break the row structure', () => {
@@ -272,8 +276,8 @@ describe('<TransactionExporter />', () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     const text = await lastBlobText();
     expect(text).toContain('# Records exported: 1');
-    expect(text).toContain('b,Deposit,USDC,100,Pending');
-    expect(text).not.toContain('c,Deposit');
+    expect(text).toContain('2026-01-10 00:00:00,REF-1,Deposit,USDC,100,,Pending,');
+    expect(text).not.toContain('2026-01-20');
 
     expect(clicked).toHaveLength(1);
     expect(clicked[0].download).toMatch(/^AnchorPoint_Transactions_\d{4}-\d{2}-\d{2}\.csv$/);
@@ -310,9 +314,9 @@ describe('<TransactionExporter />', () => {
     const text = await lastBlobText();
     expect(text).toContain('# Records exported: 1');
     expect(text).toContain('# Filters: status=Failed');
-    expect(text).toContain('c,Deposit,USDC,100,Failed');
-    expect(text).not.toContain('a,Deposit');
-    expect(text).not.toContain('b,Deposit');
+    expect(text).toContain('2026-01-20 00:00:00,REF-1,Deposit,USDC,100,,Failed,');
+    expect(text).not.toContain('2026-01-01 00:00:00');
+    expect(text).not.toContain('2026-01-10 00:00:00');
   });
 
   it('includes the active page filters in the JSON export', async () => {
@@ -355,5 +359,207 @@ describe('<TransactionExporter />', () => {
     expect(screen.getByTestId('export-count').textContent).toBe('0 of 3 selected');
     expect(screen.getByRole('button', { name: 'CSV' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'JSON' })).toHaveProperty('disabled', true);
+  });
+});
+
+describe('tax export columns', () => {
+  it('uses the standard financial record header', () => {
+    expect(CSV_COLUMNS).toEqual([
+      'Date (UTC)',
+      'Transaction Hash',
+      'Type',
+      'Asset',
+      'Amount',
+      'Fee',
+      'Status',
+      'Counterparty',
+    ]);
+  });
+
+  it('writes hash, fee and counterparty and normalises dates to UTC', () => {
+    const lines = toCsv(
+      [
+        tx({
+          date: '2026-03-05T23:30:00-02:00',
+          hash: 'abc123',
+          fee: 0.25,
+          counterparty: 'GDEST, Ltd',
+          type: 'Swap',
+        }),
+      ],
+      context,
+    ).split('\n');
+
+    expect(lines[4]).toBe(CSV_COLUMNS.join(','));
+    expect(lines[5]).toBe('2026-03-06 01:30:00,abc123,Swap,USDC,100,0.25,Completed,"GDEST, Ltd"');
+  });
+
+  it('keeps every record at exactly one field per column, even with quotes and newlines', () => {
+    const csv = toCsv([tx({ counterparty: 'A "quoted", name' }), tx({ reference: 'line\nbreak' })], context);
+    // Minimal RFC 4180 reader: split on unquoted newlines and commas.
+    const records: string[][] = [[]];
+    let field = '';
+    let quoted = false;
+    for (let i = 0; i < csv.length; i++) {
+      const ch = csv[i];
+      if (quoted) {
+        if (ch === '"' && csv[i + 1] === '"') { field += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else field += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ',') { records.at(-1)!.push(field); field = ''; }
+      else if (ch === '\n') { records.at(-1)!.push(field); field = ''; records.push([]); }
+      else field += ch;
+    }
+    records.at(-1)!.push(field);
+
+    const data = records.filter((r) => !r[0].startsWith('#'));
+    expect(data).toHaveLength(3);
+    expect(data.every((r) => r.length === CSV_COLUMNS.length)).toBe(true);
+    expect(data[1][7]).toBe('A "quoted", name');
+    expect(data[2][1]).toBe('line\nbreak');
+  });
+
+  it('formats UTC timestamps and leaves unparseable dates untouched', () => {
+    expect(toUtcTimestamp('2026-01-10')).toBe('2026-01-10 00:00:00');
+    expect(toUtcTimestamp('2026-01-10T12:34:56.789Z')).toBe('2026-01-10 12:34:56');
+    expect(toUtcTimestamp('not a date')).toBe('not a date');
+  });
+});
+
+describe('date range presets', () => {
+  const now = new Date('2026-11-27T15:00:00Z');
+
+  it('resolves Last 30 Days inclusive of today', () => {
+    expect(rangeForPreset('last30', now)).toEqual({ from: '2026-10-29', to: '2026-11-27' });
+  });
+
+  it('resolves Year to Date from 1 January', () => {
+    expect(rangeForPreset('ytd', now)).toEqual({ from: '2026-01-01', to: '2026-11-27' });
+  });
+
+  it('leaves bounds empty for all and custom', () => {
+    expect(rangeForPreset('all', now)).toEqual({ from: '', to: '' });
+    expect(rangeForPreset('custom', now)).toEqual({ from: '', to: '' });
+  });
+
+  it('applies presets in the component and switches to custom when a date is typed', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-25T12:00:00Z'));
+    try {
+      render(
+        <TransactionExporter transactions={TRANSACTIONS} totalCount={3} filters={{}} />,
+      );
+      const preset = screen.getByLabelText('Export date range') as HTMLSelectElement;
+
+      fireEvent.change(preset, { target: { value: 'last30' } });
+      expect((screen.getByLabelText('Export from date') as HTMLInputElement).value).toBe('2025-12-27');
+      expect(screen.getByTestId('export-count').textContent).toBe('3 of 3 selected');
+
+      fireEvent.change(screen.getByLabelText('Export from date'), { target: { value: '2026-01-15' } });
+      expect(preset.value).toBe('custom');
+      expect(screen.getByTestId('export-count').textContent).toBe('1 of 3 selected');
+
+      fireEvent.change(preset, { target: { value: 'all' } });
+      expect(screen.getByTestId('export-count').textContent).toBe('3 of 3 selected');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('PDF export', () => {
+  const pdfTx = [
+    tx({ id: 'a', date: '2026-01-01', amount: 100, fee: 1, hash: 'a'.repeat(64), counterparty: 'GABC' }),
+    tx({ id: 'b', date: '2026-01-10', asset: 'XLM', amount: 50, fee: 0.5, type: 'Staking Reward' }),
+    tx({ id: 'c', date: '2026-01-20', amount: 25.5, counterparty: 'Caf\u00e9 (EUR) \u20ac' }),
+  ];
+
+  it('sums volume and fees per asset', () => {
+    const totals = totalsByAsset(pdfTx);
+    expect(totals.get('USDC')).toEqual({ amount: 125.5, fee: 1 });
+    expect(totals.get('XLM')).toEqual({ amount: 50, fee: 0.5 });
+  });
+
+  it('produces a structurally valid single-page PDF', () => {
+    const pdf = toPdf(pdfTx, { ...context, periodLabel: '2026-01-01 to 2026-01-31' });
+
+    expect(pdf.startsWith('%PDF-1.4\n')).toBe(true);
+    expect(pdf.trimEnd().endsWith('%%EOF')).toBe(true);
+    // Pure ASCII so Blob byte offsets equal string offsets.
+    expect(/^[\x00-\x7f]*$/.test(pdf)).toBe(true);
+    expect(pdf).toContain('/Count 1');
+    expect(pdf).toContain('(AnchorPoint)');
+    expect(pdf).toContain('(Transaction History & Tax Statement)');
+    expect(pdf).toContain('(2026-01-01 to 2026-01-31)');
+    expect(pdf).toContain('(Staking Reward)');
+    expect(pdf).toContain('(125.50 / 1.00)');
+    // Parentheses escaped, non-ASCII written as WinAnsi octal.
+    expect(pdf).toContain('Caf\\351 \\(EUR\\) \\200');
+  });
+
+  it('writes a correct xref table', () => {
+    const pdf = toPdf(pdfTx, context);
+    const startxref = Number(pdf.match(/startxref\n(\d+)/)![1]);
+    expect(pdf.slice(startxref, startxref + 4)).toBe('xref');
+
+    const entries = [...pdf.slice(startxref).matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
+    entries.forEach((offset, i) => {
+      expect(pdf.slice(offset, offset + `${i + 1} 0 obj`.length)).toBe(`${i + 1} 0 obj`);
+    });
+
+    // Every stream's declared /Length matches its body.
+    for (const m of pdf.matchAll(/<< \/Length (\d+) >>\nstream\n/g)) {
+      const start = m.index! + m[0].length;
+      expect(pdf.slice(start + Number(m[1]), start + Number(m[1]) + '\nendstream'.length)).toBe('\nendstream');
+    }
+  });
+
+  it('paginates long statements and numbers every page', () => {
+    const many = Array.from({ length: 80 }, (_, i) => tx({ id: `t${i}`, date: '2026-01-05' }));
+    const pdf = toPdf(many, { ...context, totalCount: 80 });
+    const pageCount = Number(pdf.match(/\/Count (\d+)/)![1]);
+    expect(pageCount).toBeGreaterThan(1);
+    expect(pdf).toContain(`(Page ${pageCount} of ${pageCount})`);
+    expect(pdf.match(/\(Transaction Hash\)/g)!.length).toBe(pageCount);
+  });
+
+  it('truncates long hashes in the middle to fit the column', () => {
+    const pdf = toPdf(pdfTx, context);
+    expect(pdf).not.toContain('a'.repeat(64));
+    expect(pdf).toMatch(/\(a+\.\.\.a+\)/);
+  });
+});
+
+describe('<TransactionExporter /> PDF download', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('downloads a PDF of the filtered rows', async () => {
+    const createObjectURL = vi.fn(() => 'blob:pdf');
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    const clicked: HTMLAnchorElement[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this);
+    });
+
+    render(<TransactionExporter transactions={TRANSACTIONS} totalCount={3} filters={{}} />);
+    fireEvent.change(screen.getByLabelText('Export status'), { target: { value: 'Pending' } });
+    fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
+
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('application/pdf');
+    const text = await blob.text();
+    expect(text).toContain('(1 of 3)');
+    expect(text).toContain('(Pending)');
+    expect(text).not.toContain('(Failed)');
+    expect(clicked[0].download).toMatch(/^AnchorPoint_Transactions_\d{4}-\d{2}-\d{2}\.pdf$/);
+  });
+
+  it('disables PDF export when nothing is selected', () => {
+    render(<TransactionExporter transactions={TRANSACTIONS} totalCount={3} filters={{ status: 'Cancelled' }} />);
+    expect(screen.getByRole('button', { name: 'PDF' })).toBeDisabled();
   });
 });
