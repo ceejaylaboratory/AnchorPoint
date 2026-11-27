@@ -60,7 +60,12 @@
     "logoUrl": "Logo URL",
     "primaryColor": "Primary Color",
     "accentColor": "Accent Color",
-    "notConfigured": "Not configured"
+    "notConfigured": "Not configured",
+    "currency": "Display Currency",
+    "currencySubtitle": "Portfolio and asset values are converted from USD using live exchange rates.",
+    "currencyPreview": "{{usd}} ≈ {{converted}}",
+    "currencyLive": "Live rate",
+    "currencyFallback": "Estimated rate (live FX unavailable)"
   },
   "biometric": {
     "settingsTitle": "Transaction Security",
@@ -139,6 +144,7 @@
     "required": "Required",
     "optional": "Optional",
     "submit": "Continue to Verification",
+    "processing": "Processing…",
     "errors": {
       "required": "{{label}} is required.",
       "amountInvalid": "Enter a valid amount with up to {{decimals}} decimal place{{s}}.",

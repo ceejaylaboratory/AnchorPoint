@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Download } from 'lucide-react';
+import { renderPdfStatement, type PdfColumn } from '../lib/pdfStatement';
 
 export interface ExportableTransaction {
   id: string;
@@ -9,6 +10,12 @@ export interface ExportableTransaction {
   status: string;
   date: string;
   reference: string;
+  /** On-chain transaction hash; falls back to `reference` in exports. */
+  hash?: string;
+  /** Fee charged, in units of `asset`. */
+  fee?: number;
+  /** Other party: destination/source account, anchor or pool. */
+  counterparty?: string;
 }
 
 /** Date range and status scoping applied to the export itself. */
@@ -27,7 +34,38 @@ interface TransactionExporterProps {
   filters: Record<string, string>;
 }
 
-export const CSV_COLUMNS: (keyof ExportableTransaction)[] = [
+/** Formats a transaction date as `YYYY-MM-DD HH:mm:ss` in UTC. */
+export const toUtcTimestamp = (value: string): string => {
+  const raw = String(value ?? '');
+  const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00Z` : raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toISOString().replace('T', ' ').slice(0, 19);
+};
+
+interface ExportColumn {
+  header: string;
+  value: (tx: ExportableTransaction) => string | number;
+  /** PDF layout hints. */
+  weight: number;
+  align?: 'left' | 'right';
+}
+
+/** Standard financial record layout shared by the CSV and PDF exports. */
+export const EXPORT_COLUMNS: ExportColumn[] = [
+  { header: 'Date (UTC)', value: (tx) => toUtcTimestamp(tx.date), weight: 1.35 },
+  { header: 'Transaction Hash', value: (tx) => tx.hash || tx.reference, weight: 1.9 },
+  { header: 'Type', value: (tx) => tx.type, weight: 0.9 },
+  { header: 'Asset', value: (tx) => tx.asset, weight: 0.65 },
+  { header: 'Amount', value: (tx) => tx.amount, weight: 0.95, align: 'right' },
+  { header: 'Fee', value: (tx) => tx.fee ?? '', weight: 0.7, align: 'right' },
+  { header: 'Status', value: (tx) => tx.status, weight: 0.85 },
+  { header: 'Counterparty', value: (tx) => tx.counterparty ?? '', weight: 1.7 },
+];
+
+export const CSV_COLUMNS: string[] = EXPORT_COLUMNS.map((c) => c.header);
+
+/** Transaction fields matched by page column filters and free-text search. */
+const SEARCHABLE_FIELDS: (keyof ExportableTransaction)[] = [
   'id',
   'type',
   'asset',
@@ -35,6 +73,9 @@ export const CSV_COLUMNS: (keyof ExportableTransaction)[] = [
   'status',
   'date',
   'reference',
+  'hash',
+  'fee',
+  'counterparty',
 ];
 
 export const STATUS_OPTIONS = [
@@ -56,6 +97,31 @@ export const csvEscape = (value: string | number): string => {
 const toDayStamp = (value: string) => String(value ?? '').slice(0, 10);
 
 const todayStamp = () => new Date().toISOString().split('T')[0];
+
+export const DATE_RANGE_PRESETS = [
+  { value: 'all', label: 'All Dates' },
+  { value: 'last30', label: 'Last 30 Days' },
+  { value: 'ytd', label: 'Year to Date' },
+  { value: 'custom', label: 'Custom Range' },
+] as const;
+
+export type DateRangePreset = (typeof DATE_RANGE_PRESETS)[number]['value'];
+
+/**
+ * Resolves a preset to inclusive YYYY-MM-DD bounds (UTC). `custom` and `all`
+ * return empty bounds; the caller supplies custom dates itself.
+ */
+export function rangeForPreset(preset: DateRangePreset, now: Date = new Date()): { from: string; to: string } {
+  const today = now.toISOString().slice(0, 10);
+  if (preset === 'last30') {
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29));
+    return { from: start.toISOString().slice(0, 10), to: today };
+  }
+  if (preset === 'ytd') {
+    return { from: `${now.getUTCFullYear()}-01-01`, to: today };
+  }
+  return { from: '', to: '' };
+}
 
 /**
  * Narrows the export to a date range and status. Bounds are inclusive and
@@ -86,8 +152,8 @@ const isActiveFilter = (value: string | undefined): value is string =>
  * Applies the page's active filters (the ones the transaction list is
  * currently showing) so the export matches what the user sees. Recognised
  * keys: `from`/`to`/`status` (same semantics as {@link filterTransactions}),
- * `query`/`search`/`q` (case-insensitive substring over every column), and any
- * other CSV column name (case-insensitive exact match). Unknown keys are
+ * `query`/`search`/`q` (case-insensitive substring over every field), and any
+ * other transaction field name (case-insensitive exact match). Unknown keys are
  * ignored here but still recorded in the export metadata.
  */
 export function applyActiveFilters(
@@ -107,11 +173,11 @@ export function applyActiveFilters(
     active.every(([key, value]) => {
       const wanted = value.toLowerCase();
       if (SEARCH_FILTER_KEYS.has(key)) {
-        return CSV_COLUMNS.some((col) => String(tx[col] ?? '').toLowerCase().includes(wanted));
+        return SEARCHABLE_FIELDS.some((col) => String(tx[col] ?? '').toLowerCase().includes(wanted));
       }
       if (key === 'from' || key === 'to' || key === 'status') return true;
       if (key === 'date') return toDayStamp(tx.date) === value;
-      if ((CSV_COLUMNS as string[]).includes(key)) {
+      if ((SEARCHABLE_FIELDS as string[]).includes(key)) {
         return String(tx[key as keyof ExportableTransaction] ?? '').toLowerCase() === wanted;
       }
       return true;
@@ -158,8 +224,8 @@ export function toCsv(
     exportedAt,
     '# ',
   );
-  const header = CSV_COLUMNS.join(',');
-  const rows = transactions.map((tx) => CSV_COLUMNS.map((col) => csvEscape(tx[col])).join(','));
+  const header = CSV_COLUMNS.map(csvEscape).join(',');
+  const rows = transactions.map((tx) => EXPORT_COLUMNS.map((col) => csvEscape(col.value(tx))).join(','));
 
   return [...metadata, header, ...rows].join('\n');
 }
@@ -180,6 +246,59 @@ export function toJson(
     null,
     2,
   );
+}
+
+/** Totals per asset, so mixed-asset statements never add unlike units. */
+export function totalsByAsset(transactions: ExportableTransaction[]): Map<string, { amount: number; fee: number }> {
+  const totals = new Map<string, { amount: number; fee: number }>();
+  for (const tx of transactions) {
+    const entry = totals.get(tx.asset) ?? { amount: 0, fee: 0 };
+    entry.amount += Number(tx.amount) || 0;
+    entry.fee += Number(tx.fee) || 0;
+    totals.set(tx.asset, entry);
+  }
+  return totals;
+}
+
+const formatNumber = (n: number) =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 7 });
+
+export interface PdfExportContext extends ExportContext {
+  /** Human-readable period, e.g. "2026-01-01 to 2026-01-31". */
+  periodLabel?: string;
+}
+
+/** Renders the transactions as a formatted PDF statement (ASCII string). */
+export function toPdf(
+  transactions: ExportableTransaction[],
+  { totalCount, exportedAt = new Date().toISOString(), periodLabel = 'All dates' }: PdfExportContext,
+): string {
+  const totals = [...totalsByAsset(transactions).entries()].sort(([a], [b]) => a.localeCompare(b));
+  const summary: [string, string][] = [
+    ['Period', periodLabel],
+    ['Records', `${transactions.length} of ${totalCount}`],
+    ...totals.map(([asset, t]): [string, string] => [
+      `${asset} volume / fees`,
+      `${formatNumber(t.amount)} / ${formatNumber(t.fee)}`,
+    ]),
+  ];
+
+  const columns: PdfColumn[] = EXPORT_COLUMNS.map(({ header, weight, align }) => ({ header, weight, align }));
+  const rows = transactions.map((tx) =>
+    EXPORT_COLUMNS.map((col) => {
+      const v = col.value(tx);
+      return typeof v === 'number' ? formatNumber(v) : String(v);
+    }),
+  );
+
+  return renderPdfStatement({
+    title: 'Transaction History & Tax Statement',
+    subtitle: `Generated ${toUtcTimestamp(exportedAt)} UTC`,
+    summary,
+    columns,
+    rows,
+    emptyMessage: 'No transactions in the selected period.',
+  });
 }
 
 export const buildFilename = (extension: string, stamp: string = todayStamp()) =>
@@ -207,8 +326,23 @@ export const TransactionExporter = ({
   totalCount,
   filters,
 }: TransactionExporterProps) => {
+  const [preset, setPreset] = useState<DateRangePreset>('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+
+  const selectPreset = (next: DateRangePreset) => {
+    setPreset(next);
+    if (next === 'custom') return;
+    const range = rangeForPreset(next);
+    setFrom(range.from);
+    setTo(range.to);
+  };
+
+  // Typing a date means the user wants their own bounds.
+  const editDate = (setter: (v: string) => void, value: string) => {
+    setter(value);
+    setPreset('custom');
+  };
   const [status, setStatus] = useState<string>('All');
 
   // Start from the rows the page's active filters select, then apply this
@@ -232,9 +366,27 @@ export const TransactionExporter = ({
 
   const context: ExportContext = { totalCount, filters: exportFilters };
   const isEmpty = selected.length === 0;
+  const periodLabel =
+    from || to ? `${from || 'beginning'} to ${to || 'today'}` : 'All dates';
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
+      <label htmlFor="export-date-preset" className="sr-only">
+        Export date range
+      </label>
+      <select
+        id="export-date-preset"
+        value={preset}
+        onChange={(event) => selectPreset(event.target.value as DateRangePreset)}
+        className={CONTROL_CLASS}
+      >
+        {DATE_RANGE_PRESETS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+
       <label htmlFor="export-date-from" className="sr-only">
         Export from date
       </label>
@@ -243,7 +395,7 @@ export const TransactionExporter = ({
         type="date"
         value={from}
         max={to || undefined}
-        onChange={(event) => setFrom(event.target.value)}
+        onChange={(event) => editDate(setFrom, event.target.value)}
         className={CONTROL_CLASS}
       />
 
@@ -255,7 +407,7 @@ export const TransactionExporter = ({
         type="date"
         value={to}
         min={from || undefined}
-        onChange={(event) => setTo(event.target.value)}
+        onChange={(event) => editDate(setTo, event.target.value)}
         className={CONTROL_CLASS}
       />
 
@@ -296,6 +448,17 @@ export const TransactionExporter = ({
       >
         <Download size={14} aria-hidden="true" />
         JSON
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          triggerDownload(toPdf(selected, { ...context, periodLabel }), 'application/pdf', 'pdf')
+        }
+        disabled={isEmpty}
+        className={BUTTON_CLASS}
+      >
+        <Download size={14} aria-hidden="true" />
+        PDF
       </button>
     </div>
   );

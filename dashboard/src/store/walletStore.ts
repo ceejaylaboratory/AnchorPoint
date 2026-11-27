@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { createSecureStorage, DEFAULT_EXCLUDE_KEYS } from './storage';
+import { DEFAULT_FIAT_CURRENCY, isSupportedFiat, type FiatCurrency } from '../lib/fiat';
 
 export type WalletProviderId = 'freighter' | 'albedo' | 'xbull' | 'rabet';
 
@@ -29,6 +30,8 @@ export interface UserPreferences {
   defaultNetwork: 'testnet' | 'mainnet' | 'futurenet';
   recentAddresses: string[];
   dashboardLayout: string;
+  /** Currency USD-denominated values are converted to for display. */
+  fiatCurrency: FiatCurrency;
 }
 
 type PreferencesState = {
@@ -39,6 +42,7 @@ type PreferencesState = {
   setDefaultNetwork: (network: UserPreferences['defaultNetwork']) => void;
   addRecentAddress: (address: string) => void;
   setDashboardLayout: (layout: string) => void;
+  setFiatCurrency: (currency: FiatCurrency) => void;
   resetPreferences: () => void;
 };
 
@@ -49,6 +53,7 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   defaultNetwork: 'testnet',
   recentAddresses: [],
   dashboardLayout: 'default',
+  fiatCurrency: DEFAULT_FIAT_CURRENCY,
 };
 
 export const useWalletStore = create<WalletState>()(
@@ -115,6 +120,13 @@ export const usePreferencesStore = create<PreferencesState>()(
           preferences: { ...state.preferences, dashboardLayout },
         })),
 
+      setFiatCurrency: (fiatCurrency) => {
+        if (!isSupportedFiat(fiatCurrency)) return;
+        set((state) => ({
+          preferences: { ...state.preferences, fiatCurrency },
+        }));
+      },
+
       resetPreferences: () =>
         set(() => ({
           preferences: DEFAULT_PREFERENCES,
@@ -123,6 +135,14 @@ export const usePreferencesStore = create<PreferencesState>()(
     {
       name: 'preferences-storage',
       storage: createJSONStorage(() => createSecureStorage('preferences')),
+      // Deep-merge so preferences persisted before a field existed (e.g.
+      // fiatCurrency) pick up its default instead of `undefined`.
+      merge: (persisted, current) => {
+        const stored = (persisted as Partial<PreferencesState> | undefined)?.preferences ?? {};
+        const preferences = { ...current.preferences, ...stored };
+        if (!isSupportedFiat(preferences.fiatCurrency)) preferences.fiatCurrency = DEFAULT_FIAT_CURRENCY;
+        return { ...current, preferences };
+      },
     }
   )
 );

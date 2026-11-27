@@ -97,8 +97,20 @@ describe('preferencesStore', () => {
         defaultNetwork: 'testnet',
         recentAddresses: [],
         dashboardLayout: 'default',
+        fiatCurrency: 'USD',
       },
     });
+  });
+
+  it('stores a supported fiat display currency and ignores unsupported codes', () => {
+    usePreferencesStore.getState().setFiatCurrency('NGN');
+    expect(usePreferencesStore.getState().preferences.fiatCurrency).toBe('NGN');
+
+    usePreferencesStore.getState().setFiatCurrency('JPY' as never);
+    expect(usePreferencesStore.getState().preferences.fiatCurrency).toBe('NGN');
+
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().preferences.fiatCurrency).toBe('USD');
   });
 
   it('should have default preferences', () => {

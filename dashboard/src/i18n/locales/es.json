@@ -60,7 +60,12 @@
     "logoUrl": "URL del logotipo",
     "primaryColor": "Color primario",
     "accentColor": "Color de acento",
-    "notConfigured": "No configurado"
+    "notConfigured": "No configurado",
+    "currency": "Moneda de visualización",
+    "currencySubtitle": "Los valores del portafolio y de los activos se convierten desde USD con tipos de cambio en vivo.",
+    "currencyPreview": "{{usd}} ≈ {{converted}}",
+    "currencyLive": "Tipo en vivo",
+    "currencyFallback": "Tipo estimado (FX en vivo no disponible)"
   },
   "biometric": {
     "settingsTitle": "Seguridad de transacciones",
@@ -139,6 +144,7 @@
     "required": "Obligatorio",
     "optional": "Opcional",
     "submit": "Continuar a la verificación",
+    "processing": "Procesando…",
     "errors": {
       "required": "{{label}} es obligatorio.",
       "amountInvalid": "Ingrese un monto válido con hasta {{decimals}} decimales{{s}}.",

@@ -143,3 +143,44 @@ describe('SEP24Flow document upload modal (#1528)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Upload KYC Documents' })).toBeNull());
   });
 });
+
+// No I18nProvider here, so the form may render either the copy or the raw key.
+const SUBMIT_LABEL = /Continue to Verification|deposit\.submit/;
+const PROCESSING_LABEL = /Processing|deposit\.processing/;
+
+describe('SEP24Flow deposit submission', () => {
+  const goToDetails = async (onSubmitDeposit: (v: Record<string, string>) => Promise<void>) => {
+    render(<SEP24Flow type="deposit" uiConfig={uiConfig} onSubmitDeposit={onSubmitDeposit} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with USDC' }));
+    const amount = await screen.findByLabelText(/Amount/);
+    fireEvent.change(amount, { target: { value: '250' } });
+  };
+
+  it('sends one deposit request despite rapid double-clicks', async () => {
+    let resolve!: () => void;
+    const onSubmitDeposit = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+    await goToDetails(onSubmitDeposit);
+
+    const submit = screen.getByRole('button', { name: SUBMIT_LABEL });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(await screen.findByRole('button', { name: PROCESSING_LABEL })).toBeDisabled();
+    expect(onSubmitDeposit).toHaveBeenCalledTimes(1);
+
+    resolve();
+    expect(await screen.findByText('Transaction Initiated')).toBeInTheDocument();
+    expect(onSubmitDeposit).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays on the form with a retryable error when the request fails', async () => {
+    const onSubmitDeposit = vi.fn().mockRejectedValue(new Error('Network unreachable'));
+    await goToDetails(onSubmitDeposit);
+
+    fireEvent.click(screen.getByRole('button', { name: SUBMIT_LABEL }));
+
+    expect(await screen.findByText('Network unreachable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeEnabled();
+    expect(screen.queryByText('Transaction Initiated')).toBeNull();
+  });
+});

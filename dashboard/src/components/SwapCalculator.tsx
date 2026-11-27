@@ -11,6 +11,7 @@ import {
   Info,
   Coins,
   ChevronDown,
+  Settings,
 } from 'lucide-react';
 import Tooltip from './Tooltip';
 
@@ -45,6 +46,12 @@ export interface SwapQuote {
   totalValiditySeconds: number;
   confidence?: number;
   routingPath?: string[];
+  /**
+   * AMM pool depth the quote was priced against (Soroban pool quote), in
+   * units of the source and destination asset. Enables a constant-product
+   * price impact estimate.
+   */
+  poolReserves?: { source: string; destination: string };
 }
 
 export interface SwapCalculatorProps {
@@ -63,6 +70,102 @@ export interface SwapCalculatorProps {
   }) => Promise<SwapQuote>;
   onSwapSuccess?: (quote: SwapQuote) => void;
 }
+
+// ─── Slippage & price impact helpers (exported for tests) ────────────────────
+
+export const SLIPPAGE_STORAGE_KEY = 'anchorpoint_slippage_tolerance';
+export const DEFAULT_SLIPPAGE = 0.5;
+export const SLIPPAGE_PRESETS = [0.1, 0.5, 1] as const;
+export const MAX_SLIPPAGE = 50;
+/** Price impact (%) above which the impact badge turns amber. */
+export const PRICE_IMPACT_WARNING = 2;
+/** Price impact (%) above which the swap needs explicit acknowledgement. */
+export const PRICE_IMPACT_HIGH = 5;
+
+/** Returns '' when valid, or an error message when not. */
+export function validateSlippage(value: number): string {
+  if (!Number.isFinite(value)) return 'Enter a valid slippage percentage';
+  if (value <= 0) return 'Slippage must be greater than 0%';
+  if (value > MAX_SLIPPAGE) return `Slippage cannot exceed ${MAX_SLIPPAGE}%`;
+  return '';
+}
+
+/** Non-blocking advice for a valid but unusual tolerance. */
+export function slippageAdvisory(value: number): string {
+  if (validateSlippage(value)) return '';
+  if (value < 0.05) return 'Your transaction may fail with such a low tolerance';
+  if (value > 5) return 'High tolerance: your swap may be front-run';
+  return '';
+}
+
+export function loadSlippage(): number {
+  try {
+    const raw = localStorage.getItem(SLIPPAGE_STORAGE_KEY);
+    if (raw !== null) {
+      const parsed = Number(raw);
+      if (!validateSlippage(parsed)) return parsed;
+    }
+  } catch {
+    // storage unavailable
+  }
+  return DEFAULT_SLIPPAGE;
+}
+
+function saveSlippage(value: number): void {
+  try {
+    localStorage.setItem(SLIPPAGE_STORAGE_KEY, String(value));
+  } catch {
+    // storage unavailable
+  }
+}
+
+/**
+ * Price impact of a trade as a percentage.
+ *
+ * With pool reserves this is the constant-product (x·y=k) impact of moving
+ * `sourceAmount` through the pool: amountIn / (reserveIn + amountIn). Without
+ * reserves it falls back to the deviation of the executed rate from the quoted
+ * mid price.
+ */
+export function calculatePriceImpact(quote: SwapQuote): number {
+  const src = parseFloat(quote.sourceAmount);
+  if (!(src > 0)) return 0;
+
+  const reserveIn = parseFloat(quote.poolReserves?.source ?? '');
+  const reserveOut = parseFloat(quote.poolReserves?.destination ?? '');
+  if (reserveIn > 0 && reserveOut > 0) {
+    return (src / (reserveIn + src)) * 100;
+  }
+
+  const dst = parseFloat(quote.destinationAmount);
+  const price = parseFloat(quote.price);
+  if (!(dst > 0) || !(price > 0)) return 0;
+  return Math.abs((dst / src / price - 1) * 100);
+}
+
+export type PriceImpactLevel = 'low' | 'warning' | 'high';
+
+export function priceImpactLevel(impact: number): PriceImpactLevel {
+  if (impact > PRICE_IMPACT_HIGH) return 'high';
+  if (impact > PRICE_IMPACT_WARNING) return 'warning';
+  return 'low';
+}
+
+/** Least the user receives once the tolerated slippage is applied. */
+export function minimumReceived(destinationAmount: string, slippage: number): number {
+  const dst = parseFloat(destinationAmount);
+  if (!Number.isFinite(dst)) return 0;
+  return dst * (1 - slippage / 100);
+}
+
+const parseReserves = (raw: unknown): SwapQuote['poolReserves'] => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const source = r.source ?? r.source_reserve ?? r.reserve_in;
+  const destination = r.destination ?? r.destination_reserve ?? r.reserve_out;
+  if (source == null || destination == null) return undefined;
+  return { source: String(source), destination: String(destination) };
+};
 
 // Fallback rates relative to USDC
 const MOCK_USD_RATES: Record<string, number> = {
@@ -100,6 +203,14 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
   // True when the shown quote is a local estimate because /sep38/price failed.
   const [isFallbackQuote, setIsFallbackQuote] = useState<boolean>(false);
+
+  const [slippage, setSlippage] = useState<number>(loadSlippage);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [customSlippage, setCustomSlippage] = useState<string>(() =>
+    (SLIPPAGE_PRESETS as readonly number[]).includes(loadSlippage()) ? '' : String(loadSlippage()),
+  );
+  const [highImpactAcknowledged, setHighImpactAcknowledged] = useState<boolean>(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -201,6 +312,7 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
                 totalValiditySeconds: validity,
                 confidence: data.confidence ?? 0.99,
                 routingPath: data.routing_path,
+                poolReserves: parseReserves(data.pool_reserves),
               };
             } else {
               // Try fallback to /sep38/price if /sep38/prices not reachable
@@ -227,6 +339,7 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
                   totalValiditySeconds: Math.max(1, expTime - nowSec),
                   confidence: data.confidence ?? 0.99,
                   routingPath: data.routing_path,
+                  poolReserves: parseReserves(data.pool_reserves),
                 };
               } else {
                 throw new Error(`Quote request failed with HTTP ${res.status}`);
@@ -322,9 +435,57 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
     setSellAmount(preset.toString());
   };
 
+  const selectSlippagePreset = (value: number) => {
+    setSlippage(value);
+    setCustomSlippage('');
+    saveSlippage(value);
+  };
+
+  const handleCustomSlippage = (raw: string) => {
+    setCustomSlippage(raw);
+    const value = Number(raw);
+    if (raw.trim() !== '' && !validateSlippage(value)) {
+      setSlippage(value);
+      saveSlippage(value);
+    }
+  };
+
+  const customSlippageError =
+    customSlippage.trim() === '' ? '' : validateSlippage(Number(customSlippage));
+  const slippageAdvice = slippageAdvisory(slippage);
+
+  // Close the settings popover on outside click or Escape.
+  useEffect(() => {
+    if (!isSettingsOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setIsSettingsOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isSettingsOpen]);
+
+  const priceImpact = quote ? calculatePriceImpact(quote) : 0;
+  const impactLevel = priceImpactLevel(priceImpact);
+  const needsImpactAck = impactLevel === 'high';
+
+  // An acknowledgement only covers the quote it was given for.
+  useEffect(() => {
+    setHighImpactAcknowledged(false);
+  }, [quote?.id, quote?.sourceAmount, quote?.destinationAsset]);
+
   // Perform Swap / Lock quote
   const handleExecuteSwap = async () => {
     if (!quote || remainingSeconds <= 0) return;
+    if (needsImpactAck && !highImpactAcknowledged) return;
 
     setIsSwapping(true);
     setSuccessMessage(null);
@@ -379,16 +540,93 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => void fetchPriceQuote(sellAsset, buyAsset, sellAmount)}
-          disabled={isLoading || !sellAmount}
-          title="Refresh quote"
-          aria-label="Refresh quote"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-800/80 text-slate-300 transition-all hover:bg-slate-700 hover:text-white disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-        >
-          <RefreshCw size={16} className={isLoading ? 'animate-spin text-primary' : ''} />
-        </button>
+        <div className="flex items-center gap-2">
+          <div ref={settingsRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen((open) => !open)}
+              aria-label="Slippage settings"
+              aria-expanded={isSettingsOpen}
+              aria-controls="swap-slippage-settings"
+              title={`Slippage tolerance: ${slippage}%`}
+              className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-2.5 text-xs font-semibold text-slate-300 transition-all hover:bg-slate-700 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            >
+              <Settings size={15} aria-hidden="true" />
+              <span data-testid="slippage-display">{slippage}%</span>
+            </button>
+
+            {isSettingsOpen && (
+              <div
+                id="swap-slippage-settings"
+                role="dialog"
+                aria-label="Slippage tolerance settings"
+                className="absolute right-0 top-11 z-20 w-72 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl"
+              >
+                <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-slate-200">
+                  Slippage tolerance
+                  <Tooltip content="Your swap reverts if the rate moves against you by more than this percentage.">
+                    <Info size={12} className="text-slate-500 cursor-help" />
+                  </Tooltip>
+                </p>
+                <div role="group" aria-label="Slippage presets" className="mt-2 flex items-center gap-2">
+                  {SLIPPAGE_PRESETS.map((preset) => {
+                    const active = customSlippage === '' && slippage === preset;
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => selectSlippagePreset(preset)}
+                        className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                          active
+                            ? 'bg-primary/20 text-primary border border-primary/40'
+                            : 'border border-slate-700 bg-slate-800 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        {preset}%
+                      </button>
+                    );
+                  })}
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      step="any"
+                      inputMode="decimal"
+                      value={customSlippage}
+                      onChange={(e) => handleCustomSlippage(e.target.value)}
+                      placeholder="Custom"
+                      aria-label="Custom slippage tolerance"
+                      aria-invalid={Boolean(customSlippageError)}
+                      aria-describedby="swap-slippage-message"
+                      className={`w-full rounded-lg border bg-slate-950 py-1.5 pl-2 pr-6 text-xs text-white focus:outline-none focus:ring-2 focus:ring-primary/50 ${
+                        customSlippageError ? 'border-rose-500' : 'border-slate-700'
+                      }`}
+                    />
+                    <span className="pointer-events-none absolute right-2 top-1.5 text-xs text-slate-500">%</span>
+                  </div>
+                </div>
+                <p id="swap-slippage-message" aria-live="polite" className="mt-2 min-h-[1rem] text-[11px]">
+                  {customSlippageError ? (
+                    <span role="alert" className="text-rose-400">{customSlippageError}</span>
+                  ) : slippageAdvice ? (
+                    <span className="text-amber-400">{slippageAdvice}</span>
+                  ) : null}
+                </p>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void fetchPriceQuote(sellAsset, buyAsset, sellAmount)}
+            disabled={isLoading || !sellAmount}
+            title="Refresh quote"
+            aria-label="Refresh quote"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-800/80 text-slate-300 transition-all hover:bg-slate-700 hover:text-white disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          >
+            <RefreshCw size={16} className={isLoading ? 'animate-spin text-primary' : ''} />
+          </button>
+        </div>
       </div>
 
       {/* Inputs Container */}
@@ -563,6 +801,30 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
             </span>
           </div>
 
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Price Impact</span>
+            <span
+              data-testid="price-impact"
+              data-level={impactLevel}
+              className={`rounded-md px-1.5 py-0.5 font-semibold ${
+                impactLevel === 'high'
+                  ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                  : impactLevel === 'warning'
+                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  : 'text-slate-200'
+              }`}
+            >
+              {priceImpact < 0.01 ? '<0.01' : priceImpact.toFixed(2)}%
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Minimum Received ({slippage}% slippage)</span>
+            <span data-testid="minimum-received" className="font-semibold text-slate-200">
+              {minimumReceived(quote.destinationAmount, slippage).toFixed(4)} {quote.destinationAsset}
+            </span>
+          </div>
+
           {hasMidPrice && (
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span>Bid / Ask spread</span>
@@ -669,11 +931,42 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
         </div>
       )}
 
+      {quote && needsImpactAck && (
+        <div
+          role="alert"
+          className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300"
+        >
+          <p className="flex items-center gap-2 font-semibold">
+            <AlertCircle size={16} className="shrink-0" />
+            High price impact ({priceImpact.toFixed(2)}%)
+          </p>
+          <p className="mt-1 text-rose-300/80">
+            This order is large relative to pool liquidity and will move the price significantly.
+          </p>
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-rose-200">
+            <input
+              type="checkbox"
+              checked={highImpactAcknowledged}
+              onChange={(e) => setHighImpactAcknowledged(e.target.checked)}
+              className="rounded border-rose-500/50 bg-slate-900 text-rose-500 focus:ring-rose-500/50"
+            />
+            I understand and want to swap anyway
+          </label>
+        </div>
+      )}
+
       {/* Action Button */}
       <div className="mt-6">
         <button
           type="button"
-          disabled={!quote || isExpired || isLoading || isSwapping || !sellAmount}
+          disabled={
+            !quote ||
+            isExpired ||
+            isLoading ||
+            isSwapping ||
+            !sellAmount ||
+            (needsImpactAck && !highImpactAcknowledged)
+          }
           onClick={handleExecuteSwap}
           className="w-full flex items-center justify-center gap-2 rounded-2xl bg-primary py-3.5 px-6 font-bold text-white shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         >
@@ -686,6 +979,8 @@ export const SwapCalculator: React.FC<SwapCalculatorProps> = ({
             'Quote Expired - Refresh to Swap'
           ) : isLoading ? (
             'Fetching Latest Quote...'
+          ) : needsImpactAck && !highImpactAcknowledged ? (
+            'Acknowledge Price Impact to Swap'
           ) : (
             `Swap ${sellAsset} for ${buyAsset}`
           )}

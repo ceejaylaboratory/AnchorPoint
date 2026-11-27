@@ -1,6 +1,13 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import SettingsView, { AutoLockSettingsSection, BiometricSettingsSection, LanguageSelector } from './SettingsView';
+import SettingsView, {
+  AutoLockSettingsSection,
+  BiometricSettingsSection,
+  CurrencySelector,
+  LanguageSelector,
+} from './SettingsView';
+import { usePreferencesStore } from '../store/walletStore';
+import { formatFiat } from '../lib/fiat';
 import { AUTOLOCK_STORAGE_KEY } from '../lib/sessionLock';
 import { I18nProvider } from '../i18n/config';
 import { ThemeProvider } from '../contexts/ThemeContext';
@@ -155,5 +162,64 @@ describe('AutoLockSettingsSection', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Never' }));
     expect(localStorage.getItem(AUTOLOCK_STORAGE_KEY)).toBe('never');
     expect(screen.getByRole('note')).toHaveTextContent(/shared computers/i);
+  });
+});
+
+describe('CurrencySelector', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    act(() => usePreferencesStore.getState().resetPreferences());
+  });
+
+  const liveRates = (rates: Record<string, number>) =>
+    vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          rates: Object.entries(rates).map(([buy_asset, rate]) => ({ sell_asset: 'USD', buy_asset, rate })),
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as unknown as typeof fetch;
+
+  const renderSelector = (fetchImpl?: typeof fetch) =>
+    render(
+      <I18nProvider>
+        <CurrencySelector apiBaseUrl={fetchImpl ? 'http://fx.test' : undefined} fetchImpl={fetchImpl} />
+      </I18nProvider>,
+    );
+
+  it('lists every supported fiat currency, defaulting to USD', () => {
+    renderSelector();
+    const select = screen.getByLabelText('Display Currency') as HTMLSelectElement;
+    expect(select.value).toBe('USD');
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['USD', 'EUR', 'GBP', 'NGN', 'BRL']);
+  });
+
+  it('switches currency, persists it to the preferences store and converts with live rates', async () => {
+    const fetchImpl = liveRates({ EUR: 0.9, GBP: 0.8, NGN: 1600, BRL: 5 });
+    renderSelector(fetchImpl);
+    await waitFor(() => expect(screen.getByText('Live rate')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Display Currency'), { target: { value: 'EUR' } });
+
+    expect(usePreferencesStore.getState().preferences.fiatCurrency).toBe('EUR');
+    expect(screen.getByTestId('currency-preview')).toHaveTextContent(formatFiat(900, 'EUR').replace(/\s/g, ' '));
+
+    fireEvent.change(screen.getByLabelText('Display Currency'), { target: { value: 'NGN' } });
+    expect(screen.getByTestId('currency-preview')).toHaveTextContent(formatFiat(1_600_000, 'NGN').replace(/\s/g, ' '));
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://fx.test/sep40/rates',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('falls back to estimated rates and says so when the FX service fails', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 503 })) as unknown as typeof fetch;
+    act(() => usePreferencesStore.getState().setFiatCurrency('GBP'));
+    renderSelector(fetchImpl);
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalled());
+    expect(screen.getByText(/Estimated rate/)).toBeInTheDocument();
+    expect(screen.getByTestId('currency-preview')).toHaveTextContent(formatFiat(790, 'GBP').replace(/\s/g, ' '));
   });
 });
