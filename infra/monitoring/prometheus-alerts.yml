@@ -318,3 +318,58 @@ groups:
             engineer and check Horizon, the bank partner API, and BullMQ
             worker health.
           runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+        labels:
+          severity: warning
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+<<<<<<< HEAD
+          summary: TLS certificate for {{ $labels.instance }} expires in less than 14 days
+          description: >-
+            The certificate served on {{ $labels.instance }} expires in
+            {{ $value | printf "%.0f" }} days. Check that certificate renewal is
+            working.
+=======
+          summary: >-
+            SEP transaction P95 latency exceeds 5 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 95th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 5 minutes over the last 15 minutes.
+            Current P95 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            Investigate bank partner delays, Horizon RPC congestion, and
+            stuck worker queues in BullMQ.
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
+
+      # Fires when P99 latency breaches 15 minutes — a more severe threshold
+      # indicating a large fraction of transactions are stuck.
+      - alert: SepTransactionHighP99Latency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(
+              rate(sep_transaction_duration_seconds_bucket[15m])
+            ) by (le, sep_type, asset)
+          ) > 900
+        for: 15m
+        labels:
+          severity: critical
+          service: anchorpoint-backend
+          team: platform
+        annotations:
+          summary: >-
+            SEP transaction P99 latency exceeds 15 minutes
+            (sep_type={{ $labels.sep_type }}, asset={{ $labels.asset }})
+          description: >-
+            The 99th-percentile end-to-end SEP transaction completion time for
+            sep_type="{{ $labels.sep_type }}" and asset="{{ $labels.asset }}"
+            has exceeded 15 minutes over the last 15 minutes.
+            Current P99 is approximately
+            {{ printf "%.0f" $value }} seconds.
+            This likely indicates a systemic failure. Page the on-call
+            engineer and check Horizon, the bank partner API, and BullMQ
+            worker health.
+>>>>>>> origin/main
+          runbook_url: https://github.com/barry01-hash/AnchorPoint/blob/main/infra/monitoring/README.md
